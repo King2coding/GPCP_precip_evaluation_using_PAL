@@ -5,14 +5,14 @@ import numpy as np
 import xarray as xr
 import gc
 #%% GLOBAL VARIABLES
-# DEFINE REGIONS AND THEIR BOUNDARIES (based on Figure 1)
+# DEFINE REGIONS AND THEIR BOUNDARIES (based on Figure 1 and PAL data coverage)
 region_bounds = {
-    "ETNP": {"lon_min": -160, "lon_max": -130, "lat_min": 35, "lat_max": 55},  # Extratropical North Pacific
-    "TNEP": {"lon_min": -140, "lon_max": -90,  "lat_min": 5,  "lat_max": 25},  # Tropical Northeastern Pacific
-    "TSEP": {"lon_min": -120, "lon_max": -70,  "lat_min": -25, "lat_max": -5}, # Tropical Southeastern Pacific
+    "ETNP": {"lon_min": -170, "lon_max": -120, "lat_min": 30, "lat_max": 60},  # Extratropical North Pacific 
+    "TNEP": {"lon_min": -180, "lon_max": -80, "lat_min": -5, "lat_max": 30},   # Tropical Northeastern Pacific (includes Caribbean)
+    "TSEP": {"lon_min": -160, "lon_max": -70,  "lat_min": -25, "lat_max": 0},  # Tropical Southeastern Pacific 
     "STNA": {"lon_min": -70,  "lon_max": -10,  "lat_min": 15, "lat_max": 45},  # Subtropical North Atlantic
     "TNIO": {"lon_min": 60,   "lon_max": 100,  "lat_min": -5, "lat_max": 20},  # Tropical North Indian Ocean
-    "TNWP": {"lon_min": 120,  "lon_max": 180,  "lat_min": 5,  "lat_max": 25},  # Tropical Northwestern Pacific
+    "TNWP": {"lon_min": 120,  "lon_max": 180,  "lat_min": -5, "lat_max": 30},  # Tropical Northwestern Pacific
 }
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
@@ -24,14 +24,35 @@ region_colors = {
     "STNA": "red",
     "TNIO": "purple",
     "TNWP": "brown",
+    "Unclassified": "black",
 }
 #%% DEFINE FUNCTIONS
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
 
 def boxes_overlap(lat_min1, lat_max1, lon_min1, lon_max1,
                   lat_min2, lat_max2, lon_min2, lon_max2):
-    return not (lat_max1 < lat_min2 or lat_min1 > lat_max2 or
-                lon_max1 < lon_min2 or lon_min1 > lon_max2)
+    """
+    Check if two bounding boxes overlap.
+    Box 1: PAL trajectory bounding box
+    Box 2: Region bounding box
+    """
+    # Check for NO overlap conditions
+    no_overlap = (lat_max1 < lat_min2 or  # PAL is completely south of region
+                  lat_min1 > lat_max2 or  # PAL is completely north of region  
+                  lon_max1 < lon_min2 or  # PAL is completely west of region
+                  lon_min1 > lon_max2)    # PAL is completely east of region
+    
+    # If there's no overlap, return False; otherwise return True
+    return not no_overlap
+
+def simple_box_check(lat_min_file, lat_max_file, lon_min_file, lon_max_file,
+                     lat_min_r, lat_max_r, lon_min_r, lon_max_r):
+    """
+    Alternative simpler check: does the PAL box overlap with region box?
+    """
+    lat_overlap = not (lat_max_file < lat_min_r or lat_min_file > lat_max_r)
+    lon_overlap = not (lon_max_file < lon_min_r or lon_min_file > lon_max_r)
+    return lat_overlap and lon_overlap
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def classify_and_group_files_fixed(file_list):
@@ -128,10 +149,13 @@ def classify_and_group_files_bounding_box(file_list, region_bounds_dict=None):
                 lon_min_r = bounds["lon_min"]
                 lon_max_r = bounds["lon_max"]
 
-                if boxes_overlap(lat_min_file, lat_max_file,
-                                 lon_min_file, lon_max_file,
-                                 lat_min_r, lat_max_r,
-                                 lon_min_r, lon_max_r):
+                # Use the simpler box check
+                overlap = simple_box_check(lat_min_file, lat_max_file,
+                                         lon_min_file, lon_max_file,
+                                         lat_min_r, lat_max_r,
+                                         lon_min_r, lon_max_r)
+
+                if overlap:
                     classification[region].append(file_path)
                     found = True
                     break
@@ -150,4 +174,44 @@ def classify_and_group_files_bounding_box(file_list, region_bounds_dict=None):
 
     print(f"\nTotal unclassified files: {len(classification['Unclassified'])}")
     return classification
+
+#%% DEBUG FUNCTION
+def debug_overlap_test():
+    """Test the boxes_overlap function with specific PAL coordinates"""
+    # PAL 19412: Lat 1.04-3.09, Lon 164.90-174.91
+    # TNWP: Lat -5 to 30, Lon 120-180
+    
+    lat_min_file, lat_max_file = 1.04, 3.09
+    lon_min_file, lon_max_file = 164.90, 174.91
+    
+    lat_min_r, lat_max_r = -5, 30
+    lon_min_r, lon_max_r = 120, 180
+    
+    print(f"PAL 19412: Lat {lat_min_file}-{lat_max_file}, Lon {lon_min_file}-{lon_max_file}")
+    print(f"TNWP: Lat {lat_min_r}-{lat_max_r}, Lon {lon_min_r}-{lon_max_r}")
+    
+    # Test individual conditions
+    cond1 = lat_max_file < lat_min_r  # 3.09 < -5
+    cond2 = lat_min_file > lat_max_r  # 1.04 > 30
+    cond3 = lon_max_file < lon_min_r  # 174.91 < 120
+    cond4 = lon_min_file > lon_max_r  # 164.90 > 180
+    
+    print(f"lat_max_file < lat_min_r: {lat_max_file} < {lat_min_r} = {cond1}")
+    print(f"lat_min_file > lat_max_r: {lat_min_file} > {lat_max_r} = {cond2}")
+    print(f"lon_max_file < lon_min_r: {lon_max_file} < {lon_min_r} = {cond3}")
+    print(f"lon_min_file > lon_max_r: {lon_min_file} > {lon_max_r} = {cond4}")
+    
+    overall = cond1 or cond2 or cond3 or cond4
+    result = not overall
+    
+    print(f"Overall OR: {overall}")
+    print(f"NOT overall (should overlap): {result}")
+    
+    # Test with actual function
+    actual_result = boxes_overlap(lat_min_file, lat_max_file, lon_min_file, lon_max_file,
+                                 lat_min_r, lat_max_r, lon_min_r, lon_max_r)
+    print(f"boxes_overlap function result: {actual_result}")
+
+# Call the debug function
+# debug_overlap_test()
 

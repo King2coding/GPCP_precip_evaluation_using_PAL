@@ -19,6 +19,7 @@ all_pal_files = [os.path.join(path_to_pal_data, f) for f in os.listdir(path_to_p
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
 
+#%% PLOT
 # === Plot ===
 fig = plt.figure(figsize=(18, 10))
 ax = plt.axes(projection=ccrs.PlateCarree())
@@ -29,6 +30,9 @@ ax.add_feature(cfeature.COASTLINE, linewidth=0.6)
 ax.add_feature(cfeature.BORDERS, linestyle=':')
 
 for region, files in pals_classed_by_region.items():
+    if region == "Unclassified" or len(files) == 0:
+        continue  # Skip unclassified and empty regions for plotting bounds
+    
     color = region_colors[region]
     for file in files:
         # Load only lat and lon efficiently, downsample by slicing
@@ -36,6 +40,7 @@ for region, files in pals_classed_by_region.items():
         lat = ds['lat'].values[::10]  # every 10th point
         lon = ds['lon'].values[::10]
         ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=0.8)
+        ds.close()
 
     bounds = region_bounds[region]
     rect = Rectangle(
@@ -51,6 +56,20 @@ for region, files in pals_classed_by_region.items():
     label_lat = bounds["lat_max"] - 5
     ax.text(label_lon, label_lat, f"{region}: {len(files)}", fontsize=15, color=color, transform=ccrs.PlateCarree())
 
+# Plot unclassified files separately if any exist
+if "Unclassified" in pals_classed_by_region and len(pals_classed_by_region["Unclassified"]) > 0:
+    color = region_colors["Unclassified"]
+    for file in pals_classed_by_region["Unclassified"]:
+        ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
+        lat = ds['lat'].values[::10]
+        lon = ds['lon'].values[::10]
+        ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=0.8)
+        ds.close()
+    
+    # Add text annotation for unclassified
+    ax.text(-170, -25, f"Unclassified: {len(pals_classed_by_region['Unclassified'])}", 
+            fontsize=15, color=color, transform=ccrs.PlateCarree())
+
 handles = [plt.Line2D([0], [0], color=region_colors[r], lw=2) for r in region_colors]
 labels = list(region_colors.keys())
 plt.legend(handles, labels, title="Regions", loc="lower left", fontsize=18, title_fontsize=18, ncol=2)
@@ -63,3 +82,37 @@ ax.set_title("PAL Trajectories by Ocean Region", fontsize=20)
 plt.tight_layout()
 plt.show()
 gc.collect()  # Clean up memory
+
+# Print classification summary
+print("\n" + "="*50)
+print("PAL CLASSIFICATION SUMMARY")
+print("="*50)
+for region, files in pals_classed_by_region.items():
+    if region != "Unclassified":
+        print(f"{region}: {len(files)} PALs")
+print("="*50)
+
+# Expected counts from your figure:
+expected_counts = {
+    "ETNP": 4,   # Extratropical North Pacific
+    "TNEP": 20,  # Tropical Northeastern Pacific  
+    "TSEP": 6,   # Tropical Southeastern Pacific
+    "STNA": 18,  # Subtropical North Atlantic
+    "TNIO": 3,   # Tropical North Indian Ocean
+    "TNWP": 7    # Tropical Northwestern Pacific
+}
+
+print("\nCOMPARISON WITH EXPECTED COUNTS:")
+print("-" * 30)
+total_expected = sum(expected_counts.values())
+total_actual = sum(len(files) for region, files in pals_classed_by_region.items() if region != "Unclassified")
+
+for region in expected_counts:
+    actual = len(pals_classed_by_region.get(region, []))
+    expected = expected_counts[region]
+    status = "✓" if actual == expected else "✗"
+    print(f"{region}: Expected {expected}, Got {actual} {status}")
+
+print(f"\nTotal Expected: {total_expected}")
+print(f"Total Actual: {total_actual}")
+print(f"Difference: {total_actual - total_expected}")
