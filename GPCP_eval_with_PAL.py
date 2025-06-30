@@ -94,29 +94,32 @@ for region, files in pals_classed_by_region.items():
     # )
     # ax.add_patch(rect)
 
-    label_lon = bounds["lon_min"] + 2
-    label_lat = bounds["lat_max"] - 5
-    ax.text(label_lon, label_lat, f"{region}: {len(files)}", fontsize=15, color=color, transform=ccrs.PlateCarree())
+    # Remove region name and count labels from the plot
+    # label_lon = bounds["lon_min"] + 2
+    # label_lat = bounds["lat_max"] - 5
+    # ax.text(label_lon, label_lat, f"{region}: {len(files)}", fontsize=15, color=color, transform=ccrs.PlateCarree())
 
-# Plot unclassified files separately if any exist
-if "Unclassified" in pals_classed_by_region and len(pals_classed_by_region["Unclassified"]) > 0:
-    color = region_colors["Unclassified"]
-    for file in pals_classed_by_region["Unclassified"]:
-        ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
-        lat = ds['lat'].values[::10]
-        lon = ds['lon'].values[::10]
-        ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=0.8)
-        ds.close()
-    
-    # Add text annotation for unclassified
-    ax.text(-170, -25, f"Unclassified: {len(pals_classed_by_region['Unclassified'])}", 
-            fontsize=15, color=color, transform=ccrs.PlateCarree())
+# Remove unclassified files plotting since there are none
+# if "Unclassified" in pals_classed_by_region and len(pals_classed_by_region["Unclassified"]) > 0:
+#     color = region_colors["Unclassified"]
+#     for file in pals_classed_by_region["Unclassified"]:
+#         ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
+#         lat = ds['lat'].values[::10]
+#         lon = ds['lon'].values[::10]
+#         ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=0.8)
+#         ds.close()
+#     
+#     # Add text annotation for unclassified
+#     ax.text(-170, -25, f"Unclassified: {len(pals_classed_by_region['Unclassified'])}", 
+#             fontsize=15, color=color, transform=ccrs.PlateCarree())
 
-# Create legend without "Unclassified" since there are no unclassified PALs
+# Create legend with PAL counts per region at the bottom, single row
 legend_regions = [r for r in region_colors.keys() if r != "Unclassified"]
 handles = [plt.Line2D([0], [0], color=region_colors[r], lw=2) for r in legend_regions]
-labels = legend_regions
-plt.legend(handles, labels, title="Regions", loc="center left", bbox_to_anchor=(1, 0.5), fontsize=14, title_fontsize=16)
+# Add PAL counts to legend labels
+labels = [f"{region} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
+plt.legend(handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.1), 
+          fontsize=14, title_fontsize=16, ncol=6)
 
 ax.set_xticks(range(-180, 181, 60), crs=ccrs.PlateCarree())
 ax.set_yticks(range(-30, 61, 15), crs=ccrs.PlateCarree())  # Changed to 15 degree intervals
