@@ -113,17 +113,31 @@ for region, files in pals_classed_by_region.items():
 #     ax.text(-170, -25, f"Unclassified: {len(pals_classed_by_region['Unclassified'])}", 
 #             fontsize=15, color=color, transform=ccrs.PlateCarree())
 
-# Create legend with PAL counts per region at the bottom, single row
+# Add grid lines
+ax.grid(True, linewidth=0.5, color='grey', alpha=0.7, linestyle='--')
+
+# Create legend with full region names and PAL counts
 legend_regions = [r for r in region_colors.keys() if r != "Unclassified"]
 handles = [plt.Line2D([0], [0], color=region_colors[r], lw=2) for r in legend_regions]
-# Add PAL counts to legend labels
-labels = [f"{region} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
-plt.legend(handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.1), 
-          fontsize=14, title_fontsize=16, ncol=6)
+
+# Full region names mapping
+full_region_names = {
+    "ETNP": "Extratropical North Pacific",
+    "TNEP": "Tropical Northeastern Pacific", 
+    "TSEP": "Tropical Southeastern Pacific",
+    "STNA": "Subtropical North Atlantic",
+    "TNIO": "Tropical North Indian Ocean",
+    "TNWP": "Tropical Northwestern Pacific"
+}
+
+# Add full names and PAL counts to legend labels
+labels = [f"{full_region_names[region]} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
+plt.legend(handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.15), 
+          fontsize=12, title_fontsize=14, ncol=3, frameon=False)
 
 ax.set_xticks(range(-180, 181, 60), crs=ccrs.PlateCarree())
 ax.set_yticks(range(-30, 61, 15), crs=ccrs.PlateCarree())  # Changed to 15 degree intervals
-ax.tick_params(labelsize=12)
+ax.tick_params(labelsize=18)  # Increased font size for axis tick labels
 ax.set_title("PAL Trajectories by Ocean Region", fontsize=20)
 
 plt.tight_layout()
