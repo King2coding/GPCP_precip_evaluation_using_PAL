@@ -28,7 +28,10 @@ region_colors = {
 }
 #%% DEFINE FUNCTIONS
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
+def ds_swaplon(ds):
+    return ds.assign_coords(longitude=(((ds.longitude + 180) % 360) - 180)).sortby('longitude')
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def boxes_overlap(lat_min1, lat_max1, lon_min1, lon_max1,
                   lat_min2, lat_max2, lon_min2, lon_max2):
     """
