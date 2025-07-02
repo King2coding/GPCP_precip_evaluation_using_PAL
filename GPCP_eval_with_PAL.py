@@ -67,6 +67,17 @@ all_gpcp_v1pt3_files = sorted([os.path.join(path_to_gpcp_v1pt3, f) for f in os.l
 all_gpcp_v3pt2_files = sorted([os.path.join(path_to_gpcp_v3pt2, f) for f in os.listdir(path_to_gpcp_v3pt2) if f.endswith('.nc4')])
 
 all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.listdir(path_to_gpcp_v3pt3) if f.endswith('.nc4')])
+
+# read all GPCP into a single xr data
+gpcp_ds_v1pt3_xr = xr.open_mfdataset(all_gpcp_v1pt3_files, combine='by_coords', parallel=True)
+gpcp_ds_v1pt3_xr = ds_swaplon(gpcp_ds_v1pt3_xr)
+
+gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcp_v3pt2_files, combine='by_coords', parallel=True)
+gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
+
+gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files, combine='by_coords', parallel=True)
+gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
+
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
 
@@ -192,16 +203,6 @@ print(f"Difference: {total_actual - total_expected}")
 gc.collect()  # Clean up memory
 
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
-
-# read all GPCP into a single xr data
-gpcp_ds_v1pt3_xr = xr.open_mfdataset(all_gpcp_v1pt3_files, combine='by_coords', parallel=True)
-gpcp_ds_v1pt3_xr = ds_swaplon(gpcp_ds_v1pt3_xr)
-
-gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcp_v3pt2_files, combine='by_coords', parallel=True)
-gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
-
-gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files, combine='by_coords', parallel=True)
-gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 
 for region_name, pal_files in pals_classed_by_region.items():
     if region_name != "Unclassified" and len(pal_files) > 0:
