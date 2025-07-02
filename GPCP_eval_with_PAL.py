@@ -15,6 +15,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.mpl.ticker as cticker
 
+
 #%% DEBUG: Check current region bounds and test overlap function
 print("CURRENT REGION BOUNDS:")
 print("="*50)
@@ -63,9 +64,9 @@ all_pal_files = sorted([os.path.join(path_to_pal_data, f) for f in os.listdir(pa
 
 all_gpcp_v1pt3_files = sorted([os.path.join(path_to_gpcp_v1pt3, f) for f in os.listdir(path_to_gpcp_v1pt3) if f.endswith('.nc')])
 
-all_gpcp_v3pt2_files = sorted([os.path.join(path_to_gpcp_v3pt2, f) for f in os.listdir(path_to_gpcp_v3pt2) if f.endswith('.nc')])
+all_gpcp_v3pt2_files = sorted([os.path.join(path_to_gpcp_v3pt2, f) for f in os.listdir(path_to_gpcp_v3pt2) if f.endswith('.nc4')])
 
-all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.listdir(path_to_gpcp_v3pt3) if f.endswith('.nc')])
+all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.listdir(path_to_gpcp_v3pt3) if f.endswith('.nc4')])
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
 
@@ -189,272 +190,162 @@ print(f"Total Actual: {total_actual}")
 print(f"Difference: {total_actual - total_expected}")
 
 gc.collect()  # Clean up memory
-#%% ASSIGN PAL TO GPCP GRID AND CALCULATE SPACE-TIME MEAN OF PAL
+
+#%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
+
+# read all GPCP into a single xr data
+gpcp_ds_v1pt3_xr = xr.open_mfdataset(all_gpcp_v1pt3_files, combine='by_coords', parallel=True)
+gpcp_ds_v1pt3_xr = ds_swaplon(gpcp_ds_v1pt3_xr)
+
+gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcp_v3pt2_files, combine='by_coords', parallel=True)
+gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
+
+gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files, combine='by_coords', parallel=True)
+gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
+
+for region_name, pal_files in pals_classed_by_region.items():
+    if region_name != "Unclassified" and len(pal_files) > 0:
+        print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
+
+        # LOAD PAL DATA
+        for pal_file in pal_files:
+            pal_ds = xr.open_dataset(pal_file)
+
+            # Process PAL data as needed
+            df = pd.DataFrame({
+                'time': pd.to_datetime(pal_ds['time'].values),
+                'lat': pal_ds['lat'].values,
+                'lon': pal_ds['lon'].values,
+                'rain_rate': pal_ds['rain_rate'].values
+            })
+
+            df['date'] = df['time'].dt.date  # Extract date from time
+
+            # nan_df = df.copy()  # Keep a copy for debugging
+            # nan_df = nan_df[nan_df.isna().any(axis=1)]  # Find rows with NaN values
+
+            df = df.dropna(axis=0, how='any')  # Drop rows with any NaN values           
+
+            # Normalize longitude to [-180, 180]
+            df['lon'] = (df['lon'] + 360) % 360
+            df['lon'][df['lon'] > 180] -= 360
+
+            df['row'], df['col'] = assign_to_gpcp_grid(df['lat'], df['lon'], 1.0)
+
+            # Now df contains the PAL data with GPCP grid assignments
+            # average daily rainfall
+            
+            daily_avg = df.groupby(['date', 'row', 'col'])[['rain_rate', 'lat', 'lon']].mean().reset_index()
+            daily_avg = daily_avg.set_index('date')
+            daily_avg['region'] = region_name
+            daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+
+            # collect GPCP data for this PAL
+            # Vectorized approach for speed
+            # Prepare arrays for lookup
+            gpcp_times = gpcp_ds_v1pt3_xr['time'].values
+            gpcp_lats = gpcp_ds_v1pt3_xr['latitude'].values
+            gpcp_lons = gpcp_ds_v1pt3_xr['longitude'].values
+
+            # Map PAL dates to nearest GPCP time index
+            pal_dates = pd.to_datetime(daily_avg.index)
+            gpcp_time_idx = np.searchsorted(gpcp_times, pal_dates)
+            gpcp_time_idx = np.clip(gpcp_time_idx, 0, len(gpcp_times) - 1)
+
+            # Map PAL lat/lon to nearest GPCP grid index
+            pal_lats = daily_avg['lat'].values
+            pal_lons = daily_avg['lon'].values
+
+            gpcp_lat_idx = np.abs(gpcp_lats[:, None] - pal_lats).argmin(axis=0)
+            gpcp_lon_idx = np.abs(gpcp_lons[:, None] - pal_lons).argmin(axis=0)
+
+            # Extract GPCP values in a vectorized way
+            gpcp_precip = gpcp_ds_v1pt3_xr['precip'].values
+            matched_vals = gpcp_precip[gpcp_time_idx, gpcp_lat_idx, gpcp_lon_idx]
+
+            daily_avg['gpcp_v1pt3'] = matched_vals
+
+            pal_ds.close()
+
+#%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 import pandas as pd
 from datetime import datetime
 
-# Initialize list to store all PAL-GPCP paired data
-all_pal_gpcp_data = []
-
-print("Processing PAL-GPCP matching (TESTING WITH SAMPLE)...")
+print("MINIMAL TEST: 1 PAL + 1 GPCP FILE")
 print("="*50)
 
-# TESTING: Process only 1-2 PALs from each region for debugging
+# Step 1: Pick just 1 PAL file for testing
+test_pal_file = None
+test_region = None
+
 for region_name, pal_files in pals_classed_by_region.items():
-    if region_name == "Unclassified" or len(pal_files) == 0:
-        continue
-    
-    # LIMIT TO FIRST 2 FILES PER REGION FOR TESTING
-    sample_files = pal_files[:2]  # Only process first 2 PALs per region
-    
-    print(f"\nProcessing {region_name} region ({len(sample_files)} PALs - SAMPLE)...")
-    
-    for pal_idx, pal_file in enumerate(sample_files):
-        pal_id = os.path.basename(pal_file).split('.')[0]  # Extract PAL ID from filename
-        print(f"  Processing PAL {pal_id} ({pal_idx+1}/{len(pal_files)})")
-        
-        # Load PAL data
-        pal_ds = xr.open_dataset(pal_file)
-        
-        # Get PAL data (assuming standard variable names - adjust as needed)
-        pal_time = pd.to_datetime(pal_ds['time'].values)
-        pal_lat = pal_ds['lat'].values
-        pal_lon = pal_ds['lon'].values
-        
-        # Normalize PAL longitude to [-180, 180]
-        pal_lon = (pal_lon + 360) % 360
-        pal_lon[pal_lon > 180] -= 360
-        
-        # Get precipitation variable (adjust variable name as needed)
-        precip_vars = ['rain_rate', 'precip', 'precipitation', 'rain', 'rainfall', 'pcp']
-        pal_precip = None
-        for var in precip_vars:
-            if var in pal_ds.variables:
-                pal_precip = pal_ds[var].values
-                break
-        
-        if pal_precip is None:
-            print(f"    Warning: No precipitation variable found in {pal_id}")
-            print(f"    Available variables: {list(pal_ds.variables.keys())}")
-            continue
-        
-        # Create PAL DataFrame
-        pal_df = pd.DataFrame({
-            'time': pal_time,
-            'lat': pal_lat,
-            'lon': pal_lon,
-            'pal_precip': pal_precip,
-            'pal_id': pal_id,
-            'region': region_name
-        })
-        
-        # Remove invalid data
-        pal_df = pal_df.dropna()
-        
-        # Add date column for daily grouping
-        pal_df['date'] = pal_df['time'].dt.date
-        
-        # Group by date and calculate daily means for PAL
-        daily_pal = pal_df.groupby('date').agg({
-            'lat': 'mean',
-            'lon': 'mean', 
-            'pal_precip': 'mean',
-            'pal_id': 'first',
-            'region': 'first'
-        }).reset_index()
-        
-        # TESTING: Limit to first 10 days for faster processing
-        daily_pal = daily_pal.head(10)
-        print(f"    TESTING: Processing only {len(daily_pal)} daily observations")
-        
-        # Get PAL operational period
-        pal_start_date = pal_time.min().date()
-        pal_end_date = pal_time.max().date()
-        print(f"    PAL operational period: {pal_start_date} to {pal_end_date}")
-        
-        # Filter GPCP files to only those within PAL operational period
-        relevant_gpcp_files = []
-        
-        # TESTING: Only process GPCP files from a limited year range for faster testing
-        test_year_start = 2010
-        test_year_end = 2012
-        print(f"    TESTING: Only processing GPCP files from {test_year_start}-{test_year_end}")
-        
-        for gpcp_file in all_gpcp_v1pt3_files[:20]:  # Also limit the total files to check
-            # Extract year and month from GPCP filename (adjust pattern as needed)
-            filename = os.path.basename(gpcp_file)
-            # Assuming filename format like: GPCP_v1.3_2010_01.nc or similar
-            try:
-                # Extract year-month from filename
-                if 'GPCP' in filename:
-                    parts = filename.split('_')
-                    for i, part in enumerate(parts):
-                        if part.isdigit() and len(part) == 4:  # Found year
-                            year = int(part)
-                            
-                            # TESTING: Only process files within test year range
-                            if year < test_year_start or year > test_year_end:
-                                break
-                                
-                            if i + 1 < len(parts) and parts[i + 1].replace('.nc', '').isdigit():
-                                month = int(parts[i + 1].replace('.nc', ''))
-                                file_date = pd.Timestamp(year, month, 1).date()
-                                
-                                # Check if this GPCP file overlaps with PAL period
-                                if (file_date.year >= pal_start_date.year and 
-                                    file_date.year <= pal_end_date.year):
-                                    relevant_gpcp_files.append(gpcp_file)
-                                break
-            except:
-                continue
-        
-        print(f"    Found {len(relevant_gpcp_files)} relevant GPCP files for PAL period")
-        
-        # TESTING: Limit to first 3 GPCP files for faster testing
-        relevant_gpcp_files = relevant_gpcp_files[:3]
-        print(f"    TESTING: Processing only {len(relevant_gpcp_files)} GPCP files")
-        
-        if len(relevant_gpcp_files) == 0:
-            print(f"    No GPCP files found for PAL period!")
-            continue
-        
-        # Load relevant GPCP data once
-        gpcp_matches = []
-        for gpcp_file in relevant_gpcp_files:
-            try:
-                print(f"    Processing GPCP file: {os.path.basename(gpcp_file)}")
-                gpcp_ds = xr.open_dataset(gpcp_file)
-                gpcp_ds = ds_swaplon(gpcp_ds)  # Normalize longitude
-                
-                # Get GPCP coordinates
-                gpcp_lat_vals = gpcp_ds['latitude'].values if 'latitude' in gpcp_ds else gpcp_ds['lat'].values
-                gpcp_lon_vals = gpcp_ds['longitude'].values if 'longitude' in gpcp_ds else gpcp_ds['lon'].values
-                gpcp_time = pd.to_datetime(gpcp_ds['time'].values)
-                
-                # Find precipitation variable
-                gpcp_precip_vars = ['precip', 'precipitation', 'pcp', 'PRECIP']
-                gpcp_precip_var = None
-                for var in gpcp_precip_vars:
-                    if var in gpcp_ds.variables:
-                        gpcp_precip_var = var
-                        break
-                
-                if gpcp_precip_var is None:
-                    print(f"    No precipitation variable found in {os.path.basename(gpcp_file)}")
-                    print(f"    Available variables: {list(gpcp_ds.variables.keys())}")
-                    gpcp_ds.close()
-                    continue
-                
-                # Match with daily PAL observations
-                for _, daily_row in daily_pal.iterrows():
-                    target_date = daily_row['date']
-                    target_lat = daily_row['lat']
-                    target_lon = daily_row['lon']
-                    
-                    # Check if this date is in current GPCP file
-                    gpcp_dates = [t.date() for t in gpcp_time]
-                    if target_date not in gpcp_dates:
-                        continue
-                    
-                    # Find time index
-                    time_idx = gpcp_dates.index(target_date)
-                    
-                    # Find nearest GPCP grid point
-                    lat_idx = np.argmin(np.abs(gpcp_lat_vals - target_lat))
-                    lon_idx = np.argmin(np.abs(gpcp_lon_vals - target_lon))
-                    
-                    # Extract GPCP precipitation value
-                    gpcp_precip_val = gpcp_ds[gpcp_precip_var].values[time_idx, lat_idx, lon_idx]
-                    
-                    # Handle missing values
-                    if np.isnan(gpcp_precip_val) or np.ma.is_masked(gpcp_precip_val):
-                        continue
-                    
-                    gpcp_matches.append({
-                        'date': target_date,
-                        'pal_lat': target_lat,
-                        'pal_lon': target_lon,
-                        'gpcp_lat': gpcp_lat_vals[lat_idx],
-                        'gpcp_lon': gpcp_lon_vals[lon_idx],
-                        'pal_precip': daily_row['pal_precip'],
-                        'gpcp_precip': float(gpcp_precip_val),
-                        'pal_id': daily_row['pal_id'],
-                        'region': daily_row['region'],
-                        'gpcp_version': 'v1.3'
-                    })
-                
-                gpcp_ds.close()
-                
-            except Exception as e:
-                print(f"    Error processing GPCP file {os.path.basename(gpcp_file)}: {e}")
-                continue
-        
-        # Add matches to overall dataset
-        all_pal_gpcp_data.extend(gpcp_matches)
-        pal_ds.close()
-        
-        print(f"    Found {len(gpcp_matches)} daily matches for PAL {pal_id}")
-        
-        # Break after successful processing for testing
-        if len(gpcp_matches) > 0:
-            print(f"    SUCCESS! Breaking after successful PAL processing for testing...")
-            all_pal_gpcp_data.extend(gpcp_matches)
-            pal_ds.close()
-            break  # Break from PAL loop
-    
-    # Break from region loop after processing one region successfully
-    if len(all_pal_gpcp_data) > 0:
-        print(f"Breaking after processing {region_name} region for testing...")
+    if region_name != "Unclassified" and len(pal_files) > 0:
+        test_pal_file = pal_files[0]  # Just take the first PAL
+        test_region = region_name
         break
 
-# Convert to DataFrame
-if all_pal_gpcp_data:
-    pal_gpcp_df = pd.DataFrame(all_pal_gpcp_data)
-    print(f"\nTotal PAL-GPCP paired observations: {len(pal_gpcp_df)}")
-    print(f"Unique PALs: {pal_gpcp_df['pal_id'].nunique()}")
-    print("\nSample of paired data:")
-    print(pal_gpcp_df.head())
+if test_pal_file is None:
+    print("No PAL files found!")
 else:
-    print("No PAL-GPCP matches found!")
+    print(f"Test PAL file: {os.path.basename(test_pal_file)}")
+    print(f"Test region: {test_region}")
 
-gc.collect()  # Clean up memory
+# Step 2: Pick just 1 GPCP file for testing
+test_gpcp_file = all_gpcp_v1pt3_files[0] if len(all_gpcp_v1pt3_files) > 0 else None
 
-# First, let's examine the structure of GPCP files
-print("EXAMINING GPCP FILE STRUCTURE:")
+if test_gpcp_file is None:
+    print("No GPCP files found!")
+else:
+    print(f"Test GPCP file: {os.path.basename(test_gpcp_file)}")
+
 print("="*50)
-if len(all_gpcp_v1pt3_files) > 0:
-    sample_gpcp_file = all_gpcp_v1pt3_files[0]
-    print(f"Sample GPCP file: {os.path.basename(sample_gpcp_file)}")
+print("="*50)
+
+# Now let's examine both files step by step
+if test_pal_file and test_gpcp_file:
+    print("\nStep 1: Examining PAL file structure...")
+    pal_ds = xr.open_dataset(test_pal_file)
+    print(f"PAL variables: {list(pal_ds.variables.keys())}")
+    print(f"PAL time range: {pal_ds.time.values[0]} to {pal_ds.time.values[-1]}")
+    print(f"PAL data points: {len(pal_ds.time.values)}")
     
-    try:
-        sample_gpcp = xr.open_dataset(sample_gpcp_file)
-        print(f"GPCP variables: {list(sample_gpcp.variables.keys())}")
-        print(f"GPCP dimensions: {list(sample_gpcp.dims.keys())}")
-        
-        # Check coordinate names
-        if 'time' in sample_gpcp.variables:
-            print(f"Time range: {sample_gpcp.time.values[0]} to {sample_gpcp.time.values[-1]}")
-        
-        # Check lat/lon coordinate names
-        lat_coord = None
-        lon_coord = None
-        for coord in ['lat', 'latitude', 'LAT', 'LATITUDE']:
-            if coord in sample_gpcp.variables:
-                lat_coord = coord
-                break
-        for coord in ['lon', 'longitude', 'LON', 'LONGITUDE']:
-            if coord in sample_gpcp.variables:
-                lon_coord = coord
-                break
-                
-        if lat_coord and lon_coord:
-            print(f"Lat coordinate: {lat_coord}, range: {sample_gpcp[lat_coord].values.min():.2f} to {sample_gpcp[lat_coord].values.max():.2f}")
-            print(f"Lon coordinate: {lon_coord}, range: {sample_gpcp[lon_coord].values.min():.2f} to {sample_gpcp[lon_coord].values.max():.2f}")
-        
-        sample_gpcp.close()
-    except Exception as e:
-        print(f"Error examining GPCP file: {e}")
-        
-print("="*50)
+    # Get first few data points as example
+    pal_time = pd.to_datetime(pal_ds['time'].values)
+    pal_lat = pal_ds['lat'].values
+    pal_lon = pal_ds['lon'].values
+    pal_rain = pal_ds['rain_rate'].values
+    
+    print(f"Sample PAL data (first 3 points):")
+    for i in range(min(3, len(pal_time))):
+        print(f"  {pal_time[i]}: Lat={pal_lat[i]:.2f}, Lon={pal_lon[i]:.2f}, Rain={pal_rain[i]:.3f}")
+    
+    print("\nStep 2: Examining GPCP file structure...")
+    gpcp_ds = xr.open_dataset(test_gpcp_file)
+    print(f"GPCP variables: {list(gpcp_ds.variables.keys())}")
+    print(f"GPCP dimensions: {dict(gpcp_ds.dims)}")
+    
+    # Check coordinates
+    if 'time' in gpcp_ds.variables:
+        print(f"GPCP time range: {gpcp_ds.time.values[0]} to {gpcp_ds.time.values[-1]}")
+    
+    # Check lat/lon
+    lat_var = 'latitude' if 'latitude' in gpcp_ds.variables else 'lat'
+    lon_var = 'longitude' if 'longitude' in gpcp_ds.variables else 'lon'
+    
+    if lat_var in gpcp_ds.variables and lon_var in gpcp_ds.variables:
+        print(f"GPCP lat range: {gpcp_ds[lat_var].values.min():.2f} to {gpcp_ds[lat_var].values.max():.2f}")
+        print(f"GPCP lon range: {gpcp_ds[lon_var].values.min():.2f} to {gpcp_ds[lon_var].values.max():.2f}")
+    
+    # Close datasets
+    pal_ds.close()
+    gpcp_ds.close()
+    
+    print("\nMinimal test setup complete!")
+    print("Next step: Implement actual matching logic with these files.")
+
+else:
+    print("Cannot proceed - missing test files!")
+
+gc.collect()
 
 

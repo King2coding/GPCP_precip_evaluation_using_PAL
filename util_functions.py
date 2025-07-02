@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 import gc
+from rasterio.transform import from_origin
+from rasterio.transform import rowcol
 #%% GLOBAL VARIABLES
 # DEFINE REGIONS AND THEIR BOUNDARIES (based on Figure 1 and PAL data coverage)
 region_bounds = {
@@ -28,8 +30,39 @@ region_colors = {
 }
 #%% DEFINE FUNCTIONS
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
+
+def assign_to_gpcp_grid(lat,lon, resolution):
+    """
+    Assign each PAL observation (lat, lon) to a GPCP grid cell using rasterio.
+
+    Parameters:
+    - pal_df: pandas.DataFrame with at least columns ['lat', 'lon', 'time', 'rain']
+    - gpcp_resolution: float (1.0 for v1.3, 0.5 for v3.2)
+
+    Returns:
+    - pandas.DataFrame with additional columns: 'row', 'col', and 'date'
+    """
+    # Define affine transform for the GPCP grid
+    transform = from_origin(west=-180.0, north=90.0, xsize=resolution, ysize=resolution)
+
+    # Use rasterio to compute grid indices
+    row, col = rowcol(transform, lon, lat)
+
+    return row, col
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
 def ds_swaplon(ds):
-    return ds.assign_coords(longitude=(((ds.longitude + 180) % 360) - 180)).sortby('longitude')
+    """
+    Swap longitude coordinates from [0, 360] to [-180, 180] and sort.
+    Handles both 'lon' and 'longitude' coordinate names.
+    """
+    var = 'lon' if 'lon' in ds.coords else 'longitude' if 'longitude' in ds.coords else None
+    if var is None:
+        raise ValueError("No longitude coordinate found in dataset (expected 'lon' or 'longitude').")
+    new_lon = (((ds[var] + 180) % 360) - 180)
+    ds = ds.assign_coords({var: new_lon})
+    ds = ds.sortby(var)
+    return ds
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def boxes_overlap(lat_min1, lat_max1, lon_min1, lon_max1,
