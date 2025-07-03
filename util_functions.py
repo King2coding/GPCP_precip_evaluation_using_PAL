@@ -6,6 +6,8 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 import gc
+from evaluation_fucntions_algorithms import *
+
 from rasterio.transform import from_origin
 from rasterio.transform import rowcol
 
@@ -34,12 +36,12 @@ region_bounds = {
 
 # DEFINE COLORS FOR EACH REGION
 region_colors = {
-    "ETNP": "blue",
-    "TNEP": "green",
-    "TSEP": "orange",
-    "STNA": "red",
-    "TNIO": "purple",
-    "TNWP": "brown",
+    "TNEP": "#3366ff",      # blue
+    "TSEP": "#66ccff",      # light blue
+    "TNWP": "#33cc33",      # green
+    "ETNP": "#888888",      # gray
+    "TNIO": "#ffcc33",      # yellow/orange
+    "STNA": "#b35959",      # brown/red
     "Unclassified": "black",
 }
 #%% DEFINE FUNCTIONS
@@ -246,7 +248,7 @@ def process_gpcp_with_PAL(pal_file, region_name, pal_df, gpcp_ds_xr,
     # Now df contains the PAL data with GPCP grid assignments
     # average daily rainfall
 
-    daily_avg = pal_df.groupby(['date', 'row_idx', 'col_idx'])[['rain_rate', 'lat', 'lon']].mean().reset_index()
+    daily_avg = pal_df.groupby(['date', 'row_idx', 'col_idx'])[['rain_rate', 'lat', 'lon']].mean(skipna=True).reset_index()
     daily_avg = daily_avg.set_index('date')
     # convert rain_rate to mm/day
     daily_avg['rain_rate'] = daily_avg['rain_rate'] * 24  # convert to mm/day
@@ -287,6 +289,20 @@ def process_gpcp_with_PAL(pal_file, region_name, pal_df, gpcp_ds_xr,
 
     return daily_avg
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - 
+def calculate_metrics(pal, gpcp):
+    pal = pal.dropna()
+    gpcp = gpcp.dropna()
+    
+    if len(pal) == 0 or len(gpcp) == 0:
+        return np.nan, np.nan, np.nan
+    
+    # Calculate metrics
+    rb = round(relative_bias(pal, gpcp) * 100,1)  # Relative Bias in %
+    rmse = round(rmsqe(pal, gpcp), 2)  # Root Mean Square Error
+    cc = round(p_corr(pal, gpcp), 2)   # Pearson Correlation Coefficient
+
+    return rb, rmse, cc
 #%% DEBUG FUNCTION
 def debug_overlap_test():
     """Test the boxes_overlap function with specific PAL coordinates"""

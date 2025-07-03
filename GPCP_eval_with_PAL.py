@@ -60,6 +60,8 @@ path_to_gpcp_v1pt3 = r'/ra1/pubdat/GPCP_eval_with_PAL/data/GPCP/GPCP_v1_pnt_3_20
 path_to_gpcp_v3pt2 = r'/ra1/pubdat/GPCP_eval_with_PAL/data/GPCP/GPCP_v3_pnt_2_2010_2020'
 
 path_to_gpcp_v3pt3 = r'/ra1/pubdat/GPCP_eval_with_PAL/data/GPCP/GPCP_v3_pnt_3_2010_2020'
+
+path_to_put_plts = r'/home/kkumah/Projects/GPCP_ocean_evaluation_study/Results/plots'
 #%% DEFINE GLOBAL VARIABLES
 all_pal_files = sorted([os.path.join(path_to_pal_data, f) for f in os.listdir(path_to_pal_data) if f.endswith('.nc')])
 
@@ -300,7 +302,7 @@ for region_name, pal_files in pals_classed_by_region.items():
             pal_ds.close()
 
         # Combine all region PAL-GPCP dataframes into a single dataframe
-        region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs, ignore_index=True)
+        region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs)
         
         
         # calculate daily mean per track_PAL_id
@@ -312,10 +314,10 @@ for region_name, pal_files in pals_classed_by_region.items():
         # Append to the list for later processing
         regional_PAL_GPCP_dfs_daily_lst.append(region_pal_gpcp_df)
 
-    # calculate monhtly mean per region
-    region_pal_gpcp_df_monthly_mean = pd.concat(regional_PAL_GPCP_dfs_daily_lst, ignore_index=True)
-    region_pal_gpcp_df_monthly_mean['month'] = region_pal_gpcp_df_monthly_mean['date'].dt.to_period('M')
-    region_pal_gpcp_df_monthly_mean = region_pal_gpcp_df_monthly_mean.groupby(['region', 'month'])[['rain_rate', 'GPCP_v1pt3', 
+# calculate monhtly mean per region
+region_pal_gpcp_df_monthly_mean = pd.concat(regional_PAL_GPCP_dfs_daily_lst, ignore_index=True)
+region_pal_gpcp_df_monthly_mean['month'] = region_pal_gpcp_df_monthly_mean.index.to_series().dt.to_period('M')
+region_pal_gpcp_df_monthly_mean = region_pal_gpcp_df_monthly_mean.groupby(['region', 'month'])[['rain_rate', 'GPCP_v1pt3', 
                                                                         'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
         
 # # Example: Retrieve the fill value (used to represent missing values) in the first GPCP file
@@ -328,6 +330,106 @@ for region_name, pal_files in pals_classed_by_region.items():
 
 #     print(f"Missing value: {missing_val}")
 
+# calculate RB, RMSE and CC using all PAL-GPCP pairs in axes plot and show this in the plot
+# as RB = , RMSE = , CC =
+#- - - - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+pal_gpcv1_3_cmp = pd.concat([df[['rain_rate', 'GPCP_v1pt3']] for df in regional_PAL_GPCP_dfs_daily_mean.values()], ignore_index=True)
+pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP_v3pt2']] for df in regional_PAL_GPCP_dfs_daily_mean.values()], ignore_index=True)
+pal_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP_v3pt3']] for df in regional_PAL_GPCP_dfs_daily_mean.values()], ignore_index=True)
+
+# calcute metrics for all regions combined
+rb_v1pt3, rmse_v1pt3, cc_v1pt3 = calculate_metrics(pal_gpcv1_3_cmp['rain_rate'], pal_gpcv1_3_cmp['GPCP_v1pt3'])
+rb_v3pt2, rmse_v3pt2, cc_v3pt2 = calculate_metrics(pal_gpcv3_2_cmp['rain_rate'], pal_gpcv3_2_cmp['GPCP_v3pt2'])
+rb_v3pt3, rmse_v3pt3, cc_v3pt3 = calculate_metrics(pal_gpcv3_3_cmp['rain_rate'], pal_gpcv3_3_cmp['GPCP_v3pt3'])
+
+#- - - - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+# make scatter plot of PAL vs GPCP
+fg, ax = plt.subplots(1, 3, figsize=(20, 6), gridspec_kw={'wspace': 0.35})  # Increased wspace for wider interval
+
+for region, df in regional_PAL_GPCP_dfs_daily_mean.items():
+    reg_col = region_colors[region]
+    pal_gpcv1_3 = df[['rain_rate', 'GPCP_v1pt3']]
+    pal_gpcv3_2 = df[['rain_rate', 'GPCP_v3pt2']]
+    pal_gpcv3_3 = df[['rain_rate', 'GPCP_v3pt3']]
+
+    # Plot GPCP v1.3
+    ax[0].scatter(pal_gpcv1_3['rain_rate'], pal_gpcv1_3['GPCP_v1pt3'],
+                  color=reg_col, label=region, s=80)
+    ax[0].set_title('GPCP v1.3 vs PAL')
+
+    # Plot GPCP v3.2
+    ax[1].scatter(pal_gpcv3_2['rain_rate'] , pal_gpcv3_2['GPCP_v3pt2'],
+                  color=reg_col, label=region, s=80)
+    ax[1].set_title('GPCP v3.2 vs PAL')
+
+    # Plot GPCP v3.3
+    ax[2].scatter(pal_gpcv3_3['rain_rate'], pal_gpcv3_3['GPCP_v3pt3'],
+                  color=reg_col, label=region, s=80)
+    ax[2].set_title('GPCP v3.3 vs PAL')
+
+# Set axes limits, ticks, grids, and major ticks for all subplots
+for i, a in enumerate(ax):
+    a.set_xlim(0, 15)
+    a.set_ylim(0, 15)
+    a.set_xticks([0, 5, 10, 15])
+    a.set_yticks([0, 5, 10, 15])
+    a.grid(True, which='major', linestyle='--', linewidth=0.7, alpha=0.7)
+    a.minorticks_on()
+    a.tick_params(axis='both', which='major', length=7, width=1.2, labelsize=18)
+    a.tick_params(axis='both', which='minor', length=4, width=0.8)
+    # add 1:1 line
+    x = np.linspace(0, 15, 100)
+    a.plot(x, x, color='gray', linestyle='--')
+    # Set axis labels and title
+    if i == 0:
+        a.set_xlabel('PAL Observations [mm/day]', fontsize=18)
+        a.set_ylabel('GPCP v1.3 Estimates [mm/day]', fontsize=18)
+        a.set_title('GPCP v1.3 vs PAL', fontsize=20)
+    elif i == 1:
+        a.set_xlabel('PAL Observations [mm/day]', fontsize=18)
+        a.set_ylabel('GPCP v3.2 Estimates [mm/day]', fontsize=18)
+        a.set_title('GPCP v3.2 vs PAL', fontsize=20)
+    elif i == 2:
+        a.set_xlabel('PAL Observations [mm/day]', fontsize=18)
+        a.set_ylabel('GPCP v3.3 Estimates [mm/day]', fontsize=18)
+        a.set_title('GPCP v3.3 vs PAL', fontsize=20)
+
+# Add metrics text to each subplot
+ax[0].text(
+    0.05, 0.95,
+    f'RB: {rb_v1pt3:.2f}\nRMSE: {rmse_v1pt3:.2f}\nCC: {cc_v1pt3:.2f}',
+    transform=ax[0].transAxes, fontsize=18, verticalalignment='top',
+    bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
+)
+ax[1].text(
+    0.05, 0.95,
+    f'RB: {rb_v3pt2:.2f}\nRMSE: {rmse_v3pt2:.2f}\nCC: {cc_v3pt2:.2f}',
+    transform=ax[1].transAxes, fontsize=18, verticalalignment='top',
+    bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
+)
+ax[2].text(
+    0.05, 0.95,
+    f'RB: {rb_v3pt3:.2f}\nRMSE: {rmse_v3pt3:.2f}\nCC: {cc_v3pt3:.2f}',
+    transform=ax[2].transAxes, fontsize=18, verticalalignment='top',
+    bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
+)
+
+# Add legend
+handles, labels = ax[0].get_legend_handles_labels()
+unique_labels = dict(zip(labels, handles))  # Remove duplicates
+# Place a common legend below and outside the plot
+fg.legend(
+    unique_labels.values(), unique_labels.keys(),
+    loc='lower center', bbox_to_anchor=(0.5, -0.15),
+    fontsize=18,  ncol=6, frameon=False
+) #title='Regions', title_fontsize=18,
+
+
+# plt.tight_layout(rect=[0, 0.08, 1, 1])  # leave space for legend
+# save the figure
+svnme = os.path.join(path_to_put_plts, 'PAL_GPCP_scatter_plots.png')
+plt.savefig(svnme, bbox_inches='tight', dpi=500)
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 import pandas as pd
 from datetime import datetime
