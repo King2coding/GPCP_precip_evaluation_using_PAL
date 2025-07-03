@@ -103,43 +103,13 @@ for region, files in pals_classed_by_region.items():
     for file in files:
         # Load only lat and lon efficiently, downsample by slicing
         ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
-        lat = ds['lat'].values[::10]  # every 10th point for performance
-        lon = ds['lon'].values[::10]  # every 10th point for performance
-        ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=0.8)
+        lat = ds['lat'].values[::50]  # every 50th point for performance
+        lon = ds['lon'].values[::50]  # every 50th point for performance
+        ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=3)
         ds.close()
 
-    bounds = region_bounds[region]
-    # Comment out dashed rectangular boundaries for now - difficult to achieve programmatically
-    # rect = Rectangle(
-    #     (bounds["lon_min"], bounds["lat_min"]),
-    #     bounds["lon_max"] - bounds["lon_min"],
-    #     bounds["lat_max"] - bounds["lat_min"],
-    #     linewidth=1.5, edgecolor=color, facecolor='none', linestyle='--',
-    #     transform=ccrs.PlateCarree()
-    # )
-    # ax.add_patch(rect)
-
-    # Remove region name and count labels from the plot
-    # label_lon = bounds["lon_min"] + 2
-    # label_lat = bounds["lat_max"] - 5
-    # ax.text(label_lon, label_lat, f"{region}: {len(files)}", fontsize=15, color=color, transform=ccrs.PlateCarree())
-
-# Remove unclassified files plotting since there are none
-# if "Unclassified" in pals_classed_by_region and len(pals_classed_by_region["Unclassified"]) > 0:
-#     color = region_colors["Unclassified"]
-#     for file in pals_classed_by_region["Unclassified"]:
-#         ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
-#         lat = ds['lat'].values[::10]
-#         lon = ds['lon'].values[::10]
-#         ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=0.8)
-#         ds.close()
-#     
-#     # Add text annotation for unclassified
-#     ax.text(-170, -25, f"Unclassified: {len(pals_classed_by_region['Unclassified'])}", 
-#             fontsize=15, color=color, transform=ccrs.PlateCarree())
-
-# Add grid lines
-ax.grid(True, linewidth=0.5, color='grey', alpha=0.7, linestyle='--')
+# Add grid lines for major ticks
+ax.grid(True, which='major', linewidth=0.55, color='grey', alpha=0.7, linestyle='--')
 
 # Create legend with full region names and PAL counts
 legend_regions = [r for r in region_colors.keys() if r != "Unclassified"]
@@ -156,19 +126,44 @@ full_region_names = {
 }
 
 # Add full names and PAL counts to legend labels
-labels = [f"{full_region_names[region]} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
+labels = [f"{region}: ({full_region_names[region]} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
 plt.legend(handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.35), 
           fontsize=12, title_fontsize=14, ncol=3, frameon=False)
 
-ax.set_xticks(range(-180, 181, 60), crs=ccrs.PlateCarree())
-ax.set_yticks(range(-30, 61, 15), crs=ccrs.PlateCarree())  # Changed to 15 degree intervals
-ax.tick_params(labelsize=18)  # Increased font size for axis tick labels
+# Set ticks and format them with degree symbols and N/S/E/W
+xticks = range(-180, 181, 60)
+yticks = range(-30, 61, 15)
+ax.set_xticks(xticks, crs=ccrs.PlateCarree())
+ax.set_yticks(yticks, crs=ccrs.PlateCarree())
+
+def format_lon(x, pos=None):
+    if x == 0:
+        return "0°"
+    elif x < 0:
+        return f"{abs(int(x))}°W"
+    else:
+        return f"{int(x)}°E"
+
+def format_lat(y, pos=None):
+    if y == 0:
+        return "0°"
+    elif y < 0:
+        return f"{abs(int(y))}°S"
+    else:
+        return f"{int(y)}°N"
+
+ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
+ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
+
+ax.tick_params(labelsize=20)  # Increased font size for axis tick labels
 ax.set_title("PAL Trajectories by Ocean Region", fontsize=20)
 
 plt.tight_layout()
 plt.subplots_adjust(bottom=0.25)  # Add extra space at the bottom for legend
 plt.show()
 gc.collect()  # Clean up memory
+svnme = os.path.join(path_to_put_plts, 'PAL_trajectories_by_region.png')
+plt.savefig(svnme, bbox_inches='tight', dpi=500)
 
 # Print classification summary
 print("\n" + "="*50)
@@ -314,12 +309,7 @@ for region_name, pal_files in pals_classed_by_region.items():
         # Append to the list for later processing
         regional_PAL_GPCP_dfs_daily_lst.append(region_pal_gpcp_df)
 
-# calculate monhtly mean per region
-region_pal_gpcp_df_monthly_mean = pd.concat(regional_PAL_GPCP_dfs_daily_lst, ignore_index=True)
-region_pal_gpcp_df_monthly_mean['month'] = region_pal_gpcp_df_monthly_mean.index.to_series().dt.to_period('M')
-region_pal_gpcp_df_monthly_mean = region_pal_gpcp_df_monthly_mean.groupby(['region', 'month'])[['rain_rate', 'GPCP_v1pt3', 
-                                                                        'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
-        
+
 # # Example: Retrieve the fill value (used to represent missing values) in the first GPCP file
 # with xr.open_dataset(all_gpcp_v3pt2_files[0]) as ds:
 #     # Access the variable (e.g., 'precip')
@@ -344,7 +334,7 @@ rb_v3pt3, rmse_v3pt3, cc_v3pt3 = calculate_metrics(pal_gpcv3_3_cmp['rain_rate'],
 
 #- - - - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
-# make scatter plot of PAL vs GPCP
+# MAKE SCATTER PLOTS (PAL vs GPCP) - DAILY MEAN - ALL REGIONS - FIGURE 2
 fg, ax = plt.subplots(1, 3, figsize=(20, 6), gridspec_kw={'wspace': 0.35})  # Increased wspace for wider interval
 
 for region, df in regional_PAL_GPCP_dfs_daily_mean.items():
@@ -430,85 +420,164 @@ fg.legend(
 # save the figure
 svnme = os.path.join(path_to_put_plts, 'PAL_GPCP_scatter_plots.png')
 plt.savefig(svnme, bbox_inches='tight', dpi=500)
+
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+# calculate monhtly mean per region
+# Calculate monthly statistics (mean, Q1, Q3) for each region and product
+monthly_stats = {}
+
+# Prepare a DataFrame with all daily data
+all_daily = pd.concat(regional_PAL_GPCP_dfs_daily_lst, ignore_index=True)
+all_daily['date'] = pd.to_datetime(all_daily.index) if not isinstance(all_daily.index, pd.DatetimeIndex) else all_daily.index
+all_daily['month'] = pd.to_datetime(all_daily['date']).dt.month
+all_daily['year'] = pd.to_datetime(all_daily['date']).dt.year
+
+regions = [r for r in regional_PAL_GPCP_dfs_daily_mean.keys()]
+
+for region in regions:
+    df = all_daily[all_daily['region'] == region].copy()
+    df['month'] = pd.to_datetime(df['date']).dt.month
+    # Group by month
+    stats = df.groupby('month').agg({
+        'rain_rate': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
+        'GPCP_v1pt3': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
+        'GPCP_v3pt2': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
+        'GPCP_v3pt3': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
+    })
+    stats.columns = ['_'.join([c[0], c[1] if c[1] != '<lambda_0>' else 'q1' if i%3==1 else 'q3']) for i, c in enumerate(stats.columns)]
+    monthly_stats[region] = stats.reset_index()
+
+# Plotting (mimic the attached figure)
+import matplotlib.pyplot as plt
+
+region_titles = {
+    "TNEP": "(a) Tropical Northeastern Pacific (TNEP)",
+    "TSEP": "(b) Tropical Southeastern Pacific (TSEP)",
+    "TNWP": "(c) Tropical Northwestern Pacific (TNWP)",
+    "ETNP": "(d) Extratropical North Pacific (ETNP)",
+    "TNIO": "(e) Tropical North Indian Ocean (TNIO)",
+    "STNA": "(f) Subtropical North Atlantic (STNA)"
+}
+region_order = ["TNEP", "TSEP", "TNWP", "ETNP", "TNIO", "STNA"]
+
+fig, axs = plt.subplots(2, 3, figsize=(18, 10), sharex=True)
+axs = axs.flatten()
+months = np.arange(1, 13)
+month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+for i, region in enumerate(region_order):
+    ax = axs[i]
+    stats = monthly_stats[region]
+    # PAL
+    ax.plot(months, stats['rain_rate_mean'], color='k', marker='o', label='PAL Obs. Mean')
+    ax.fill_between(months, stats['rain_rate_q1'], stats['rain_rate_q3'], color='k', alpha=0.2, label='PAL [Q1,Q3]')
+    # GPCP v3.2
+    ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Mean')
+    ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 [Q1,Q3]')
+    # GPCP v1.3
+    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Mean')
+    ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 [Q1,Q3]')
+    # GPCP v3.3
+    ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Mean')
+    ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 [Q1,Q3]')
+    # Title, labels
+    ax.set_title(region_titles[region], fontsize=14, fontweight='bold')
+    ax.set_xticks(months)
+    ax.set_xticklabels(month_labels, rotation=45)
+    ax.set_ylabel('Rainfall (mm)')
+    ax.grid(True, alpha=0.3)
+    # Add N= count
+    n_pal = len(pals_classed_by_region[region])
+    ax.text(0.02, 0.95, f'N = {n_pal} PALs', transform=ax.transAxes, fontsize=12, va='top')
+    if i == 0:
+        ax.legend(fontsize=10, loc='upper left')
+
+plt.tight_layout()
+# Save plot to disk
+monthly_plot_path = os.path.join(path_to_put_plts, 'PAL_GPCP_monthly_stats_by_region.png')
+plt.savefig(monthly_plot_path, bbox_inches='tight', dpi=500)
+plt.show()
+
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
-import pandas as pd
-from datetime import datetime
+# import pandas as pd
+# from datetime import datetime
 
-print("MINIMAL TEST: 1 PAL + 1 GPCP FILE")
-print("="*50)
+# print("MINIMAL TEST: 1 PAL + 1 GPCP FILE")
+# print("="*50)
 
-# Step 1: Pick just 1 PAL file for testing
-test_pal_file = None
-test_region = None
+# # Step 1: Pick just 1 PAL file for testing
+# test_pal_file = None
+# test_region = None
 
-for region_name, pal_files in pals_classed_by_region.items():
-    if region_name != "Unclassified" and len(pal_files) > 0:
-        test_pal_file = pal_files[0]  # Just take the first PAL
-        test_region = region_name
-        break
+# for region_name, pal_files in pals_classed_by_region.items():
+#     if region_name != "Unclassified" and len(pal_files) > 0:
+#         test_pal_file = pal_files[0]  # Just take the first PAL
+#         test_region = region_name
+#         break
 
-if test_pal_file is None:
-    print("No PAL files found!")
-else:
-    print(f"Test PAL file: {os.path.basename(test_pal_file)}")
-    print(f"Test region: {test_region}")
+# if test_pal_file is None:
+#     print("No PAL files found!")
+# else:
+#     print(f"Test PAL file: {os.path.basename(test_pal_file)}")
+#     print(f"Test region: {test_region}")
 
-# Step 2: Pick just 1 GPCP file for testing
-test_gpcp_file = all_gpcp_v1pt3_files[0] if len(all_gpcp_v1pt3_files) > 0 else None
+# # Step 2: Pick just 1 GPCP file for testing
+# test_gpcp_file = all_gpcp_v1pt3_files[0] if len(all_gpcp_v1pt3_files) > 0 else None
 
-if test_gpcp_file is None:
-    print("No GPCP files found!")
-else:
-    print(f"Test GPCP file: {os.path.basename(test_gpcp_file)}")
+# if test_gpcp_file is None:
+#     print("No GPCP files found!")
+# else:
+#     print(f"Test GPCP file: {os.path.basename(test_gpcp_file)}")
 
-print("="*50)
-print("="*50)
+# print("="*50)
+# print("="*50)
 
-# Now let's examine both files step by step
-if test_pal_file and test_gpcp_file:
-    print("\nStep 1: Examining PAL file structure...")
-    pal_ds = xr.open_dataset(test_pal_file)
-    print(f"PAL variables: {list(pal_ds.variables.keys())}")
-    print(f"PAL time range: {pal_ds.time.values[0]} to {pal_ds.time.values[-1]}")
-    print(f"PAL data points: {len(pal_ds.time.values)}")
+# # Now let's examine both files step by step
+# if test_pal_file and test_gpcp_file:
+#     print("\nStep 1: Examining PAL file structure...")
+#     pal_ds = xr.open_dataset(test_pal_file)
+#     print(f"PAL variables: {list(pal_ds.variables.keys())}")
+#     print(f"PAL time range: {pal_ds.time.values[0]} to {pal_ds.time.values[-1]}")
+#     print(f"PAL data points: {len(pal_ds.time.values)}")
     
-    # Get first few data points as example
-    pal_time = pd.to_datetime(pal_ds['time'].values)
-    pal_lat = pal_ds['lat'].values
-    pal_lon = pal_ds['lon'].values
-    pal_rain = pal_ds['rain_rate'].values
+#     # Get first few data points as example
+#     pal_time = pd.to_datetime(pal_ds['time'].values)
+#     pal_lat = pal_ds['lat'].values
+#     pal_lon = pal_ds['lon'].values
+#     pal_rain = pal_ds['rain_rate'].values
     
-    print(f"Sample PAL data (first 3 points):")
-    for i in range(min(3, len(pal_time))):
-        print(f"  {pal_time[i]}: Lat={pal_lat[i]:.2f}, Lon={pal_lon[i]:.2f}, Rain={pal_rain[i]:.3f}")
+#     print(f"Sample PAL data (first 3 points):")
+#     for i in range(min(3, len(pal_time))):
+#         print(f"  {pal_time[i]}: Lat={pal_lat[i]:.2f}, Lon={pal_lon[i]:.2f}, Rain={pal_rain[i]:.3f}")
     
-    print("\nStep 2: Examining GPCP file structure...")
-    gpcp_ds = xr.open_dataset(test_gpcp_file)
-    print(f"GPCP variables: {list(gpcp_ds.variables.keys())}")
-    print(f"GPCP dimensions: {dict(gpcp_ds.dims)}")
+#     print("\nStep 2: Examining GPCP file structure...")
+#     gpcp_ds = xr.open_dataset(test_gpcp_file)
+#     print(f"GPCP variables: {list(gpcp_ds.variables.keys())}")
+#     print(f"GPCP dimensions: {dict(gpcp_ds.dims)}")
     
-    # Check coordinates
-    if 'time' in gpcp_ds.variables:
-        print(f"GPCP time range: {gpcp_ds.time.values[0]} to {gpcp_ds.time.values[-1]}")
+#     # Check coordinates
+#     if 'time' in gpcp_ds.variables:
+#         print(f"GPCP time range: {gpcp_ds.time.values[0]} to {gpcp_ds.time.values[-1]}")
     
-    # Check lat/lon
-    lat_var = 'latitude' if 'latitude' in gpcp_ds.variables else 'lat'
-    lon_var = 'longitude' if 'longitude' in gpcp_ds.variables else 'lon'
+#     # Check lat/lon
+#     lat_var = 'latitude' if 'latitude' in gpcp_ds.variables else 'lat'
+#     lon_var = 'longitude' if 'longitude' in gpcp_ds.variables else 'lon'
     
-    if lat_var in gpcp_ds.variables and lon_var in gpcp_ds.variables:
-        print(f"GPCP lat range: {gpcp_ds[lat_var].values.min():.2f} to {gpcp_ds[lat_var].values.max():.2f}")
-        print(f"GPCP lon range: {gpcp_ds[lon_var].values.min():.2f} to {gpcp_ds[lon_var].values.max():.2f}")
+#     if lat_var in gpcp_ds.variables and lon_var in gpcp_ds.variables:
+#         print(f"GPCP lat range: {gpcp_ds[lat_var].values.min():.2f} to {gpcp_ds[lat_var].values.max():.2f}")
+#         print(f"GPCP lon range: {gpcp_ds[lon_var].values.min():.2f} to {gpcp_ds[lon_var].values.max():.2f}")
     
-    # Close datasets
-    pal_ds.close()
-    gpcp_ds.close()
+#     # Close datasets
+#     pal_ds.close()
+#     gpcp_ds.close()
     
-    print("\nMinimal test setup complete!")
-    print("Next step: Implement actual matching logic with these files.")
+#     print("\nMinimal test setup complete!")
+#     print("Next step: Implement actual matching logic with these files.")
 
-else:
-    print("Cannot proceed - missing test files!")
+# else:
+#     print("Cannot proceed - missing test files!")
 
-gc.collect()
+# gc.collect()
 
 
