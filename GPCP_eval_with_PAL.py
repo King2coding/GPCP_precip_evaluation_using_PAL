@@ -385,22 +385,22 @@ for i, a in enumerate(ax):
         a.set_ylabel('GPCP v3.3 Estimates [mm/day]', fontsize=18)
         a.set_title('GPCP v3.3 vs PAL', fontsize=20)
 
-# Add metrics text to each subplot
+# Add metrics text to each subplot, with RMSE unit
 ax[0].text(
     0.05, 0.95,
-    f'RB: {rb_v1pt3:.2f}\nRMSE: {rmse_v1pt3:.2f}\nCC: {cc_v1pt3:.2f}',
+    f'RB: {rb_v1pt3:.2f}\nRMSE: {rmse_v1pt3:.2f} mm/day\nCC: {cc_v1pt3:.2f}',
     transform=ax[0].transAxes, fontsize=18, verticalalignment='top',
     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
 )
 ax[1].text(
     0.05, 0.95,
-    f'RB: {rb_v3pt2:.2f}\nRMSE: {rmse_v3pt2:.2f}\nCC: {cc_v3pt2:.2f}',
+    f'RB: {rb_v3pt2:.2f}\nRMSE: {rmse_v3pt2:.2f} mm/day\nCC: {cc_v3pt2:.2f}',
     transform=ax[1].transAxes, fontsize=18, verticalalignment='top',
     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
 )
 ax[2].text(
     0.05, 0.95,
-    f'RB: {rb_v3pt3:.2f}\nRMSE: {rmse_v3pt3:.2f}\nCC: {cc_v3pt3:.2f}',
+    f'RB: {rb_v3pt3:.2f}\nRMSE: {rmse_v3pt3:.2f} mm/day\nCC: {cc_v3pt3:.2f}',
     transform=ax[2].transAxes, fontsize=18, verticalalignment='top',
     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
 )
@@ -421,17 +421,20 @@ fg.legend(
 svnme = os.path.join(path_to_put_plts, 'PAL_GPCP_scatter_plots.png')
 plt.savefig(svnme, bbox_inches='tight', dpi=500)
 
-
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # calculate monhtly mean per region
 # Calculate monthly statistics (mean, Q1, Q3) for each region and product
 monthly_stats = {}
 
 # Prepare a DataFrame with all daily data
-all_daily = pd.concat(regional_PAL_GPCP_dfs_daily_lst, ignore_index=True)
-all_daily['date'] = pd.to_datetime(all_daily.index) if not isinstance(all_daily.index, pd.DatetimeIndex) else all_daily.index
-all_daily['month'] = pd.to_datetime(all_daily['date']).dt.month
-all_daily['year'] = pd.to_datetime(all_daily['date']).dt.year
+all_daily = pd.concat(regional_PAL_GPCP_dfs_daily_lst)
+all_daily = all_daily.reset_index()  # Ensure 'date' is a column after concat
+if 'date' not in all_daily.columns:
+    all_daily['date'] = pd.to_datetime(all_daily['index'])
+else:
+    all_daily['date'] = pd.to_datetime(all_daily['date'])
+all_daily['month'] = all_daily['date'].dt.month
+all_daily['year'] = all_daily['date'].dt.year
 
 regions = [r for r in regional_PAL_GPCP_dfs_daily_mean.keys()]
 
