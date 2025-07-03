@@ -203,10 +203,13 @@ print(f"Difference: {total_actual - total_expected}")
 gc.collect()  # Clean up memory
 
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
-
+regional_PAL_GPCP_dfs = {}
 for region_name, pal_files in pals_classed_by_region.items():
     if region_name != "Unclassified" and len(pal_files) > 0:
         print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
+
+        # store PAL and GPCP dataframes
+        region_pal_gpcp_dfs = []     
 
         # LOAD PAL DATA
         for pal_file in pal_files:
@@ -231,42 +234,75 @@ for region_name, pal_files in pals_classed_by_region.items():
             df['lon'] = (df['lon'] + 360) % 360
             df['lon'][df['lon'] > 180] -= 360
 
-            df['row'], df['col'] = assign_to_gpcp_grid(df['lat'], df['lon'], 1.0)
-
-            # Now df contains the PAL data with GPCP grid assignments
-            # average daily rainfall
+            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+            # Process GPCP data with PAL
             
-            daily_avg = df.groupby(['date', 'row', 'col'])[['rain_rate', 'lat', 'lon']].mean().reset_index()
-            daily_avg = daily_avg.set_index('date')
-            daily_avg['region'] = region_name
-            daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+            pal_df_gpcpv1pt3 = df.copy()
 
-            # collect GPCP data for this PAL
-            # Vectorized approach for speed
-            # Prepare arrays for lookup
-            gpcp_times = gpcp_ds_v1pt3_xr['time'].values
-            gpcp_lats = gpcp_ds_v1pt3_xr['latitude'].values
-            gpcp_lons = gpcp_ds_v1pt3_xr['longitude'].values
+            # get the resolution of the GPCP data
+            resol_gpcpv1pt3 = np.unique(np.diff(gpcp_ds_v1pt3_xr['longitude'].values))[0]
 
-            # Map PAL dates to nearest GPCP time index
-            pal_dates = pd.to_datetime(daily_avg.index)
-            gpcp_time_idx = np.searchsorted(gpcp_times, pal_dates)
-            gpcp_time_idx = np.clip(gpcp_time_idx, 0, len(gpcp_times) - 1)
+            pal_gpcpv1pt3_daily_avg = process_gpcp_with_PAL(pal_file, region_name, 
+                                                            pal_df_gpcpv1pt3, gpcp_ds_v1pt3_xr, 
+                                                            resol_gpcpv1pt3, 'GPCP_v1pt3') 
+            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+            pal_df_gpcpv3pt2 = df.copy()   
 
-            # Map PAL lat/lon to nearest GPCP grid index
-            pal_lats = daily_avg['lat'].values
-            pal_lons = daily_avg['lon'].values
+            resol_gpcpv3pt2 = np.unique(np.diff(gpcp_ds_v3pt2_xr['lon'].values))[0]
+            
+            pal_gpcpv3pt2_daily_avg = process_gpcp_with_PAL(pal_file, region_name, 
+                                                            pal_df_gpcpv3pt2, gpcp_ds_v3pt2_xr, resol_gpcpv3pt2,
+                                                            'GPCP_v3pt2')
+            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+            pal_df_gpcpv3pt3 = df.copy()           
 
-            gpcp_lat_idx = np.abs(gpcp_lats[:, None] - pal_lats).argmin(axis=0)
-            gpcp_lon_idx = np.abs(gpcp_lons[:, None] - pal_lons).argmin(axis=0)
+            resol_gpcpv3pt3 = np.unique(np.diff(gpcp_ds_v3pt3_xr['lon'].values))[0]
 
-            # Extract GPCP values in a vectorized way
-            gpcp_precip = gpcp_ds_v1pt3_xr['precip'].values
-            matched_vals = gpcp_precip[gpcp_time_idx, gpcp_lat_idx, gpcp_lon_idx]
+            pal_gpcpv3pt3_daily_avg = process_gpcp_with_PAL(pal_file, region_name,
+                                                            pal_df_gpcpv3pt3, gpcp_ds_v3pt3_xr, 
+                                                            resol_gpcpv3pt3, 'GPCP_v3pt3') 
 
-            daily_avg['gpcp_v1pt3'] = matched_vals
+            # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data
+            # Use pd.merge to combine on 'date' after selecting only relevant columns
+            pal_df_combined = pal_gpcpv1pt3_daily_avg.copy()
+            pal_df_combined = pal_df_combined[['rain_rate', 'region', 'track_PAL_id', 'GPCP_v1pt3']].copy()
+            # pal_df_combined['region'] = region_name  # Add region name for clarity            
+            
+            # Merge GPCP_v3pt2, always retain prob_liq, but avoid duplicate columns
+            pal_df_combined = pal_df_combined.merge(
+                pal_gpcpv3pt2_daily_avg[['GPCP_v3pt2', 'prob_liq']], 
+                left_index=True, right_index=True, how='left', suffixes=('', '_v3pt2')
+            )
+            # Remove any duplicate columns from previous merges
+            for col in ['GPCP_v3pt2_v3pt2', 'prob_liq_v3pt2']:
+                if col in pal_df_combined.columns:
+                    pal_df_combined.drop(columns=col, inplace=True)
+
+            # Merge GPCP_v3pt3, avoid duplicate columns
+            pal_df_combined = pal_df_combined.merge(
+                pal_gpcpv3pt3_daily_avg[['GPCP_v3pt3']], 
+                left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
+            )
+            if 'GPCP_v3pt3_v3pt3' in pal_df_combined.columns:
+                pal_df_combined.drop(columns=['GPCP_v3pt3_v3pt3'], inplace=True)
+            
+            # multiply PAL rain rate by 24 to get daily average
+            pal_df_combined['rain_rate'] *= 24
+
+            # retain only columns where prob_liq is == 100
+            pal_df_combined = pal_df_combined[pal_df_combined['prob_liq'] == 100]
+
+            region_pal_gpcp_dfs.append(pal_df_combined)
 
             pal_ds.close()
+
+        # Combine all region PAL-GPCP dataframes into a single dataframe
+        region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs, ignore_index=True)
+        # calculate mean per track_PAL_id
+        region_pal_gpcp_df = region_pal_gpcp_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
+        region_pal_gpcp_df['region'] = region_name  # Add region name for clarity
+        regional_PAL_GPCP_dfs[region_name] = region_pal_gpcp_df
+        
 
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 import pandas as pd
