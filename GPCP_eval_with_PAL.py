@@ -1,6 +1,5 @@
 #%% IMPORT LIBRARIES
-import warnings
-warnings.filterwarnings("ignore")
+
 import importlib
 import sys
 
@@ -70,6 +69,7 @@ all_gpcp_v3pt2_files = sorted([os.path.join(path_to_gpcp_v3pt2, f) for f in os.l
 
 all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.listdir(path_to_gpcp_v3pt3) if f.endswith('.nc4')])
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 # read all GPCP into a single xr data
 gpcp_ds_v1pt3_xr = xr.open_mfdataset(all_gpcp_v1pt3_files, combine='by_coords', parallel=True)
 gpcp_ds_v1pt3_xr = ds_swaplon(gpcp_ds_v1pt3_xr)
@@ -205,7 +205,8 @@ print(f"Difference: {total_actual - total_expected}")
 gc.collect()  # Clean up memory
 
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
-regional_PAL_GPCP_dfs = {}
+regional_PAL_GPCP_dfs_daily_mean = {}
+regional_PAL_GPCP_dfs_daily_lst = []
 for region_name, pal_files in pals_classed_by_region.items():
     if region_name != "Unclassified" and len(pal_files) > 0:
         print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
@@ -289,7 +290,7 @@ for region_name, pal_files in pals_classed_by_region.items():
                 pal_df_combined.drop(columns=['GPCP_v3pt3_v3pt3'], inplace=True)
             
             # multiply PAL rain rate by 24 to get daily average
-            pal_df_combined['rain_rate'] *= 24
+            # pal_df_combined['rain_rate'] *= 24
 
             # retain only columns where prob_liq is == 100
             pal_df_combined = pal_df_combined[pal_df_combined['prob_liq'] == 100]
@@ -300,23 +301,32 @@ for region_name, pal_files in pals_classed_by_region.items():
 
         # Combine all region PAL-GPCP dataframes into a single dataframe
         region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs, ignore_index=True)
-        # calculate mean per track_PAL_id
-        region_pal_gpcp_df = region_pal_gpcp_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v1pt3', 
-                                                                           'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
-        region_pal_gpcp_df['region'] = region_name  # Add region name for clarity
-        regional_PAL_GPCP_dfs[region_name] = region_pal_gpcp_df
         
-# Example: Retrieve the fill value (used to represent missing values) in the first GPCP file
-with xr.open_dataset(all_gpcp_v1pt3_files[0]) as ds:
-    fill_values = {}
-    for var in ds.data_vars:
-        attrs = ds[var].attrs
-        # Common attribute names for fill values: '_FillValue' or 'missing_value'
-        fill_val = attrs.get('_FillValue', attrs.get('missing_value', None))
-        fill_values[var] = fill_val
-    print("Fill value (used for missing data) per variable:")
-    for var, fill_val in fill_values.items():
-        print(f"{var}: {fill_val}")
+        
+        # calculate daily mean per track_PAL_id
+        region_pal_gpcp_df_daily_mean = region_pal_gpcp_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v1pt3', 
+                                                                           'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
+        region_pal_gpcp_df_daily_mean['region'] = region_name  # Add region name for clarity
+        regional_PAL_GPCP_dfs_daily_mean[region_name] = region_pal_gpcp_df_daily_mean
+
+        # Append to the list for later processing
+        regional_PAL_GPCP_dfs_daily_lst.append(region_pal_gpcp_df)
+
+    # calculate monhtly mean per region
+    region_pal_gpcp_df_monthly_mean = pd.concat(regional_PAL_GPCP_dfs_daily_lst, ignore_index=True)
+    region_pal_gpcp_df_monthly_mean['month'] = region_pal_gpcp_df_monthly_mean['date'].dt.to_period('M')
+    region_pal_gpcp_df_monthly_mean = region_pal_gpcp_df_monthly_mean.groupby(['region', 'month'])[['rain_rate', 'GPCP_v1pt3', 
+                                                                        'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
+        
+# # Example: Retrieve the fill value (used to represent missing values) in the first GPCP file
+# with xr.open_dataset(all_gpcp_v3pt2_files[0]) as ds:
+#     # Access the variable (e.g., 'precip')
+#     var = ds["precip"]
+
+#     # Get the missing_value or _FillValue attribute
+#     missing_val = var.attrs.get("missing_value") or var.attrs.get("_FillValue")
+
+#     print(f"Missing value: {missing_val}")
 
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 import pandas as pd

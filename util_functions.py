@@ -1,4 +1,6 @@
 #%% IMPORT LIBRARIES
+import warnings
+warnings.filterwarnings("ignore")
 import os
 import pandas as pd
 import numpy as np
@@ -6,7 +8,19 @@ import xarray as xr
 import gc
 from rasterio.transform import from_origin
 from rasterio.transform import rowcol
+
+from osgeo import gdal, osr
+import subprocess
+
 #%% GLOBAL VARIABLES
+def run_gdalinfo(file_path):
+    # Run the gdalinfo command using subprocess
+    result = subprocess.run(['gdalinfo', file_path], capture_output=True, text=True)
+    
+    # Print the output
+    print(result.stdout)
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # DEFINE REGIONS AND THEIR BOUNDARIES (based on Figure 1 and PAL data coverage)
 region_bounds = {
     "ETNP": {"lon_min": -170, "lon_max": -120, "lat_min": 30, "lat_max": 60},  # Extratropical North Pacific 
@@ -211,6 +225,68 @@ def classify_and_group_files_bounding_box(file_list, region_bounds_dict=None):
     print(f"\nTotal unclassified files: {len(classification['Unclassified'])}")
     return classification
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - 
+
+def process_gpcp_with_PAL(pal_file, region_name, pal_df, gpcp_ds_xr, 
+                          resolution, gpcp_version):
+
+    coord_lst = list(gpcp_ds_xr.coords)
+
+    missing_val = -9999 # -9999 for both PAL and GPCP data
+
+    # get lat, lon var name
+    lat_var = 'latitude' if 'latitude' in coord_lst else 'lat'
+    lon_var = 'longitude' if 'longitude' in coord_lst else 'lon'
+
+    pal_df['row_idx'], pal_df['col_idx'] = assign_to_gpcp_grid(pal_df['lat'], pal_df['lon'], resolution)
+
+    # Handle missing values in rain_rate
+    pal_df['rain_rate'] = pal_df['rain_rate'].replace(missing_val, np.nan)
+
+    # Now df contains the PAL data with GPCP grid assignments
+    # average daily rainfall
+
+    daily_avg = pal_df.groupby(['date', 'row_idx', 'col_idx'])[['rain_rate', 'lat', 'lon']].mean().reset_index()
+    daily_avg = daily_avg.set_index('date')
+    # convert rain_rate to mm/day
+    daily_avg['rain_rate'] = daily_avg['rain_rate'] * 24  # convert to mm/day
+    daily_avg['region'] = region_name
+    daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+
+    # collect GPCP data for this PAL
+    # Vectorized approach for speed
+    # Prepare arrays for lookup
+    gpcp_times = gpcp_ds_xr['time'].values
+    gpcp_lats = gpcp_ds_xr[lat_var].values
+    gpcp_lons = gpcp_ds_xr[lon_var].values
+
+    # Map PAL dates to nearest GPCP time index
+    pal_dates = pd.to_datetime(daily_avg.index)
+    gpcp_time_idx = np.searchsorted(gpcp_times, pal_dates)
+    gpcp_time_idx = np.clip(gpcp_time_idx, 0, len(gpcp_times) - 1)
+
+    # Map PAL lat/lon to nearest GPCP grid index
+    pal_lats = daily_avg['lat'].values
+    pal_lons = daily_avg['lon'].values
+
+    gpcp_lat_idx = np.abs(gpcp_lats[:, None] - pal_lats).argmin(axis=0)
+    gpcp_lon_idx = np.abs(gpcp_lons[:, None] - pal_lons).argmin(axis=0)
+
+    # Extract GPCP values in a vectorized way
+    gpcp_precip = gpcp_ds_xr['precip'].values
+    # Handle missing values by replacing with NaN
+    gpcp_precip = np.where(gpcp_precip == missing_val, np.nan, gpcp_precip)
+    matched_vals = gpcp_precip[gpcp_time_idx, gpcp_lat_idx, gpcp_lon_idx]
+
+    daily_avg[gpcp_version] = matched_vals
+
+    # Extract probability of Liquid precipitation data if gpcp_version == 'GPCP_v3pt2'
+    if gpcp_version == 'GPCP_v3pt2':
+        gpcp_prob_liq = gpcp_ds_xr['probability_liquid_phase'].values
+        daily_avg['prob_liq'] = gpcp_prob_liq[gpcp_time_idx, gpcp_lat_idx, gpcp_lon_idx]
+
+    return daily_avg
+
 #%% DEBUG FUNCTION
 def debug_overlap_test():
     """Test the boxes_overlap function with specific PAL coordinates"""
@@ -250,56 +326,3 @@ def debug_overlap_test():
 
 # Call the debug function
 # debug_overlap_test()
-
-
-#- - - - - -
-
-def process_gpcp_with_PAL(pal_file, region_name, pal_df, gpcp_ds_xr, resolution, gpcp_version):
-
-    coord_lst = list(gpcp_ds_xr.coords)
-
-    # get lat, lon var name
-    lat_var = 'latitude' if 'latitude' in coord_lst else 'lat'
-    lon_var = 'longitude' if 'longitude' in coord_lst else 'lon'
-
-    pal_df['row_idx'], pal_df['col_idx'] = assign_to_gpcp_grid(pal_df['lat'], pal_df['lon'], resolution)
-
-    # Now df contains the PAL data with GPCP grid assignments
-    # average daily rainfall
-
-    daily_avg = pal_df.groupby(['date', 'row_idx', 'col_idx'])[['rain_rate', 'lat', 'lon']].mean().reset_index()
-    daily_avg = daily_avg.set_index('date')
-    daily_avg['region'] = region_name
-    daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
-
-    # collect GPCP data for this PAL
-    # Vectorized approach for speed
-    # Prepare arrays for lookup
-    gpcp_times = gpcp_ds_xr['time'].values
-    gpcp_lats = gpcp_ds_xr[lat_var].values
-    gpcp_lons = gpcp_ds_xr[lon_var].values
-
-    # Map PAL dates to nearest GPCP time index
-    pal_dates = pd.to_datetime(daily_avg.index)
-    gpcp_time_idx = np.searchsorted(gpcp_times, pal_dates)
-    gpcp_time_idx = np.clip(gpcp_time_idx, 0, len(gpcp_times) - 1)
-
-    # Map PAL lat/lon to nearest GPCP grid index
-    pal_lats = daily_avg['lat'].values
-    pal_lons = daily_avg['lon'].values
-
-    gpcp_lat_idx = np.abs(gpcp_lats[:, None] - pal_lats).argmin(axis=0)
-    gpcp_lon_idx = np.abs(gpcp_lons[:, None] - pal_lons).argmin(axis=0)
-
-    # Extract GPCP values in a vectorized way
-    gpcp_precip = gpcp_ds_xr['precip'].values
-    matched_vals = gpcp_precip[gpcp_time_idx, gpcp_lat_idx, gpcp_lon_idx]
-
-    daily_avg[gpcp_version] = matched_vals
-
-    # Extract probability of Liquid precipitation data if gpcp_version == 'GPCP_v3pt2'
-    if gpcp_version == 'GPCP_v3pt2':
-        gpcp_prob_liq = gpcp_ds_xr['probability_liquid_phase'].values
-        daily_avg['prob_liq'] = gpcp_prob_liq[gpcp_time_idx, gpcp_lat_idx, gpcp_lon_idx]
-
-    return daily_avg
