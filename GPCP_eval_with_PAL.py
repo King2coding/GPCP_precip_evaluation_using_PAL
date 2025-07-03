@@ -1,4 +1,6 @@
 #%% IMPORT LIBRARIES
+import warnings
+warnings.filterwarnings("ignore")
 import importlib
 import sys
 
@@ -299,10 +301,22 @@ for region_name, pal_files in pals_classed_by_region.items():
         # Combine all region PAL-GPCP dataframes into a single dataframe
         region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs, ignore_index=True)
         # calculate mean per track_PAL_id
-        region_pal_gpcp_df = region_pal_gpcp_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
+        region_pal_gpcp_df = region_pal_gpcp_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v1pt3', 
+                                                                           'GPCP_v3pt2', 'GPCP_v3pt3']].mean().reset_index()
         region_pal_gpcp_df['region'] = region_name  # Add region name for clarity
         regional_PAL_GPCP_dfs[region_name] = region_pal_gpcp_df
         
+# Example: Retrieve the fill value (used to represent missing values) in the first GPCP file
+with xr.open_dataset(all_gpcp_v1pt3_files[0]) as ds:
+    fill_values = {}
+    for var in ds.data_vars:
+        attrs = ds[var].attrs
+        # Common attribute names for fill values: '_FillValue' or 'missing_value'
+        fill_val = attrs.get('_FillValue', attrs.get('missing_value', None))
+        fill_values[var] = fill_val
+    print("Fill value (used for missing data) per variable:")
+    for var, fill_val in fill_values.items():
+        print(f"{var}: {fill_val}")
 
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 import pandas as pd
