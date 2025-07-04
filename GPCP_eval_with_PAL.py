@@ -11,6 +11,8 @@ from util_functions import *
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+import matplotlib as mpl
+from matplotlib.legend import Legend
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -121,8 +123,18 @@ print(f"Total Actual: {total_actual}")
 print(f"Difference: {total_actual - total_expected}")
 
 gc.collect()  # Clean up memory
-#%% PLOT
+#%% PLOT - FIGURE 1
 # === Plot ===
+# Set font to Times New Roman and bold for all texts
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+# Remove unavailable Times New Roman to avoid findfont warnings
+
 fig = plt.figure(figsize=(18, 10))
 ax = plt.axes(projection=ccrs.PlateCarree())
 ax.set_extent([-180, 180, -30, 60], crs=ccrs.PlateCarree())
@@ -163,8 +175,15 @@ full_region_names = {
 
 # Add full names and PAL counts to legend labels
 labels = [f"{region}: ({full_region_names[region]} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
-plt.legend(handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.35), 
-          fontsize=18, title_fontsize=14, ncol=3, frameon=False)
+leg = plt.legend(
+    handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.35), 
+    fontsize=14, title_fontsize=14, ncol=3, frameon=False
+)
+# Set legend fontweight to bold
+for text in leg.get_texts():
+    text.set_fontweight('bold')
+if leg.get_title() is not None:
+    leg.get_title().set_fontweight('bold')
 
 # Set ticks and format them with degree symbols and N/S/E/W
 xticks = range(-180, 181, 60)
@@ -175,14 +194,18 @@ ax.set_yticks(yticks, crs=ccrs.PlateCarree())
 ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
 ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
 
-ax.tick_params(labelsize=20)  # Increased font size for axis tick labels
-ax.set_title("PAL Trajectories by Ocean Region", fontsize=20)
+ax.tick_params(labelsize=18)
+for label in ax.get_xticklabels() + ax.get_yticklabels():
+    label.set_fontweight('bold')
+
+ax.set_title("PAL Trajectories by Ocean Region", fontsize=20, 
+             fontweight='bold', fontname='Times New Roman')
 
 plt.tight_layout()
-plt.subplots_adjust(bottom=0.25)  # Add extra space at the bottom for legend
+plt.subplots_adjust(bottom=0.3)  # Add extra space at the bottom for legend
 
-svnme = os.path.join(path_to_put_plts, 'PAL_trajectories_by_region.png')
-plt.savefig(svnme, bbox_inches='tight', dpi=500)
+svname = os.path.join(path_to_put_plts, 'PAL_trajectories_by_region.png')
+plt.savefig(svname, bbox_inches='tight', dpi=500)
 plt.show()
 gc.collect()  # Clean up memory
 
@@ -323,6 +346,16 @@ rb_v3pt3, rmse_v3pt3, cc_v3pt3 = calculate_metrics(pal_gpcv3_3_cmp['rain_rate'],
 #- - - - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
 # MAKE SCATTER PLOTS (PAL vs GPCP) - DAILY MEAN - ALL REGIONS - FIGURE 2
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+# Removed 'Times New Roman' to avoid findfont warnings
+mpl.rcParams['ytick.labelsize'] = 18
+
 fg, ax = plt.subplots(1, 3, figsize=(20, 6), gridspec_kw={'wspace': 0.35})  # Increased wspace for wider interval
 
 for region, df in regional_PAL_GPCP_dfs_daily_mean.items():
@@ -334,17 +367,12 @@ for region, df in regional_PAL_GPCP_dfs_daily_mean.items():
     # Plot GPCP v1.3
     ax[0].scatter(pal_gpcv1_3['rain_rate'], pal_gpcv1_3['GPCP_v1pt3'],
                   color=reg_col, label=region, s=80)
-    ax[0].set_title('GPCP v1.3 vs PAL')
-
     # Plot GPCP v3.2
     ax[1].scatter(pal_gpcv3_2['rain_rate'] , pal_gpcv3_2['GPCP_v3pt2'],
                   color=reg_col, label=region, s=80)
-    ax[1].set_title('GPCP v3.2 vs PAL')
-
     # Plot GPCP v3.3
     ax[2].scatter(pal_gpcv3_3['rain_rate'], pal_gpcv3_3['GPCP_v3pt3'],
                   color=reg_col, label=region, s=80)
-    ax[2].set_title('GPCP v3.3 vs PAL')
 
 # Set axes limits, ticks, grids, and major ticks for all subplots
 for i, a in enumerate(ax):
@@ -359,50 +387,56 @@ for i, a in enumerate(ax):
     # add 1:1 line
     x = np.linspace(0, 15, 100)
     a.plot(x, x, color='gray', linestyle='--')
-    # Set axis labels and title
+    # Set axis labels and title with bold fontweight
     if i == 0:
-        a.set_xlabel('PAL Observations [mm/day]', fontsize=18)
-        a.set_ylabel('GPCP v1.3 Estimates [mm/day]', fontsize=18)
-        a.set_title('GPCP v1.3 vs PAL', fontsize=20)
+        a.set_xlabel('PAL Observations [mm/day]', fontsize=18, fontweight='bold')
+        a.set_ylabel('GPCP v1.3 Estimates [mm/day]', fontsize=18, fontweight='bold')
+        a.set_title('GPCP v1.3 vs PAL', fontsize=20, fontweight='bold')
     elif i == 1:
-        a.set_xlabel('PAL Observations [mm/day]', fontsize=18)
-        a.set_ylabel('GPCP v3.2 Estimates [mm/day]', fontsize=18)
-        a.set_title('GPCP v3.2 vs PAL', fontsize=20)
+        a.set_xlabel('PAL Observations [mm/day]', fontsize=18, fontweight='bold')
+        a.set_ylabel('GPCP v3.2 Estimates [mm/day]', fontsize=18, fontweight='bold')
+        a.set_title('GPCP v3.2 vs PAL', fontsize=20, fontweight='bold')
     elif i == 2:
-        a.set_xlabel('PAL Observations [mm/day]', fontsize=18)
-        a.set_ylabel('GPCP v3.3 Estimates [mm/day]', fontsize=18)
-        a.set_title('GPCP v3.3 vs PAL', fontsize=20)
+        a.set_xlabel('PAL Observations [mm/day]', fontsize=18, fontweight='bold')
+        a.set_ylabel('GPCP v3.3 Estimates [mm/day]', fontsize=18, fontweight='bold')
+        a.set_title('GPCP v3.3 vs PAL', fontsize=20, fontweight='bold')
+    # Make tick labels bold
+    for label in a.get_xticklabels() + a.get_yticklabels():
+        label.set_fontweight('bold')
 
-# Add metrics text to each subplot, with RMSE unit
+# Add metrics text to each subplot, with RMSE unit, bold font
 ax[0].text(
     0.05, 0.95,
-    f'RB: {rb_v1pt3:.2f}\nRMSE: {rmse_v1pt3:.2f} mm/day\nCC: {cc_v1pt3:.2f}',
-    transform=ax[0].transAxes, fontsize=18, verticalalignment='top',
+    f'RB: {rb_v1pt3:.2f}%\nRMSE: {rmse_v1pt3:.2f} mm/day\nCC: {cc_v1pt3:.2f}',
+    transform=ax[0].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
 )
 ax[1].text(
     0.05, 0.95,
-    f'RB: {rb_v3pt2:.2f}\nRMSE: {rmse_v3pt2:.2f} mm/day\nCC: {cc_v3pt2:.2f}',
-    transform=ax[1].transAxes, fontsize=18, verticalalignment='top',
+    f'RB: {rb_v3pt2:.2f}%\nRMSE: {rmse_v3pt2:.2f} mm/day\nCC: {cc_v3pt2:.2f}',
+    transform=ax[1].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
 )
 ax[2].text(
     0.05, 0.95,
-    f'RB: {rb_v3pt3:.2f}\nRMSE: {rmse_v3pt3:.2f} mm/day\nCC: {cc_v3pt3:.2f}',
-    transform=ax[2].transAxes, fontsize=18, verticalalignment='top',
+    f'RB: {rb_v3pt3:.2f}%\nRMSE: {rmse_v3pt3:.2f} mm/day\nCC: {cc_v3pt3:.2f}',
+    transform=ax[2].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
     bbox=dict(facecolor='white', alpha=0.8, edgecolor='none')
 )
 
 # Add legend
-handles, labels = ax[0].get_legend_handles_labels()
-unique_labels = dict(zip(labels, handles))  # Remove duplicates
+handles, labels_ = ax[0].get_legend_handles_labels()
+unique_labels = dict(zip(labels_, handles))  # Remove duplicates
 # Place a common legend below and outside the plot
-fg.legend(
+leg = fg.legend(
     unique_labels.values(), unique_labels.keys(),
     loc='lower center', bbox_to_anchor=(0.5, -0.15),
     fontsize=18,  ncol=6, frameon=False
-) #title='Regions', title_fontsize=18,
-
+)
+for text in leg.get_texts():
+    text.set_fontweight('bold')
+if leg.get_title() is not None:
+    leg.get_title().set_fontweight('bold')
 
 # plt.tight_layout(rect=[0, 0.08, 1, 1])  # leave space for legend
 # save the figure
@@ -453,9 +487,13 @@ region_titles = {
     "TNIO": "(e) Tropical North Indian Ocean (TNIO)",
     "STNA": "(f) Subtropical North Atlantic (STNA)"
 }
-region_order = ["TNEP", "TSEP", "TNWP", "ETNP", "TNIO", "STNA"]
+region_order = ["TNEP", "TNWP", "TNIO", "TSEP", "ETNP", "STNA"]
 
-fig, axs = plt.subplots(2, 3, figsize=(18, 10), sharex=True)
+# Use a serif font as a fallback if Times New Roman is not available
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
+
+fig, axs = plt.subplots(2, 3, figsize=(25, 10), sharex=True)
 axs = axs.flatten()
 months = np.arange(1, 13)
 month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -476,7 +514,7 @@ for i, region in enumerate(region_order):
         # Only plot if not nan
         if not np.isnan(mean):
             ax.scatter(m, mean, color='k', s=40, zorder=4, label='PAL Obs. Mean' if m_idx == 0 else None)
-            ax.vlines(m, q1, q3, color='k', lw=2, zorder=3, label='PAL Obs. [Q1,Q3]' if m_idx == 0 else None)
+            ax.vlines(m, q1, q3, color='gray', lw=2, zorder=3, label='PAL Obs. [Q1,Q3]' if m_idx == 0 else None)
     # GPCP v3.2
     ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean')
     ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 Est. [Q1,Q3]')
@@ -487,30 +525,43 @@ for i, region in enumerate(region_order):
     ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
     ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
     # Title, labels
-    ax.set_title(region_titles[region], fontsize=14, fontweight='bold')
+    ax.set_title(region_titles[region], fontsize=18, fontweight='bold')
     ax.set_xticks(months)
-    ax.set_xticklabels(month_labels, rotation=45)
-    ax.set_ylabel('Rainfall (mm)')
+    ax.set_xticklabels(month_labels,  fontsize=20, fontweight='bold')
+    ax.tick_params(axis='both', which='major', labelsize=18)
+    ax.set_ylabel('Rainfall [mm]', fontsize=20, fontweight='bold')
     ax.grid(True, alpha=0.3)
+    # Make y-axis tick labels bold
+    for label in ax.get_yticklabels():
+        label.set_fontweight('bold')
     # Add N= count
     n_pal = len(pals_classed_by_region[region])
-    ax.text(0.02, 0.95, f'N = {n_pal} PALs', transform=ax.transAxes, fontsize=12, va='top')
+    ax.text(0.02, 0.95, f'N = {n_pal} PALs', 
+            transform=ax.transAxes, fontsize=18, 
+            fontweight='bold', va='top')
 
 # Collect legend handles/labels from the first axis
 handles, labels = axs[0].get_legend_handles_labels()
 unique = dict(zip(labels, handles))
-fig.legend(
+# Create the legend object
+leg = fig.legend(
     unique.values(), unique.keys(),
-    loc='lower center', bbox_to_anchor=(0.5, -0.08),
-    fontsize=12, ncol=4, frameon=False
+    loc='lower center', bbox_to_anchor=(0.5, -0.05),
+    fontsize=20, ncol=4, frameon=False
 )
+
+# Set fontweight to bold for all legend texts
+for text in leg.get_texts():
+    text.set_fontweight('bold')
+if leg.get_title() is not None:
+    leg.get_title().set_fontweight('bold')
 
 plt.tight_layout(rect=[0, 0.08, 1, 1])
 # Save plot to disk
 monthly_plot_path = os.path.join(path_to_put_plts, 'PAL_GPCP_monthly_stats_by_region.png')
 plt.savefig(monthly_plot_path, bbox_inches='tight', dpi=500)
 plt.show()
-
+gc.collect()  # Clean up memory
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 # import pandas as pd
 # from datetime import datetime

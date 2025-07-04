@@ -324,6 +324,20 @@ def calculate_metrics(pal, gpcp):
     rmse = round(rmsqe(pal, gpcp), 2)  # Root Mean Square Error
     cc = round(p_corr(pal, gpcp), 2)   # Pearson Correlation Coefficient
 
+    # Relative Bias (in %): (mean(GPCP) - mean(PAL)) / mean(PAL) * 100
+    # mean_pal = np.mean(pal)
+    # mean_gpcp = np.mean(gpcp)
+    # rb = round(((mean_gpcp - mean_pal) / mean_pal) * 100, 1) if mean_pal != 0 else np.nan
+
+    # # Root Mean Square Error (RMSE)
+    # rmse = round(np.sqrt(np.mean((gpcp - pal) ** 2)), 2)
+
+    # # Pearson Correlation Coefficient (CC)
+    # if len(pal) > 1 and np.std(pal) > 0 and np.std(gpcp) > 0:
+    #     cc = round(np.corrcoef(pal, gpcp)[0, 1], 2)
+    # else:
+    #     cc = np.nan
+
     return rb, rmse, cc
 #%% DEBUG FUNCTION
 def debug_overlap_test():
