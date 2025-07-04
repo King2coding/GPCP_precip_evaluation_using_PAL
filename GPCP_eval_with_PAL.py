@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import matplotlib as mpl
 from matplotlib.legend import Legend
-
+import seaborn as sns
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.mpl.ticker as cticker
@@ -84,6 +84,7 @@ gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
 gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files, combine='by_coords', parallel=True)
 gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 
+gc.collect()  # Clean up memory
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
 
@@ -210,6 +211,120 @@ plt.show()
 gc.collect()  # Clean up memory
 
 
+#%% DO DATA INVENTORY PER REGION
+# COUNT THE TOTAL NUMBER OF DAYS PER YEAR WITH NON NAN DATA FOR EACH REGION
+regional_inventory = []
+for region_name, pal_files in pals_classed_by_region.items():
+    if region_name != "Unclassified" and len(pal_files) > 0:
+        print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
+
+        # store PAL and GPCP dataframes
+        region_pal_gpcp_dfs = []     
+
+        # LOAD PAL DATA
+        for pal_file in pal_files:
+            pal_ds = xr.open_dataset(pal_file)
+
+            # Process PAL data as needed
+            df = pd.DataFrame({
+                'time': pd.to_datetime(pal_ds['time'].values),
+                'lat': pal_ds['lat'].values,
+                'lon': pal_ds['lon'].values,
+                'rain_rate': pal_ds['rain_rate'].values
+            })
+
+            df['date'] = df['time'].dt.date  # Extract date from time
+
+            df['year'] = df['time'].dt.year  # Extract year from time
+
+            df = df.dropna(axis=0, how='any')  # Drop rows with any NaN values           
+
+            # Normalize longitude to [-180, 180]
+            df['lon'] = (df['lon'] + 360) % 360
+            df['lon'][df['lon'] > 180] -= 360
+
+            df_avg = df.groupby(['year', 'date'])[['rain_rate', 'lat', 'lon']].mean()
+
+            df_avg['region'] = region_name  # Add region name for clarity
+            df_avg['pal_file'] = os.path.basename(pal_file)  # Add PAL file name for clarity
+
+
+            # Count unique dates with non-NaN rain_rate
+            # unique_dates = df['date'].nunique()
+            
+            # Store the count in the inventory list
+            regional_inventory.append(df_avg)
+
+            pal_ds.close()
+gc.collect()  # Clean up memory
+
+# Combine all region PAL-GPCP dataframes into a single dataframe
+regional_inventory_df = pd.concat(regional_inventory)
+region_counts = regional_inventory_df.groupby('region')['pal_file'].nunique().to_dict()
+
+# groupby region and  year, then count all days with non-NaN rain_rate
+regional_inventory_df = regional_inventory_df.groupby(['region', 'year'])[['rain_rate']].count().reset_index()
+
+# plot bar plot of year on x axis and count of days with non-NaN rain_rate on y axis
+# comparing regions
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+# Removed 'Times New Roman' to avoid findfont warnings
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['ytick.labelsize'] = 18
+mpl.rcParams['xtick.labelsize'] = 18
+
+fg, ax = plt.subplots(figsize=(10, 6))
+sns.barplot(data=regional_inventory_df, x='year', y='rain_rate', hue='region', 
+            palette=region_colors, ax=ax)
+ax.set_xlabel('Year', fontsize=18, fontweight='bold')
+ax.set_ylabel('Total Number of\n  daily observations', fontsize=15, fontweight='bold')
+ax.set_title('Yearly distribution of daily observations by Region', fontsize=20, fontweight='bold')
+ax.tick_params(axis='both', which='major', labelsize=18, )
+ax.tick_params(axis='both', which='minor', labelsize=18)
+ax.grid(True, alpha=0.3)
+ax.set_facecolor('white')
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+ax.spines['bottom'].set_visible(True)
+ax.spines['left'].set_visible(True)
+ax.spines['bottom'].set_color('black')
+ax.spines['left'].set_color('black')
+ax.spines['bottom'].set_linewidth(2)
+ax.spines['left'].set_linewidth(2)
+ax.spines['bottom'].set_zorder(2)
+ax.spines['left'].set_zorder(2)
+ax.set_zorder(1)
+# Slant the x-axis tick labels for readability
+plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+# Set y-axis to log scale for readability
+# ax.set_yscale('log')
+
+# Add legend with PAL counts per region (remove the default legend first)
+handles, labels_ = ax.get_legend_handles_labels()
+ax.legend_.remove()  # Remove the default legend
+
+labels_with_counts = [
+    f"{label} ({region_counts.get(label, 0)} PALs)" for label in labels_
+]
+ax.legend(handles, labels_with_counts, title='Regions', loc='upper center', bbox_to_anchor=(0.5, -0.25), 
+          fontsize=14, title_fontsize=14, ncol=3, frameon=False)
+# # Add legend
+# handles, labels_ = ax.get_legend_handles_labels()
+# ax.legend(handles, labels_, title='Regions', loc='upper center', bbox_to_anchor=(0.5, -0.15), 
+#           fontsize=14, title_fontsize=14, ncol=3, frameon=False)
+plt.tight_layout()
+# Set legend fontweight to bold
+for text in ax.get_legend().get_texts():
+    text.set_fontweight('bold')
+svname = os.path.join(path_to_put_plts, 'region_daily_observation_inventory.png')
+plt.savefig(svname, dpi=500, bbox_inches='tight')
+gc.collect()  # Clean up memory
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
 regional_PAL_GPCP_dfs_daily_mean = {}
 regional_PAL_GPCP_dfs_daily_lst = []
