@@ -311,6 +311,8 @@ for region_name, pal_files in pals_classed_by_region.items():
         # Append to the list for later processing
         regional_PAL_GPCP_dfs_daily_lst.append(region_pal_gpcp_df)
 
+gc.collect()  # Clean up memory
+
 
 # # Example: Retrieve the fill value (used to represent missing values) in the first GPCP file
 # with xr.open_dataset(all_gpcp_v3pt2_files[0]) as ds:
@@ -422,6 +424,7 @@ fg.legend(
 # save the figure
 svnme = os.path.join(path_to_put_plts, 'PAL_GPCP_scatter_plots.png')
 plt.savefig(svnme, bbox_inches='tight', dpi=500)
+gc.collect()  # Clean up memory
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # calculate monhtly mean per region
@@ -457,7 +460,6 @@ for region in regions:
     monthly_stats[region + '_pal_monthly'] = pal_monthly
 
 # Plotting (mimic the attached figure)
-import matplotlib.pyplot as plt
 
 region_titles = {
     "TNEP": "(a) Tropical Northeastern Pacific (TNEP)",
