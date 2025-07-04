@@ -164,29 +164,13 @@ full_region_names = {
 # Add full names and PAL counts to legend labels
 labels = [f"{region}: ({full_region_names[region]} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
 plt.legend(handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.35), 
-          fontsize=12, title_fontsize=14, ncol=3, frameon=False)
+          fontsize=18, title_fontsize=14, ncol=3, frameon=False)
 
 # Set ticks and format them with degree symbols and N/S/E/W
 xticks = range(-180, 181, 60)
 yticks = range(-30, 61, 15)
 ax.set_xticks(xticks, crs=ccrs.PlateCarree())
 ax.set_yticks(yticks, crs=ccrs.PlateCarree())
-
-def format_lon(x, pos=None):
-    if x == 0:
-        return "0°"
-    elif x < 0:
-        return f"{abs(int(x))}°W"
-    else:
-        return f"{int(x)}°E"
-
-def format_lat(y, pos=None):
-    if y == 0:
-        return "0°"
-    elif y < 0:
-        return f"{abs(int(y))}°S"
-    else:
-        return f"{int(y)}°N"
 
 ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
 ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
