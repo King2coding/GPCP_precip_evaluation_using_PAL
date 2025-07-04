@@ -15,6 +15,24 @@ from osgeo import gdal, osr
 import subprocess
 
 #%% GLOBAL VARIABLES
+
+def format_lon(x, pos=None):
+    if x == 0:
+        return "0°"
+    elif x < 0:
+        return f"{abs(int(x))}°W"
+    else:
+        return f"{int(x)}°E"
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def format_lat(y, pos=None):
+    if y == 0:
+        return "0°"
+    elif y < 0:
+        return f"{abs(int(y))}°S"
+    else:
+        return f"{int(y)}°N"
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def run_gdalinfo(file_path):
     # Run the gdalinfo command using subprocess
     result = subprocess.run(['gdalinfo', file_path], capture_output=True, text=True)
