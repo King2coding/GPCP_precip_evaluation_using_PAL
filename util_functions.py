@@ -244,11 +244,13 @@ def process_gpcp_with_PAL(pal_file, region_name, pal_df, gpcp_ds_xr,
 
     # Handle missing values in rain_rate
     pal_df['rain_rate'] = pal_df['rain_rate'].replace(missing_val, np.nan)
+    # set values less than 0 to NaN
+    pal_df['rain_rate'] = pal_df['rain_rate'].where(pal_df['rain_rate'] >= 0, np.nan)
 
     # Now df contains the PAL data with GPCP grid assignments
     # average daily rainfall
 
-    daily_avg = pal_df.groupby(['date', 'row_idx', 'col_idx'])[['rain_rate', 'lat', 'lon']].mean(skipna=True).reset_index()
+    daily_avg = pal_df.groupby(['date', 'row_idx', 'col_idx'])[['rain_rate', 'lat', 'lon']].mean().reset_index()
     daily_avg = daily_avg.set_index('date')
     # convert rain_rate to mm/day
     daily_avg['rain_rate'] = daily_avg['rain_rate'] * 24  # convert to mm/day
@@ -278,6 +280,8 @@ def process_gpcp_with_PAL(pal_file, region_name, pal_df, gpcp_ds_xr,
     gpcp_precip = gpcp_ds_xr['precip'].values
     # Handle missing values by replacing with NaN
     gpcp_precip = np.where(gpcp_precip == missing_val, np.nan, gpcp_precip)
+    # set values less than 0 to NaN
+    gpcp_precip[gpcp_precip < 0] = np.nan
     matched_vals = gpcp_precip[gpcp_time_idx, gpcp_lat_idx, gpcp_lon_idx]
 
     daily_avg[gpcp_version] = matched_vals

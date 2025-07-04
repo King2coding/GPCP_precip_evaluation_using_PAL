@@ -85,6 +85,42 @@ gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
 
+# CLASSIFICATION SUMMARY
+# Print classification summary
+print("\n" + "="*50)
+print("PAL CLASSIFICATION SUMMARY")
+print("="*50)
+for region, files in pals_classed_by_region.items():
+    if region != "Unclassified":
+        print(f"{region}: {len(files)} PALs")
+print("="*50)
+
+# Expected counts from your figure:
+expected_counts = {
+    "ETNP": 4,   # Extratropical North Pacific
+    "TNEP": 20,  # Tropical Northeastern Pacific  
+    "TSEP": 6,   # Tropical Southeastern Pacific
+    "STNA": 18,  # Subtropical North Atlantic
+    "TNIO": 3,   # Tropical North Indian Ocean
+    "TNWP": 7    # Tropical Northwestern Pacific
+}
+
+print("\nCOMPARISON WITH EXPECTED COUNTS:")
+print("-" * 30)
+total_expected = sum(expected_counts.values())
+total_actual = sum(len(files) for region, files in pals_classed_by_region.items() if region != "Unclassified")
+
+for region in expected_counts:
+    actual = len(pals_classed_by_region.get(region, []))
+    expected = expected_counts[region]
+    status = "✓" if actual == expected else "✗"
+    print(f"{region}: Expected {expected}, Got {actual} {status}")
+
+print(f"\nTotal Expected: {total_expected}")
+print(f"Total Actual: {total_actual}")
+print(f"Difference: {total_actual - total_expected}")
+
+gc.collect()  # Clean up memory
 #%% PLOT
 # === Plot ===
 fig = plt.figure(figsize=(18, 10))
@@ -160,46 +196,12 @@ ax.set_title("PAL Trajectories by Ocean Region", fontsize=20)
 
 plt.tight_layout()
 plt.subplots_adjust(bottom=0.25)  # Add extra space at the bottom for legend
-plt.show()
-gc.collect()  # Clean up memory
+
 svnme = os.path.join(path_to_put_plts, 'PAL_trajectories_by_region.png')
 plt.savefig(svnme, bbox_inches='tight', dpi=500)
-
-# Print classification summary
-print("\n" + "="*50)
-print("PAL CLASSIFICATION SUMMARY")
-print("="*50)
-for region, files in pals_classed_by_region.items():
-    if region != "Unclassified":
-        print(f"{region}: {len(files)} PALs")
-print("="*50)
-
-# Expected counts from your figure:
-expected_counts = {
-    "ETNP": 4,   # Extratropical North Pacific
-    "TNEP": 20,  # Tropical Northeastern Pacific  
-    "TSEP": 6,   # Tropical Southeastern Pacific
-    "STNA": 18,  # Subtropical North Atlantic
-    "TNIO": 3,   # Tropical North Indian Ocean
-    "TNWP": 7    # Tropical Northwestern Pacific
-}
-
-print("\nCOMPARISON WITH EXPECTED COUNTS:")
-print("-" * 30)
-total_expected = sum(expected_counts.values())
-total_actual = sum(len(files) for region, files in pals_classed_by_region.items() if region != "Unclassified")
-
-for region in expected_counts:
-    actual = len(pals_classed_by_region.get(region, []))
-    expected = expected_counts[region]
-    status = "✓" if actual == expected else "✗"
-    print(f"{region}: Expected {expected}, Got {actual} {status}")
-
-print(f"\nTotal Expected: {total_expected}")
-print(f"Total Actual: {total_actual}")
-print(f"Difference: {total_actual - total_expected}")
-
+plt.show()
 gc.collect()  # Clean up memory
+
 
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
 regional_PAL_GPCP_dfs_daily_mean = {}
@@ -319,7 +321,7 @@ for region_name, pal_files in pals_classed_by_region.items():
 #     missing_val = var.attrs.get("missing_value") or var.attrs.get("_FillValue")
 
 #     print(f"Missing value: {missing_val}")
-
+#%%
 # calculate RB, RMSE and CC using all PAL-GPCP pairs in axes plot and show this in the plot
 # as RB = , RMSE = , CC =
 #- - - - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
@@ -440,16 +442,19 @@ regions = [r for r in regional_PAL_GPCP_dfs_daily_mean.keys()]
 
 for region in regions:
     df = all_daily[all_daily['region'] == region].copy()
-    df['month'] = pd.to_datetime(df['date']).dt.month
-    # Group by month
-    stats = df.groupby('month').agg({
-        'rain_rate': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
-        'GPCP_v1pt3': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
-        'GPCP_v3pt2': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
-        'GPCP_v3pt3': ['mean', lambda x: np.percentile(x, 25), lambda x: np.percentile(x, 75)],
+    # Compute monthly accumulation per PAL (track_PAL_id)
+    pal_monthly = df.groupby(['track_PAL_id', 'year', 'month'])[['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']].sum().reset_index()
+    # Now, for each month, compute mean, Q1, Q3 across PALs (i.e., for each month, use all PALs' accumulations)
+    stats = pal_monthly.groupby('month').agg({
+        'rain_rate': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
+        'GPCP_v1pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
+        'GPCP_v3pt2': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
+        'GPCP_v3pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
     })
-    stats.columns = ['_'.join([c[0], c[1] if c[1] != '<lambda_0>' else 'q1' if i%3==1 else 'q3']) for i, c in enumerate(stats.columns)]
+    stats.columns = ['_'.join(col).rstrip('_') for col in stats.columns.values]
     monthly_stats[region] = stats.reset_index()
+    # Also store the PAL monthly accumulations for scatter/vertical lines
+    monthly_stats[region + '_pal_monthly'] = pal_monthly
 
 # Plotting (mimic the attached figure)
 import matplotlib.pyplot as plt
@@ -472,18 +477,29 @@ month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 for i, region in enumerate(region_order):
     ax = axs[i]
     stats = monthly_stats[region]
-    # PAL
-    ax.plot(months, stats['rain_rate_mean'], color='k', marker='o', label='PAL Obs. Mean')
-    ax.fill_between(months, stats['rain_rate_q1'], stats['rain_rate_q3'], color='k', alpha=0.2, label='PAL [Q1,Q3]')
+    pal_monthly = monthly_stats[region + '_pal_monthly']
+    # PAL: for each month, plot mean as a point, and Q1-Q3 as vertical line
+    pal_mean = stats['rain_rate_mean'].values
+    pal_q1 = stats['rain_rate_q1'].values
+    pal_q3 = stats['rain_rate_q3'].values
+    # Plot PAL mean as scatter, Q1-Q3 as vertical line
+    for m_idx, m in enumerate(months):
+        mean = pal_mean[m_idx]
+        q1 = pal_q1[m_idx]
+        q3 = pal_q3[m_idx]
+        # Only plot if not nan
+        if not np.isnan(mean):
+            ax.scatter(m, mean, color='k', s=40, zorder=4, label='PAL Obs. Mean' if m_idx == 0 else None)
+            ax.vlines(m, q1, q3, color='k', lw=2, zorder=3, label='PAL Obs. [Q1,Q3]' if m_idx == 0 else None)
     # GPCP v3.2
-    ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Mean')
-    ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 [Q1,Q3]')
+    ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean')
+    ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 Est. [Q1,Q3]')
     # GPCP v1.3
-    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Mean')
-    ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 [Q1,Q3]')
+    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean')
+    ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 Est. [Q1,Q3]')
     # GPCP v3.3
-    ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Mean')
-    ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 [Q1,Q3]')
+    ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
+    ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
     # Title, labels
     ax.set_title(region_titles[region], fontsize=14, fontweight='bold')
     ax.set_xticks(months)
@@ -493,10 +509,17 @@ for i, region in enumerate(region_order):
     # Add N= count
     n_pal = len(pals_classed_by_region[region])
     ax.text(0.02, 0.95, f'N = {n_pal} PALs', transform=ax.transAxes, fontsize=12, va='top')
-    if i == 0:
-        ax.legend(fontsize=10, loc='upper left')
 
-plt.tight_layout()
+# Collect legend handles/labels from the first axis
+handles, labels = axs[0].get_legend_handles_labels()
+unique = dict(zip(labels, handles))
+fig.legend(
+    unique.values(), unique.keys(),
+    loc='lower center', bbox_to_anchor=(0.5, -0.08),
+    fontsize=12, ncol=4, frameon=False
+)
+
+plt.tight_layout(rect=[0, 0.08, 1, 1])
 # Save plot to disk
 monthly_plot_path = os.path.join(path_to_put_plts, 'PAL_GPCP_monthly_stats_by_region.png')
 plt.savefig(monthly_plot_path, bbox_inches='tight', dpi=500)
