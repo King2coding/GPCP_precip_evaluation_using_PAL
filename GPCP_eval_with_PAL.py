@@ -8,7 +8,7 @@ if 'util_functions' in sys.modules:
     importlib.reload(sys.modules['util_functions'])
 
 from util_functions import *
-
+from datetime import date
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import matplotlib as mpl
@@ -84,6 +84,9 @@ gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
 gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files, combine='by_coords', parallel=True)
 gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 
+cde_run_dte = str(date.today().strftime('%Y%m%d'))
+
+
 gc.collect()  # Clean up memory
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
@@ -152,8 +155,12 @@ for region, files in pals_classed_by_region.items():
     for file in files:
         # Load only lat and lon efficiently, downsample by slicing
         ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
-        lat = ds['lat'].values[::50]  # every 50th point for performance
-        lon = ds['lon'].values[::50]  # every 50th point for performance
+        lat = ds['lat'].values[::50]
+        lon = ds['lon'].values[::50]
+        # # Remove points where lat or lon is nan
+        # mask = ~((np.isnan(lat)) | (np.isnan(lon)))
+        # lat = lat[mask]
+        # lon = lon[mask]
         ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=3)
         ds.close()
 
@@ -199,13 +206,17 @@ ax.tick_params(labelsize=18)
 for label in ax.get_xticklabels() + ax.get_yticklabels():
     label.set_fontweight('bold')
 
+# Try to enforce Times New Roman, but fallback gracefully if not available
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
+
 ax.set_title("PAL Trajectories by Ocean Region", fontsize=20, 
              fontweight='bold', fontname='Times New Roman')
 
 plt.tight_layout()
 plt.subplots_adjust(bottom=0.3)  # Add extra space at the bottom for legend
 
-svname = os.path.join(path_to_put_plts, 'PAL_trajectories_by_region.png')
+svname = os.path.join(path_to_put_plts, f'PAL_trajectories_by_region_{cde_run_dte}.png')
 plt.savefig(svname, bbox_inches='tight', dpi=500)
 plt.show()
 gc.collect()  # Clean up memory
@@ -322,9 +333,11 @@ plt.tight_layout()
 # Set legend fontweight to bold
 for text in ax.get_legend().get_texts():
     text.set_fontweight('bold')
-svname = os.path.join(path_to_put_plts, 'region_daily_observation_inventory.png')
+svname = os.path.join(path_to_put_plts, f'region_daily_observation_inventory_{cde_run_dte}.png')
 plt.savefig(svname, dpi=500, bbox_inches='tight')
 gc.collect()  # Clean up memory
+
+
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
 regional_PAL_GPCP_dfs_daily_mean = {}
 regional_PAL_GPCP_dfs_daily_lst = []
@@ -677,85 +690,156 @@ monthly_plot_path = os.path.join(path_to_put_plts, 'PAL_GPCP_monthly_stats_by_re
 plt.savefig(monthly_plot_path, bbox_inches='tight', dpi=500)
 plt.show()
 gc.collect()  # Clean up memory
+
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
-# import pandas as pd
-# from datetime import datetime
+regional_PAL_GPCP_dfs_daily_mean = {}
+regional_PAL_GPCP_dfs_daily_lst = []
+for region_name, pal_files in pals_classed_by_region.items():
+    if region_name != "Unclassified" and len(pal_files) > 0:
+        print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
 
-# print("MINIMAL TEST: 1 PAL + 1 GPCP FILE")
-# print("="*50)
+        # store PAL and GPCP dataframes
+        region_pal_gpcp_dfs = []     
 
-# # Step 1: Pick just 1 PAL file for testing
-# test_pal_file = None
-# test_region = None
+        # LOAD PAL DATA
+        for pal_file in pal_files:
+            pal_ds = xr.open_dataset(pal_file)
 
-# for region_name, pal_files in pals_classed_by_region.items():
-#     if region_name != "Unclassified" and len(pal_files) > 0:
-#         test_pal_file = pal_files[0]  # Just take the first PAL
-#         test_region = region_name
-#         break
+            # Process PAL data as needed
+            df = pd.DataFrame({
+                'time': pd.to_datetime(pal_ds['time'].values),
+                'lat': pal_ds['lat'].values,
+                'lon': pal_ds['lon'].values,
+                'rain_rate': pal_ds['rain_rate'].values
+            })
 
-# if test_pal_file is None:
-#     print("No PAL files found!")
-# else:
-#     print(f"Test PAL file: {os.path.basename(test_pal_file)}")
-#     print(f"Test region: {test_region}")
+            df['date'] = df['time'].dt.date  # Extract date from time
 
-# # Step 2: Pick just 1 GPCP file for testing
-# test_gpcp_file = all_gpcp_v1pt3_files[0] if len(all_gpcp_v1pt3_files) > 0 else None
+            # nan_df = df.copy()  # Keep a copy for debugging
+            # nan_df = nan_df[nan_df.isna().any(axis=1)]  # Find rows with NaN values
 
-# if test_gpcp_file is None:
-#     print("No GPCP files found!")
-# else:
-#     print(f"Test GPCP file: {os.path.basename(test_gpcp_file)}")
+            df = df.dropna(axis=0, how='any')  # Drop rows with any NaN values           
 
-# print("="*50)
-# print("="*50)
+            # Normalize longitude to [-180, 180]
+            df['lon'] = (df['lon'] + 360) % 360
+            df['lon'][df['lon'] > 180] -= 360
 
-# # Now let's examine both files step by step
-# if test_pal_file and test_gpcp_file:
-#     print("\nStep 1: Examining PAL file structure...")
-#     pal_ds = xr.open_dataset(test_pal_file)
-#     print(f"PAL variables: {list(pal_ds.variables.keys())}")
-#     print(f"PAL time range: {pal_ds.time.values[0]} to {pal_ds.time.values[-1]}")
-#     print(f"PAL data points: {len(pal_ds.time.values)}")
-    
-#     # Get first few data points as example
-#     pal_time = pd.to_datetime(pal_ds['time'].values)
-#     pal_lat = pal_ds['lat'].values
-#     pal_lon = pal_ds['lon'].values
-#     pal_rain = pal_ds['rain_rate'].values
-    
-#     print(f"Sample PAL data (first 3 points):")
-#     for i in range(min(3, len(pal_time))):
-#         print(f"  {pal_time[i]}: Lat={pal_lat[i]:.2f}, Lon={pal_lon[i]:.2f}, Rain={pal_rain[i]:.3f}")
-    
-#     print("\nStep 2: Examining GPCP file structure...")
-#     gpcp_ds = xr.open_dataset(test_gpcp_file)
-#     print(f"GPCP variables: {list(gpcp_ds.variables.keys())}")
-#     print(f"GPCP dimensions: {dict(gpcp_ds.dims)}")
-    
-#     # Check coordinates
-#     if 'time' in gpcp_ds.variables:
-#         print(f"GPCP time range: {gpcp_ds.time.values[0]} to {gpcp_ds.time.values[-1]}")
-    
-#     # Check lat/lon
-#     lat_var = 'latitude' if 'latitude' in gpcp_ds.variables else 'lat'
-#     lon_var = 'longitude' if 'longitude' in gpcp_ds.variables else 'lon'
-    
-#     if lat_var in gpcp_ds.variables and lon_var in gpcp_ds.variables:
-#         print(f"GPCP lat range: {gpcp_ds[lat_var].values.min():.2f} to {gpcp_ds[lat_var].values.max():.2f}")
-#         print(f"GPCP lon range: {gpcp_ds[lon_var].values.min():.2f} to {gpcp_ds[lon_var].values.max():.2f}")
-    
-#     # Close datasets
-#     pal_ds.close()
-#     gpcp_ds.close()
-    
-#     print("\nMinimal test setup complete!")
-#     print("Next step: Implement actual matching logic with these files.")
+def process_gpcp_with_PAL(pal_file, region_name, pal_df, gpcp_ds_xr, 
+                          resolution, gpcp_version):
 
-# else:
-#     print("Cannot proceed - missing test files!")
+    coord_lst = list(gpcp_ds_xr.coords)
 
-# gc.collect()
+    missing_val = -9999 # -9999 for both PAL and GPCP data
+
+    # get lat, lon var name
+    lat_var = 'latitude' if 'latitude' in coord_lst else 'lat'
+    lon_var = 'longitude' if 'longitude' in coord_lst else 'lon'    
+
+    df['row_idx'], df['col_idx'] = assign_to_gpcp_grid(df['lat'], df['lon'], 0.5)
+
+    # Handle missing values in rain_rate
+    # df['rain_rate'] = df['rain_rate'].replace(missing_val, np.nan)
+    # set values less than 0 to NaN
+    df['rain_rate'] = df['rain_rate'].where(df['rain_rate'] >= 0, np.nan)
+
+    daily_avg = df.groupby(['date', 'row_idx', 'col_idx'])[['rain_rate', 'lat', 'lon']].mean().reset_index()
+    daily_avg = daily_avg.set_index('date')
+    # convert rain_rate to mm/day
+    daily_avg['rain_rate'] = daily_avg['rain_rate'] * 24  # convert to mm/day
+    daily_avg['region'] = region_name
+    daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+    # Process GPCP data with PAL
+    pal_dates = pd.to_datetime(df['date'])
+    pal_lats = df['lat'].values
+    pal_lons = df['lon'].values
+
+    # Select the GPCP precipitation values at the PAL dates and (lat, lon) locations, return as 1D array
+    gpcp_precip = gpcp_ds_v3pt2_xr['precip'].sel(
+        time=pal_dates, lat=pal_lats, lon=pal_lons, method='nearest'
+    ).values
+
+    gpcp_plp = gpcp_ds_v3pt2_xr['probability_liquid_phase'].sel(
+        time=pal_dates, lat=pal_lats, lon=pal_lons, method='nearest'
+    ).values
+
+    # If the result is 3D and all axes have the same values, just take the first along the extra axes
+    if gpcp_precip.ndim == 3:
+        # Take the first along the last two axes (since all values are the same)
+        gpcp_precip = gpcp_precip[:, 0, 0]
+    elif gpcp_precip.ndim == 2:
+        gpcp_precip = gpcp_precip[:, 0]
+
+    if gpcp_plp.ndim == 3:
+        # Take the first along the last two axes (since all values are the same)
+        gpcp_plp = gpcp_plp[:, 0, 0]
+    elif gpcp_plp.ndim == 2:
+        gpcp_plp = gpcp_plp[:, 0]
+
+    daily_avg['GPCP_v3pt2'] = gpcp_precip
+    daily_avg['prob_liq'] = gpcp_plp
+    # Now gpcp_precip is 1D, length = number of timestamps
+
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+    # retain only columns where prob_liq is == 100
+    daily_avg = daily_avg[daily_avg['prob_liq'] == 100]
+
+    # append to the region dataframes
+    region_pal_gpcp_dfs.append(daily_avg)
+    pal_ds.close()
+
+    # Combine all region PAL-GPCP dataframes into a single dataframe
+region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs)
 
 
+# calculate daily mean per track_PAL_id
+region_pal_gpcp_df_daily_mean = region_pal_gpcp_df.groupby(['track_PAL_id'])[['rain_rate', 
+                                                                    'GPCP_v3pt2']].mean().reset_index()
+region_pal_gpcp_df_daily_mean['region'] = region_name  # Add region name for clarity
+regional_PAL_GPCP_dfs_daily_mean[region_name] = region_pal_gpcp_df_daily_mean
+
+# Append to the list for later processing
+regional_PAL_GPCP_dfs_daily_lst.append(region_pal_gpcp_df)
+
+gc.collect() 
+        
+
+pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP_v3pt2']] for df in regional_PAL_GPCP_dfs_daily_mean.values()], ignore_index=True)
+
+# calculate metrics for all regions combined
+rb_v3pt2, rmse_v3pt2, cc_v3pt2 = calculate_metrics(pal_gpcv3_2_cmp['rain_rate'], pal_gpcv3_2_cmp['GPCP_v3pt2'])
+
+# make scatter plot for the single PAL and GPCP v3.2
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'        
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['axes.labelsize'] = 14
+mpl.rcParams['xtick.labelsize'] = 14
+mpl.rcParams['ytick.labelsize'] = 14        
+mpl.rcParams['legend.fontsize'] = 12
+mpl.rcParams['legend.title_fontsize'] = 14
+
+fg, ax = plt.subplots(figsize=(8, 6))
+ax.scatter(pal_gpcv3_2_cmp['rain_rate'], pal_gpcv3_2_cmp['GPCP_v3pt2'], c='blue', alpha=0.5)
+# Set axis limits and ticks
+ax.set_xlim(0, 15)
+ax.set_ylim(0, 15)
+ax.set_xticks([0, 5, 10, 15])
+ax.set_yticks([0, 5, 10, 15])
+# 1:1 line from (0,0) to (15,15)
+ax.plot([0, 15], [0, 15], color='gray', linestyle='--')
+ax.set_xlabel('PAL Observations [mm/day]', fontsize=16, fontweight='bold')
+ax.set_ylabel('GPCP v3.2 Estimates [mm/day]', fontsize=16, fontweight='bold')
+ax.set_title('GPCP v3.2 vs PAL', fontsize=18, fontweight='bold')
+ax.tick_params(axis='both', which='major', labelsize=14)
+ax.tick_params(axis='both', which='minor', labelsize=14)
+ax.grid(True, alpha=0.3)
+# Add metrics text to the plot
+ax.text(0.05, 0.95,
+    f'RB: {rb_v3pt2:.2f}%\nRMSE: {rmse_v3pt2:.2f} mm/day\nCC: {cc_v3pt2:.2f}',
+    transform=ax.transAxes, fontsize=14, verticalalignment='top')
+ax.legend(loc='upper left', fontsize=12)
+plt.tight_layout()
