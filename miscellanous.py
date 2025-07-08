@@ -36,7 +36,7 @@ import xarray as xr
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.animation as animation
-
+import matplotlib.dates as mdates
 
 import re
 from matplotlib.colors import ListedColormap, BoundaryNorm
@@ -311,8 +311,136 @@ cbar2.ax.tick_params(labelsize=11)
 plt.show()
 
 gc.collect()  # Clean up memory after plotting
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# segmentation masks
+masks = xr.zeros_like(cloud_chan9, dtype=int)
+masks = masks.where(True)  # initialize
 
 
+# Use cloud_chan9 for segmentation and np.select for proper mask assignment
+conditions = [
+    cloud_chan9 >= 250,
+    (cloud_chan9 >= 240) & (cloud_chan9 < 250),
+    (cloud_chan9 >= 230) & (cloud_chan9 < 240),
+    cloud_chan9 < 230
+]
+choices = [0, 1, 2, 3]
+masks = xr.DataArray(
+    np.select(conditions, choices, default=np.nan),
+    dims=cloud_chan9.dims,
+    coords=cloud_chan9.coords
+)
+
+# plot one time step of the masks
+# Plot the mask at the 13th time index (masks.isel(time=13))
+fig, ax = plt.subplots(figsize=(8, 6), dpi=1000, subplot_kw={'projection': ccrs.PlateCarree()})
+ax.coastlines()
+ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+ax.add_feature(cfeature.LAND, facecolor='lightgray')
+ax.add_feature(cfeature.OCEAN, facecolor='lightblue')
+gl = ax.gridlines(draw_labels=True, linewidth=0.5, color='gray', alpha=0.7, linestyle='--')
+gl.top_labels = False
+gl.right_labels = False
+gl.xlabel_style = {'size': 11}
+gl.ylabel_style = {'size': 11}
+
+
+
+# assume `masks` is your integer mask array (time,lat,lon)
+# and `cloud_chan9` (or ds['channel_9']) is your SEVIRI 10.8 µm BT
+
+# 1. Define t0 and the “very-cold” mask (class==3)
+t0_idx = 11
+t0 = masks.time.isel(time=t0_idx).values
+mask_t0 = (masks.isel(time=t0_idx) == 3)   # True over your patch
+
+# 2. Extract mean BT at t0
+bt_t0_mean = cloud_chan9.isel(time=t0_idx).where(mask_t0).mean(dim=("lat","lon"))
+bt_t0 = cloud_chan9.isel(time=t0_idx).where(mask_t0)
+
+# 3. Build the same mask over the t=8…15 window
+time_slice = slice(8, 16)
+times = cloud_chan9.time.isel(time=time_slice)
+bt_series_mean = (
+    cloud_chan9.isel(time=time_slice)
+              .where(mask_t0)              # keep same footprint
+              .mean(dim=("lat","lon"))     # mean over lat/lon
+)
+
+# 4. Extract BT series for the same time slice
+bt_series = cloud_chan9.isel(time=time_slice).where(mask_t0)
+
+# 4. Compute ΔBT relative to t0
+delta_bt_mean = bt_series_mean - bt_t0_mean
+
+delta_bt = bt_series - bt_t0
+
+# 5. Plot it
+# Calculate a small margin around your BT values
+bt_min, bt_max = float(bt_series_mean.min()), float(bt_series_mean.max())
+margin = (bt_max - bt_min) * 0.05  # 5% padding
+
+fig, ax1 = plt.subplots(figsize=(8,5), dpi=1000)
+
+# Left axis: ΔBT line
+ax1.plot(times, delta_bt_mean, marker='o', color='k', linestyle='-', linewidth=0, label='ΔBT (K)')  # black dots, no line
+ax1.plot(times, delta_bt_mean, color='grey', linestyle='-', linewidth=1, label='_nolegend_')       # grey line, no marker
+ax1.axhline(0, color='grey', linestyle='--', linewidth=1)
+ax1.set_ylabel(r'$\Delta$BT$_{10.8 (µm)}$ (K)', fontsize=15, fontweight='bold')
+ax1.tick_params(axis='y', labelsize=15)
+ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
+ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+plt.setp(ax1.get_xticklabels(), rotation=30, ha='right', fontsize=15, fontweight='bold')
+
+# Set left y-axis ticks to [0, 10, 20, 30]
+ax1.set_yticks([0, 10, 20, 30])
+ax1.set_yticklabels(['0', '10', '20', '30'], fontsize=15, fontweight='bold')
+
+# Right axis: mean BT bar chart
+ax2 = ax1.twinx()
+ax2.bar(times, bt_series_mean, width=0.01, alpha=0.3, label='Mean BT')
+ax2.set_ylabel('Mean 10.8 (µm) BT (K)', fontsize=15, fontweight='bold')
+ax2.set_ylim(bt_min - margin, bt_max + margin)
+ax2.tick_params(axis='both', labelsize=15)
+# Set right y-ticks to 6 evenly spaced values between bt_min-margin and bt_max+margin
+yticks_right = np.linspace(bt_min, bt_max + margin, 6)
+ax2.set_yticks(yticks_right)
+ax2.set_yticklabels([f"{tick:.0f}" for tick in yticks_right], fontsize=15, fontweight='bold')
+
+# Legends
+line1, = ax1.plot([], [], color='k', marker='o', label=r'$\Delta$BT (K)')
+bar_proxy = plt.Rectangle((0,0),1,1,fc='C0', alpha=0.3, label='Mean BT')
+ax1.legend([line1, bar_proxy], [r'$\Delta$BT (K)', 'Mean BT'], 
+           fontsize=14, loc='best', frameon=False)
+
+# Title (multi-line, bold, with t0 and ±3×15 min)
+ax1.set_title(
+    f"Cloud-Patch (10.8 (µm) BT <= 230 K) Evolution\n"
+    f"(t₀ = {str(t0)[:16]}) ; ±3×15 min",
+    fontsize=15, fontweight='bold', pad=15
+)
+
+ax1.set_xlabel('Time (UTC)', fontsize=15, fontweight='bold')
+ax1.grid(True, which='major', axis='both', linestyle='--', alpha=0.7)
+
+plt.tight_layout()
+plt.show()
+gc.collect()  # Clean up memory after plotting
+
+# Plot the segmentation mask at t0
+fig, ax = plt.subplots(figsize=(8, 6), dpi=1000, subplot_kw={'projection': ccrs.PlateCarree()})
+ax.coastlines()
+ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+ax.add_feature(cfeature.LAND, facecolor='lightgray')
+ax.add_feature(cfeature.OCEAN, facecolor='lightblue')   
+
+im = ax.pcolormesh(
+    bt_t0['lon'], bt_t0['lat'], bt_t0,
+    cmap='jet'
+)
+ax.set_title(f"Segmentation Mask\n{t0} UTC")
+cbar = plt.colorbar(im, ax=ax, orientation='vertical', label='Mask Class')
+plt.show()
 
 
 

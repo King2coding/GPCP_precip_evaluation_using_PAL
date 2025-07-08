@@ -161,6 +161,58 @@ def classify_and_group_files_fixed(file_list):
     return classification
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def process_gpcp_with_PAL2(pal_file, region_name, pal_df, 
+                           gpcp_ds_xr, gpcp_version):    
+
+    pal_dates = pd.to_datetime(pal_df['date'])
+    pal_lats = pal_df['lat'].values
+    pal_lons = pal_df['lon'].values
+
+    # Convert dask-backed DataArray to a regular (in-memory) DataArray if needed
+    # gpcp_precip = gpcp_ds_v3pt2_xr['precip'].compute()
+
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'latitude' in gpcp_ds_xr.dims or 'longitude' in gpcp_ds_xr.dims:
+        gpcp_ds_xr = gpcp_ds_xr.rename({'latitude': 'lat', 'longitude': 'lon'})
+
+    gpcp_precip = gpcp_ds_xr['precip'].interp(
+        time=("points", pal_dates), lat=("points", pal_lats), lon=("points", pal_lons), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    gpcp_precip = gpcp_precip.where(gpcp_precip >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    pal_df[gpcp_version] = gpcp_precip
+
+    # do same for probability of liquid phase if it exsists in dataset
+    # gpcp_plp = gpcp_ds_v3pt2_xr['probability_liquid_phase'].compute()
+    if gpcp_version == 'GPCP_v3pt2':
+        gpcp_plp = gpcp_ds_xr['probability_liquid_phase'].interp(
+            time=("points", pal_dates), lat=("points", pal_lats),
+            lon=("points", pal_lons), method="nearest"
+        )
+
+        # Store matched values in the DataFrame
+        pal_df[f'PLP_{gpcp_version}'] = gpcp_plp
+        # Set places where the values are less than 0 to NaN
+        gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)      
+
+    # # sel only where PLP_v3pt2 is 100
+    # pal_df = pal_df[pal_df[f'PLP_{gpcp_version}'] == 100]
+
+    # daily_avg = pal_df.groupby('date').agg({
+    #     'rain_rate': 'mean',
+    #     gpcp_version: 'mean',
+    #     f'PLP_{gpcp_version}': 'mean',
+    # })
+    # # convert pal rainrate to daily average
+    # daily_avg['rain_rate'] *= 24  # Convert to daily average
+    # daily_avg['region'] = region_name
+    # daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]       
+    return pal_df
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON BOUNDING BOXES
 def classify_and_group_files_bounding_box(file_list, region_bounds_dict=None):
     """
