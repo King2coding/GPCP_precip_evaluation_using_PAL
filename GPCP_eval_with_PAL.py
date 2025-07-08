@@ -14,6 +14,7 @@ from matplotlib.patches import Rectangle
 import matplotlib as mpl
 from matplotlib.legend import Legend
 import seaborn as sns
+from matplotlib.ticker import FuncFormatter
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.mpl.ticker as cticker
@@ -222,57 +223,46 @@ gc.collect()  # Clean up memory
 
 #%% DO DATA INVENTORY PER REGION
 # COUNT THE TOTAL NUMBER OF DAYS PER YEAR WITH NON NAN DATA FOR EACH REGION
+# Build inventory: count number of non-NaN daily rain_rate observations per region per year
 regional_inventory = []
 for region_name, pal_files in pals_classed_by_region.items():
     if region_name != "Unclassified" and len(pal_files) > 0:
         print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
-
-        # store PAL and GPCP dataframes
-        region_pal_gpcp_dfs = []     
-
-        # LOAD PAL DATA
         for pal_file in pal_files:
             pal_ds = xr.open_dataset(pal_file)
-
-            # Process PAL data as needed
             df = pd.DataFrame({
                 'time': pd.to_datetime(pal_ds['time'].values),
-                'lat': pal_ds['lat'].values,
-                'lon': pal_ds['lon'].values,
                 'rain_rate': pal_ds['rain_rate'].values
             })
-
-            df['date'] = df['time'].dt.date  # Extract date from time
-
-            df['year'] = df['time'].dt.year  # Extract year from time
-
-            df = df.dropna(axis=0, how='any')  # Drop rows with any NaN values           
-
-            # Normalize longitude to [-180, 180]
-            df['lon'] = (df['lon'] + 360) % 360
-            df['lon'][df['lon'] > 180] -= 360
-
-            df_avg = df.groupby(['year', 'date'])[['rain_rate', 'lat', 'lon']].mean()
-
-            df_avg['region'] = region_name  # Add region name for clarity
-            df_avg['pal_file'] = os.path.basename(pal_file)  # Add PAL file name for clarity
-
-
-            # Count unique dates with non-NaN rain_rate
-            # unique_dates = df['date'].nunique()
-            
-            # Store the count in the inventory list
-            regional_inventory.append(df_avg)
-
+            df = df.dropna(subset=['rain_rate'])  # Only keep rows with valid rain_rate
+            if not df.empty:
+                df.set_index('time', inplace=True)
+                # Resample to daily, taking the mean rain_rate per day
+                daily_df = df.resample('D').mean()
+                daily_df = daily_df.dropna(subset=['rain_rate'])  # Only keep days with valid mean
+                daily_df = daily_df.reset_index()
+                daily_df['date'] = daily_df['time'].dt.date
+                daily_df['year'] = daily_df['time'].dt.year
+                daily_df['region'] = region_name
+                daily_df['pal_file'] = os.path.basename(pal_file)
+                regional_inventory.append(daily_df[['region', 'year', 'date', 'pal_file']])
             pal_ds.close()
 gc.collect()  # Clean up memory
 
-# Combine all region PAL-GPCP dataframes into a single dataframe
-regional_inventory_df = pd.concat(regional_inventory)
+# Combine all PALs' valid daily records
+regional_inventory_df = pd.concat(regional_inventory, ignore_index=True)
+# PAL count per region for legend
 region_counts = regional_inventory_df.groupby('region')['pal_file'].nunique().to_dict()
 
-# groupby region and  year, then count all days with non-NaN rain_rate
-regional_inventory_df = regional_inventory_df.groupby(['region', 'year'])[['rain_rate']].count().reset_index()
+# Count number of valid daily observations per region per year
+regional_inventory_df = (
+    regional_inventory_df
+    .groupby(['region', 'year'])
+    .agg(rain_rate=('date', 'count'))
+    .reset_index()
+)
+
+
 
 # plot bar plot of year on x axis and count of days with non-NaN rain_rate on y axis
 # comparing regions
@@ -311,6 +301,11 @@ ax.spines['left'].set_zorder(2)
 ax.set_zorder(1)
 # Slant the x-axis tick labels for readability
 plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+# Set y-axis ticks to show as 2000, 4000, 6000, 8000, etc.
+# yticks = np.arange(0, regional_inventory_df['rain_rate'].max() + 2000, 2000)
+# ax.set_yticks(yticks)
+# ax.set_yticklabels([f"{int(y):,}" for y in yticks])
+
 # Set y-axis to log scale for readability
 # ax.set_yscale('log')
 
