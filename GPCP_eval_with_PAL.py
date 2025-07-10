@@ -75,13 +75,23 @@ all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.l
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 # read all GPCP into a single xr data
-gpcp_ds_v1pt3_xr = xr.open_mfdataset(all_gpcp_v1pt3_files, combine='by_coords', parallel=True, engine='netcdf4')
+# Limit the number of simultaneously open files to avoid kernel crash
+import dask
+dask.config.set({'array.slicing.split_large_chunks': False})
+
+gpcp_ds_v1pt3_xr = xr.open_mfdataset(
+    all_gpcp_v1pt3_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
+)
 gpcp_ds_v1pt3_xr = ds_swaplon(gpcp_ds_v1pt3_xr)
 
-gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcp_v3pt2_files, combine='by_coords', parallel=True, engine='netcdf4')
+gpcp_ds_v3pt2_xr = xr.open_mfdataset(
+    all_gpcp_v3pt2_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
+)
 gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
 
-gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files, combine='by_coords', parallel=True, engine='netcdf4')
+gpcp_ds_v3pt3_xr = xr.open_mfdataset(
+    all_gpcp_v3pt3_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
+)
 gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
