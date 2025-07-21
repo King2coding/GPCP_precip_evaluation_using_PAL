@@ -1008,6 +1008,7 @@ plot_wind_speed_bin_comparison(
     windspd_obs_ana_by_region, region_colors,
     title='Wind Speed Bin Comparison Across Regions',
     ylabel='Count of Observations',
+    ylabrot=0,
     output_path=svnme
 )
 # - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - 
@@ -1032,12 +1033,6 @@ plot_wind_speed_bin_comparison(
 )
 
 gc.collect()  # Clean up memory
-
-
-
-
-
-
 
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 # import concurrent.futures
