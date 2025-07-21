@@ -14,6 +14,8 @@ from rasterio.transform import rowcol
 from osgeo import gdal, osr
 import subprocess
 
+
+from scipy import stats
 #%% GLOBAL VARIABLES
 
 def format_lon(x, pos=None):
@@ -161,56 +163,183 @@ def classify_and_group_files_fixed(file_list):
     return classification
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def grab_PAL_rain_and_wind_df(pal_xr_ds):
+    """
+    Grab rain and wind data from a PAL xarray dataset.
+    Parameters:
+    - pal_xr_ds: xarray dataset containing PAL data.
+    Returns:
+    - df_rain: DataFrame containing rain data.
+    - df_wind: DataFrame containing wind data.
+    """
 
-def process_gpcp_with_PAL2(pal_file, region_name, pal_df, 
-                           gpcp_ds_xr, gpcp_version):    
+    # Process PAL data as needed
+    df_rain = pd.DataFrame({
+        'time': pd.to_datetime(pal_xr_ds['time'].values),
+        'lat': pal_xr_ds['lat'].values,
+        'lon': pal_xr_ds['lon'].values,
+        'rain_rate': pal_xr_ds['rain_rate'].values,
+    })
 
-    pal_dates = pd.to_datetime(pal_df['date'])
-    pal_lats = pal_df['lat'].values
-    pal_lons = pal_df['lon'].values
+    df_rain['date'] = df_rain['time'].dt.date  # Extract date from time               
 
-    # Convert dask-backed DataArray to a regular (in-memory) DataArray if needed
-    # gpcp_precip = gpcp_ds_v3pt2_xr['precip'].compute()
+    df_rain = df_rain.dropna(axis=0, how='any')  # Drop rows with any NaN values           
+
+    # Normalize longitude to [-180, 180]
+    df_rain['lon'] = (df_rain['lon'] + 360) % 360
+    df_rain['lon'][df_rain['lon'] > 180] -= 360
+
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+    df_wind = pd.DataFrame({
+        'time': pd.to_datetime(pal_xr_ds['time'].values),
+        'lat': pal_xr_ds['lat'].values,
+        'lon': pal_xr_ds['lon'].values,
+        'rain_rate': pal_xr_ds['rain_rate'].values,
+        'wind_speed': pal_xr_ds['wind_speed'].values,                
+    })
+
+    df_wind['date'] = df_wind['time'].dt.date  # Extract date from time
+
+    df_wind = df_wind.dropna(axis=0, how='any')  # Drop rows with any NaN values
+
+    # Normalize longitude to [-180, 180]
+    df_wind['lon'] = (df_wind['lon'] + 360) % 360
+    df_wind['lon'][df_wind['lon'] > 180] -= 360
+
+    return df_rain, df_wind   
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def process_gpcp_with_PAL_rain_and_wind( pal_df_rain, pal_df_wind, gpcp_ds_xr, gpcp_version):
+
+    # DO PAL RAIN GPCP MATCHING    
+
+    pal_dates_rain = pd.to_datetime(pal_df_rain['date'])
+    pal_lats_rain = pal_df_rain['lat'].values
+    pal_lons_rain = pal_df_rain['lon'].values
 
     # Rename latitude/longitude dims to 'lat' and 'lon' if needed
     if 'latitude' in gpcp_ds_xr.dims or 'longitude' in gpcp_ds_xr.dims:
         gpcp_ds_xr = gpcp_ds_xr.rename({'latitude': 'lat', 'longitude': 'lon'})
 
     gpcp_precip = gpcp_ds_xr['precip'].interp(
-        time=("points", pal_dates), lat=("points", pal_lats), lon=("points", pal_lons), method="nearest"
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+        lon=("points", pal_lons_rain), method="nearest"
     )
     # Set places where the values are less than 0 to NaN
     gpcp_precip = gpcp_precip.where(gpcp_precip >= 0, np.nan)
 
     # Store matched values in the DataFrame
-    pal_df[gpcp_version] = gpcp_precip
+    pal_df_rain[gpcp_version] = gpcp_precip
 
     # do same for probability of liquid phase if it exsists in dataset
-    # gpcp_plp = gpcp_ds_v3pt2_xr['probability_liquid_phase'].compute()
     if gpcp_version == 'GPCP_v3pt2':
         gpcp_plp = gpcp_ds_xr['probability_liquid_phase'].interp(
-            time=("points", pal_dates), lat=("points", pal_lats),
-            lon=("points", pal_lons), method="nearest"
-        )
-
-        # Store matched values in the DataFrame
-        pal_df[f'PLP_{gpcp_version}'] = gpcp_plp
+            time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+            lon=("points", pal_lons_rain), method="nearest")
+        
         # Set places where the values are less than 0 to NaN
-        gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)      
+        gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)
+        
+        # Store matched values in the DataFrame
+        pal_df_rain[f'PLP_{gpcp_version}'] = gpcp_plp
+        
 
-    # # sel only where PLP_v3pt2 is 100
-    # pal_df = pal_df[pal_df[f'PLP_{gpcp_version}'] == 100]
+    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    # NOW DO THE SAME FOR WIND SPEED DATA
+    pal_dates_wind = pd.to_datetime(pal_df_wind['date'])
+    pal_lats_wind = pal_df_wind['lat'].values
+    pal_lons_wind = pal_df_wind['lon'].values
 
-    # daily_avg = pal_df.groupby('date').agg({
-    #     'rain_rate': 'mean',
-    #     gpcp_version: 'mean',
-    #     f'PLP_{gpcp_version}': 'mean',
-    # })
-    # # convert pal rainrate to daily average
-    # daily_avg['rain_rate'] *= 24  # Convert to daily average
-    # daily_avg['region'] = region_name
-    # daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]       
-    return pal_df
+    gpcp_pr_wind_speed = gpcp_ds_xr['precip'].interp(
+        time=("points", pal_dates_wind), lat=("points", pal_lats_wind), 
+        lon=("points", pal_lons_wind), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    gpcp_pr_wind_speed = gpcp_pr_wind_speed.where(gpcp_pr_wind_speed >= 0, np.nan)
+    # Store matched values in the DataFrame
+    pal_df_wind[gpcp_version] = gpcp_pr_wind_speed
+
+    # do same for probability of liquid phase if it exsists in dataset
+    if gpcp_version == 'GPCP_v3pt2':
+        gpcp_plp = gpcp_ds_xr['probability_liquid_phase'].interp(
+            time=("points", pal_dates_wind), lat=("points", pal_lats_wind), 
+            lon=("points", pal_lons_wind), method="nearest")
+        # Set places where the values are less than 0 to NaN
+        gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)
+        # Store matched values in the DataFrame
+        pal_df_wind[f'PLP_{gpcp_version}'] = gpcp_plp
+
+    return pal_df_rain, pal_df_wind
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def compute_rainfall_fraction_and_volume_by_windspeed_bins(
+        rainfall_df,products, bn_size=1, threshold=0.2):
+    """
+    Compute precipitation fraction for each temperature bin for multiple precipitation products.
+
+    Parameters:
+    - temp_data: xarray.DataArray of temperature data.
+    - precip_products: List of tuples (name, xarray.DataArray) for precipitation products.
+    - seas_mnth: List of months for seasonal analysis (e.g., [12, 1, 2] for DJF). If None, compute for all months.
+    - temp_bin_size: Size of the temperature bins (default: 1).
+    - threshold: Precipitation threshold to calculate fraction (default: 0.02).
+
+    Returns:
+    - precip_fraction_by_bin: Dictionary with product names as keys and DataFrames of precipitation fraction by temperature bin.
+    """
+    # Define wind speed bins based on the wind speed data
+    windspeed_data = rainfall_df['wind_speed'].values.flatten()
+    wind_bins = np.arange(windspeed_data.min().item(), windspeed_data.max().item() + bn_size, bn_size)
+    wind_bin_labels = (wind_bins[:-1] + wind_bins[1:]) / 2  # Midpoints of bins for labeling
+
+    # Initialize a dictionary to store results
+    rain_fraction_and_volume_results= []
+
+    for product_name in [i for i in products if i != 'wind_speed']:
+        print(f"Processing {product_name}...")        
+
+        wind_speed_data_cpy = windspeed_data.copy() 
+        rr_data = rainfall_df[product_name].values.flatten()      
+
+        # Drop NaNs
+        valid_indices = ~np.isnan(wind_speed_data_cpy) & ~np.isnan(rr_data)
+        wind_speed_data_cpy = wind_speed_data_cpy[valid_indices]
+        rr_data = rr_data[valid_indices]
+
+        if product_name == 'rain_rate':
+            product_name = 'PAL'  
+
+        # Create a DataFrame for binning
+        df = pd.DataFrame({'Wind_Speed': wind_speed_data_cpy, f'{product_name}_rainfall': rr_data})
+        df['Wind_Speed_bin'] = pd.cut(df['Wind_Speed'], bins=wind_bins, labels=wind_bin_labels, include_lowest=True)
+
+        # # PDFc
+        fraction_group = df.groupby('Wind_Speed_bin')
+        pdfc = fraction_group.apply(lambda x: pd.Series({
+            f'{product_name}_Rainfall_Fraction': (x[f'{product_name}_rainfall'] >= threshold).sum() / len(x)
+        })).reset_index()
+
+        # PDFv
+        volume_group = df.groupby('Wind_Speed_bin')
+        volume_group = volume_group.apply(lambda x: pd.Series({
+            f'{product_name}_Rainfall_Volume': x[f'{product_name}_rainfall'].sum()
+        })).reset_index()
+
+        # Normalize each row by the sum of Rainfall_Volume
+        pdfv = volume_group.copy()
+        total_volume = pdfv[f'{product_name}_Rainfall_Volume'].sum()
+        pdfv[f'{product_name}_Rainfall_Volume'] = pdfv[f'{product_name}_Rainfall_Volume'] / total_volume if total_volume != 0 else 0
+
+
+        # pdfv = volume_group/volume_group[f'{product_name}_Rainfall_Volume'].sum()
+        result = pd.merge(pdfc, pdfv, on='Wind_Speed_bin')
+
+        # Store the results in the dictionary
+        rain_fraction_and_volume_results.append(result)
+
+    final_results = pd.concat(rain_fraction_and_volume_results, axis=1)
+
+    return final_results
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON BOUNDING BOXES
@@ -391,6 +520,33 @@ def calculate_metrics(pal, gpcp):
     #     cc = np.nan
 
     return rb, rmse, cc
+
+# - - -  - - - - - - - - - - - - - - - - - -- - - -  - - - - - - - - - - - - - - - - 
+def get_cdf_and_norm_pdf_(arr_input,rnge,binsz):        
+
+    # Filter out NaN values
+    arr1d = arr_input[~np.isnan(arr_input)]
+    
+    rng = rnge
+    bns = binsz
+
+    arr_bin_means, arr_bin_edges, _ = stats.binned_statistic(x = arr1d, values = arr1d, statistic = 'mean', 
+                                                             bins = bns, range = rng)
+    arr_bin_cnt, _, _ = stats.binned_statistic(x = arr1d, values = arr1d, statistic = 'count', 
+                                               bins = bns,range = rng)
+    
+    # noirmalised pdf
+    arr_v = arr_bin_cnt * arr_bin_means
+    arr_total_v = np.nansum(arr_v)
+    norm_pdf = arr_v/arr_total_v
+
+    # cdf
+    cdf = np.nancumsum(norm_pdf)
+    cdf /= cdf[-1]
+
+    del(arr1d,arr_bin_means,arr_bin_cnt)
+
+    return norm_pdf, cdf, arr_bin_edges
 #%% DEBUG FUNCTION
 def debug_overlap_test():
     """Test the boxes_overlap function with specific PAL coordinates"""

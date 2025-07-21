@@ -13,12 +13,14 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import matplotlib as mpl
 from matplotlib.legend import Legend
+import dask
 import seaborn as sns
 from matplotlib.ticker import FuncFormatter
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.mpl.ticker as cticker
 
+import seaborn as sns
 #%% DEBUG: Check current region bounds and test overlap function
 print("CURRENT REGION BOUNDS:")
 print("="*50)
@@ -76,7 +78,7 @@ all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.l
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 # read all GPCP into a single xr data
 # Limit the number of simultaneously open files to avoid kernel crash
-import dask
+
 dask.config.set({'array.slicing.split_large_chunks': False})
 
 gpcp_ds_v1pt3_xr = xr.open_mfdataset(
@@ -342,6 +344,8 @@ gc.collect()  # Clean up memory
 
 
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
+regional_PAL_GPCP_wind_dfs_dict = {}
+regional_PAL_GPCP_wind_dfs_lst = []
 regional_PAL_GPCP_dfs_daily_mean = {}
 regional_PAL_GPCP_dfs_daily_lst = []
 for region_name, pal_files in pals_classed_by_region.items():
@@ -357,125 +361,149 @@ for region_name, pal_files in pals_classed_by_region.items():
 
             print(f"Processing PAL file: {os.path.basename(pal_file)}")
 
-            # Process PAL data as needed
-            df = pd.DataFrame({
-                'time': pd.to_datetime(pal_ds['time'].values),
-                'lat': pal_ds['lat'].values,
-                'lon': pal_ds['lon'].values,
-                'rain_rate': pal_ds['rain_rate'].values
-            })
-
-            df['date'] = df['time'].dt.date  # Extract date from time
-
-            # nan_df = df.copy()  # Keep a copy for debugging
-            # nan_df = nan_df[nan_df.isna().any(axis=1)]  # Find rows with NaN values
-
-            df = df.dropna(axis=0, how='any')  # Drop rows with any NaN values           
-
-            # Normalize longitude to [-180, 180]
-            df['lon'] = (df['lon'] + 360) % 360
-            df['lon'][df['lon'] > 180] -= 360
+            # gran required dfs
+            pal_rain_df, pal_wind_df = grab_PAL_rain_and_wind_df(pal_ds)             
 
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
             # Process GPCP data with PAL
             
-            pal_df_gpcpv1pt3 = df.copy()
+            pal_rain_gpcpv1pt3_df = pal_rain_df.copy()
+            pal_wind_gpcpv1pt3_df = pal_wind_df.copy()
 
             # get the resolution of the GPCP data
-            resol_gpcpv1pt3 = np.unique(np.diff(gpcp_ds_v1pt3_xr['longitude'].values))[0]
+            # resol_gpcpv1pt3 = np.unique(np.diff(gpcp_ds_v1pt3_xr['longitude'].values))[0]
 
             # pal_gpcpv1pt3_daily_avg = process_gpcp_with_PAL(pal_file, region_name, 
             #                                                 pal_df_gpcpv1pt3, gpcp_ds_v1pt3_xr, 
             #                                                 resol_gpcpv1pt3, 'GPCP_v1pt3') 
-            pal_gpcpv1pt3_df = process_gpcp_with_PAL2(
-                                            pal_file, region_name, pal_df_gpcpv1pt3, 
+            pal_gpcpv1pt3_df_rain, pal_gpcpv1pt3_df_wind = process_gpcp_with_PAL_rain_and_wind(
+                                            pal_rain_gpcpv1pt3_df, 
+                                            pal_wind_gpcpv1pt3_df, 
                                             gpcp_ds_v1pt3_xr, 'GPCP_v1pt3')
-            pal_gpcpv1pt3_df.index = pd.to_datetime(pal_gpcpv1pt3_df['time'])
+            
+            pal_gpcpv1pt3_df_rain.index = pd.to_datetime(pal_gpcpv1pt3_df_rain['time'])
+            pal_gpcpv1pt3_df_wind.index = pd.to_datetime(pal_gpcpv1pt3_df_wind['time'])
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-            pal_df_gpcpv3pt2 = df.copy()   
+            pal_rain_gpcpv3pt2_df = pal_rain_df.copy()   
+            pal_wind_gpcpv3pt2_df = pal_wind_df.copy()
 
-            resol_gpcpv3pt2 = np.unique(np.diff(gpcp_ds_v3pt2_xr['lon'].values))[0]
+            # get the resolution of the GPCP data
+
+            # resol_gpcpv3pt2 = np.unique(np.diff(gpcp_ds_v3pt2_xr['lon'].values))[0]
             
             # pal_gpcpv3pt2_daily_avg = process_gpcp_with_PAL(pal_file, region_name, 
             #                                                 pal_df_gpcpv3pt2, gpcp_ds_v3pt2_xr, resol_gpcpv3pt2,
             #                                                 'GPCP_v3pt2')
-            pal_gpcpv3pt2_df= process_gpcp_with_PAL2(
-                                            pal_file, region_name, pal_df_gpcpv3pt2, 
+            pal_gpcpv3pt2_df_rain, pal_gpcpv3pt2_df_wind = process_gpcp_with_PAL_rain_and_wind(
+                                            pal_rain_gpcpv3pt2_df, pal_wind_gpcpv3pt2_df,
                                             gpcp_ds_v3pt2_xr, 'GPCP_v3pt2')
-            pal_gpcpv3pt2_df.index = pd.to_datetime(pal_gpcpv3pt2_df['time'])  # Ensure index is datetime
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-            pal_df_gpcpv3pt3 = df.copy()           
 
-            resol_gpcpv3pt3 = np.unique(np.diff(gpcp_ds_v3pt3_xr['lon'].values))[0]
+            pal_gpcpv3pt2_df_rain.index = pd.to_datetime(pal_gpcpv3pt2_df_rain['time'])  # Ensure index is datetime
+            pal_gpcpv3pt2_df_wind.index = pd.to_datetime(pal_gpcpv3pt2_df_wind['time'])  # Ensure index is datetime
+            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+            pal_rain_gpcpv3pt3_df = pal_rain_df.copy()           
+            pal_wind_gpcpv3pt3_df = pal_wind_df.copy()           
+
+            # resol_gpcpv3pt3 = np.unique(np.diff(gpcp_ds_v3pt3_xr['lon'].values))[0]
 
             # pal_gpcpv3pt3_daily_avg = process_gpcp_with_PAL(pal_file, region_name,
             #                                                 pal_df_gpcpv3pt3, gpcp_ds_v3pt3_xr, 
             #                                                 resol_gpcpv3pt3, 'GPCP_v3pt3') 
-            pal_gpcpv3pt3_df= process_gpcp_with_PAL2(
-                                            pal_file, region_name, pal_df_gpcpv3pt3,
+            pal_gpcpv3pt3_df_rain, pal_gpcpv3pt3_df_wind = process_gpcp_with_PAL_rain_and_wind(
+                                            pal_rain_gpcpv3pt3_df, pal_wind_gpcpv3pt3_df,
                                             gpcp_ds_v3pt3_xr, 'GPCP_v3pt3')  
 
-            pal_gpcpv3pt3_df.index = pd.to_datetime(pal_gpcpv3pt3_df['time'])        
+            pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
+            pal_gpcpv3pt3_df_wind.index = pd.to_datetime(pal_gpcpv3pt3_df_wind['time'])    
 
-            # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data
-            # Use pd.merge to combine on 'date' after selecting only relevant columns
-            # pal_df_combined = pal_gpcpv1pt3_daily_avg.copy()
-            # pal_df_combined = pal_df_combined[['rain_rate', 'region', 'track_PAL_id', 'GPCP_v1pt3']].copy()
-            pal_df_combined = pal_gpcpv1pt3_df.copy()
-            pal_df_combined = pal_df_combined[['date','rain_rate', 'GPCP_v1pt3']].copy()
-            # pal_df_combined['region'] = region_name  # Add region name for clarity            
-            
-            # Merge GPCP_v3pt2, always retain prob_liq, but avoid duplicate columns
-            # pal_df_combined = pal_df_combined.merge(
-            #     pal_gpcpv3pt2_daily_avg[['GPCP_v3pt2', 'prob_liq']], 
-            #     left_index=True, right_index=True, how='left', suffixes=('', '_v3pt2')
-            # )
-            pal_df_combined = pal_df_combined.merge(
-                pal_gpcpv3pt2_df[['date','GPCP_v3pt2', 'PLP_GPCP_v3pt2']], 
+            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
+
+            # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data        
+            # COMBINE BY RAINFALL RATE
+            #     
+            pal_df_combined_rain = pal_gpcpv1pt3_df_rain.copy()
+            pal_df_combined_rain = pal_df_combined_rain[['date','rain_rate', 'GPCP_v1pt3']].copy()
+
+            # merge GPCP v3.2 data            
+            pal_df_combined_rain = pal_df_combined_rain.merge(
+                pal_gpcpv3pt2_df_rain[['date','GPCP_v3pt2', 'PLP_GPCP_v3pt2']], 
                 left_index=True, right_index=True, how='left', suffixes=('', '_v3pt2')
             )
             
             # Remove any duplicate columns from previous merges
             for col in ['GPCP_v3pt2_v3pt2', 'PLP_GPCP_v3pt2_v3pt2', 'date_v3pt2']:
-                if col in pal_df_combined.columns:
-                    pal_df_combined.drop(columns=col, inplace=True)
+                if col in pal_df_combined_rain.columns:
+                    pal_df_combined_rain.drop(columns=col, inplace=True)
 
-            # Merge GPCP_v3pt3, avoid duplicate columns
-                # pal_df_combined = pal_df_combined.merge(
-                #     pal_gpcpv3pt3_daily_avg[['GPCP_v3pt3']], 
-                #     left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
-                # )
-            pal_df_combined = pal_df_combined.merge(
-                pal_gpcpv3pt3_df[['date','GPCP_v3pt3']], 
+            # merge GPCP v3.3 data
+            pal_df_combined_rain = pal_df_combined_rain.merge(
+                pal_gpcpv3pt3_df_rain[['date','GPCP_v3pt3']], 
                 left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
             )
-            # if 'GPCP_v3pt3_v3pt3' in pal_df_combined.columns:
-            #     pal_df_combined.drop(columns=['GPCP_v3pt3_v3pt3'], inplace=True)
-            pal_df_combined.drop(columns=[i for i in pal_df_combined.columns if i in  ['GPCP_v3pt3_v3pt3', 'date_v3pt3']], inplace=True)
 
-            # multiply PAL rain rate by 24 to get daily average
-            # pal_df_combined['rain_rate'] *= 24
+            # Remove any duplicate columns from previous merges
+            pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                 ['GPCP_v3pt3_v3pt3', 'date_v3pt3']], 
+                                                 inplace=True)
 
-            # retain only columns where prob_liq is == 100            
-            # pal_df_combined = pal_df_combined[pal_df_combined['prob_liq'] == 100]
             # retain only columns where PLP_GPCP_v3pt2 is == 100
-            pal_df_combined = pal_df_combined[pal_df_combined['PLP_GPCP_v3pt2'] == 100]
+            pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP_v3pt2'] == 100]
 
             # groupby date and get mean of rain_rate and GPCP data
-            daily_avg = pal_df_combined.groupby('date').mean([['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']]).reset_index()
+            daily_avg_rain = pal_df_combined_rain.groupby('date').mean([['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']]).reset_index()
             # multiply PAL rain rate by 24 to get daily average
-            daily_avg['rain_rate'] *= 24
+            daily_avg_rain['rain_rate'] *= 24
             # add region name and track_PAL_id to the dataframe
-            daily_avg['region'] = region_name  # Add region name for clarity
-            daily_avg['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+            daily_avg_rain['region'] = region_name  # Add region name for clarity
+            daily_avg_rain['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
 
-            region_pal_gpcp_dfs.append(daily_avg)
+            region_pal_gpcp_dfs.append(daily_avg_rain)
+
+            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -             
+
+            # COMBINE BY WIND SPEED
+            pal_df_combined_wind = pal_gpcpv1pt3_df_wind.copy()
+            pal_df_combined_wind = pal_df_combined_wind[['date', 'rain_rate','wind_speed', 'GPCP_v1pt3']].copy()
+
+            # merge GPCP v3.2 data
+            pal_df_combined_wind = pal_df_combined_wind.merge(
+                pal_gpcpv3pt2_df_wind[['date','GPCP_v3pt2', 'PLP_GPCP_v3pt2']], 
+                left_index=True, right_index=True, how='left', suffixes=('', '_v3pt2')
+            )
+            # Remove any duplicate columns from previous merges
+            for col in ['GPCP_v3pt2_v3pt2', 'PLP_GPCP_v3pt2_v3pt2', 'date_v3pt2']:
+                if col in pal_df_combined_wind.columns:
+                    pal_df_combined_wind.drop(columns=col, inplace=True)
+
+            # merge GPCP v3.3 data
+            pal_df_combined_wind = pal_df_combined_wind.merge(
+                pal_gpcpv3pt3_df_wind[['date','GPCP_v3pt3']], 
+                left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
+            )
+            # Remove any duplicate columns from previous merges
+            pal_df_combined_wind.drop(columns=[i for i in pal_df_combined_wind.columns if i in \
+                                                 ['GPCP_v3pt3_v3pt3', 'date_v3pt3']], 
+                                                 inplace=True)
+            
+            # retain only columns where PLP_GPCP_v3pt2 is == 100
+            pal_df_combined_wind = pal_df_combined_wind[pal_df_combined_wind['PLP_GPCP_v3pt2'] == 100]
+
+            # convert to daily rain rate and wind speed
+            # groupby date and get mean of rain_rate and GPCP data
+            daily_avg_rain_wind = pal_df_combined_wind.groupby('date').mean([['wind_speed','rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']]).reset_index()
+            # multiply PAL rain rate by 24 to get daily average
+            daily_avg_rain_wind['rain_rate'] *= 24
+            # add region name and track_PAL_id to the dataframe
+            daily_avg_rain_wind['region'] = region_name  # Add region name for clarity
+            daily_avg_rain_wind['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+
+            # append to a list
+            regional_PAL_GPCP_wind_dfs_lst.append(daily_avg_rain_wind)
 
             pal_ds.close()
 
         # Combine all region PAL-GPCP dataframes into a single dataframe
-        region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs)
-        
+        region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs)        
         
         # calculate daily mean per track_PAL_id
         region_pal_gpcp_df_daily_mean = region_pal_gpcp_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v1pt3', 
@@ -485,6 +513,9 @@ for region_name, pal_files in pals_classed_by_region.items():
 
         # Append to the list for later processing
         regional_PAL_GPCP_dfs_daily_lst.append(region_pal_gpcp_df)
+
+        # Append wind data by region
+        regional_PAL_GPCP_wind_dfs_dict[region_name] = pd.concat(regional_PAL_GPCP_wind_dfs_lst, ignore_index=True)
 
 gc.collect()  # Clean up memory
 
@@ -804,6 +835,210 @@ monthly_plot_path = os.path.join(path_to_put_plts, 'PAL_GPCP_monthly_means_by_re
 plt.savefig(monthly_plot_path, bbox_inches='tight', dpi=500)
 plt.show()
 gc.collect()
+
+
+#%% DO SOME WINDY ANALYSIS
+col2ana = ['rain_rate', 'wind_speed', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']
+for region_name,data_df in regional_PAL_GPCP_wind_dfs_dict.items():
+    print(f"Region: {region_name}, Number of records: {(data_df.shape[0])}")
+
+    data2ana = data_df[col2ana].copy()
+    data2ana = data2ana.dropna(axis=0, how='any')
+
+    rr_data2ana = data2ana[['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']].copy()
+
+    # DO PDFC AND PDFV
+    pdfc_pdfv_results = compute_rainfall_fraction_and_volume_by_windspeed_bins(
+        data2ana, col2ana, bn_size=2, threshold=0.5)
+    
+
+#%%  A CONCENTRATED ANALYSIS OF PAL RAIN RATE WITH ITS WIND SPEED
+windspd_obs_ana_by_region = {}
+rr_obs_ana_by_region = {}
+thr_rr_obs_ana_by_region = {}
+for region_name, pal_files in pals_classed_by_region.items():
+    if region_name != "Unclassified" and len(pal_files) > 0:
+        print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
+
+        # store PAL and GPCP dataframes        
+        regional_observations = []
+
+        # LOAD PAL DATA
+        for pal_file in pal_files:
+            print(f"Processing PAL file: {os.path.basename(pal_file)}")
+            pal_ds = xr.open_dataset(pal_file)
+
+            # create an analytical df
+            ana_df = pd.DataFrame({
+                'time': pal_ds['time'].values,
+                'rain_rate': pal_ds['rain_rate'].values.flatten(),
+                'wind_speed': pal_ds['wind_speed'].values.flatten()
+            })
+
+            # set values of both rain rate and wind speed to NaN if they are less than 0
+            ana_df.loc[ana_df['rain_rate'] < 0, 'rain_rate'] = np.nan
+            ana_df.loc[ana_df['wind_speed'] < 0, 'wind_speed'] = np.nan
+
+            # drop rows with NaN values in either rain_rate or wind_speed
+            ana_df = ana_df.dropna(subset=['rain_rate', 'wind_speed'], axis=0)
+
+            regional_observations.append(ana_df)
+
+        # Combine all PAL dataframes for the region
+        regional_dfs = pd.concat(regional_observations, axis=0)
+        # Filter out invalid values
+        # regional_dfs = regional_dfs[(regional_dfs['rain_rate'] >= 0) & (regional_dfs['wind_speed'] >= 0)]
+        # filter rain above 0
+
+        # Define wind speed bins and labels
+        wind_speed_bins = pd.cut(
+            regional_dfs['wind_speed'], 
+            bins=[-1, 5, 10, 15, float('inf')], 
+            labels=['0-5', '5-10', '10-15', '>15'], 
+            duplicates='drop'
+        )
+        
+        # Count of wind speed observations by wind speed bins
+        wind_speed_counts = wind_speed_bins.value_counts().sort_index()
+        wind_speed_counts = wind_speed_counts.reset_index()
+        wind_speed_counts.columns = ['wind_speed_bin', 'count']
+        wind_speed_counts['percentage'] = ((wind_speed_counts['count'] / wind_speed_counts['count'].sum()) * 100).round(2)
+
+        # Count of rain rate observations by wind speed bins
+        regional_dfs['wind_speed_bins'] = wind_speed_bins
+        rain_rate_counts = regional_dfs.groupby('wind_speed_bins')['rain_rate'].count()
+        rain_rate_counts = rain_rate_counts.reset_index()
+        rain_rate_counts.columns = ['wind_speed_bin', 'count']
+        rain_rate_counts['percentage'] = ((rain_rate_counts['count'] / rain_rate_counts['count'].sum()) * 100).round(2)
+
+        # Count of rain rate > 0 observations by wind speed bins
+        rain_rate_above_threshold_counts = regional_dfs[regional_dfs['rain_rate'] > 0].groupby('wind_speed_bins')['rain_rate'].count()
+        rain_rate_above_threshold_counts = rain_rate_above_threshold_counts.reset_index()
+        rain_rate_above_threshold_counts.columns = ['wind_speed_bin', 'count']
+        rain_rate_above_threshold_counts['percentage'] = ((rain_rate_above_threshold_counts['count'] / rain_rate_above_threshold_counts['count'].sum()) * 100).round(2)
+
+        # append to dict
+        windspd_obs_ana_by_region[region_name] = wind_speed_counts
+        rr_obs_ana_by_region[region_name] = rain_rate_counts
+        thr_rr_obs_ana_by_region[region_name] = rain_rate_above_threshold_counts
+
+gc.collect()  # Clean up memory
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+# plot pdfc and pdf v for each region
+def plot_wind_speed_bin_comparison(data_dict, region_colors, title, ylabel, ylabrot, output_path=None):
+    """
+    Plots a 4x1 subplot bar chart comparing counts across regions for each wind speed bin.
+
+    Parameters:
+    - data_dict: dict
+        Dictionary where keys are region names and values are DataFrames with columns:
+        ['wind_speed_bin', 'count', 'percentage'].
+    - region_colors: dict
+        Dictionary mapping region names to their respective colors.
+    - title: str
+        Title for the entire figure.
+    - ylabel: str
+        Label for the y-axis.
+    - output_path: str, optional
+        If provided, saves the plot to the specified path.
+    """
+    import matplotlib.pyplot as plt
+
+    # Set font and style
+    mpl.rcParams['font.family'] = 'serif'
+    mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+    mpl.rcParams['font.weight'] = 'bold'
+    mpl.rcParams['axes.labelweight'] = 'bold'
+    mpl.rcParams['axes.titleweight'] = 'bold'
+
+    # Define wind speed bins
+    wind_speed_bins = ['0-5', '5-10', '10-15', '>15']
+    n_bins = len(wind_speed_bins)
+
+    # Create subplots
+    fig, axs = plt.subplots(n_bins, 1, figsize=(12, 20), sharex=False)
+    fig.suptitle(title, fontsize=22, fontweight='bold')
+
+    # Iterate over each wind speed bin
+    for i, wind_bin in enumerate(wind_speed_bins):
+        ax = axs[i]
+        counts = []
+        percentages = []
+        regions = []
+
+        # Collect data for the current wind speed bin
+        for region_name, df in data_dict.items():
+            bin_data = df[df['wind_speed_bin'] == wind_bin]
+            if not bin_data.empty:
+                counts.append(bin_data['count'].values[0])
+                percentages.append(bin_data['percentage'].values[0])
+                regions.append(region_name)
+
+        # Plot bar chart
+        colors = [region_colors.get(region, 'gray') for region in regions]
+        bars = ax.bar(regions, counts, color=colors)
+
+        # Annotate percentage on top of each bar
+        for bar, percentage in zip(bars, percentages):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                f'{percentage:.2f}%', ha='center', va='bottom',
+                fontsize=18, fontweight='bold'
+            )
+
+        # Set title, labels, and grid
+        ax.set_title(f'Wind Speed Bin: {wind_bin}', fontsize=18, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=18, fontweight='bold')
+        ax.grid(True, alpha=0.5)
+        ax.tick_params(axis='x', labelrotation=0, labelsize=18)
+        ax.tick_params(axis='y', labelrotation =ylabrot, labelsize=18)
+
+    # Adjust layout and save/show plot
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    if output_path:
+        plt.savefig(output_path, bbox_inches='tight', dpi=300)
+    plt.show()
+    gc.collect()  # Clean up memory
+# - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - 
+
+# maker some plot
+svnme = os.path.join(path_to_put_plts, f'wind_speed_bin_comparison_{cde_run_dte}.png')
+plot_wind_speed_bin_comparison(
+    windspd_obs_ana_by_region, region_colors,
+    title='Wind Speed Bin Comparison Across Regions',
+    ylabel='Count of Observations',
+    output_path=svnme
+)
+# - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - 
+
+svnme = os.path.join(path_to_put_plts, f'rain_rate_bin_comparison_{cde_run_dte}.png')
+plot_wind_speed_bin_comparison(
+    rr_obs_ana_by_region, region_colors,
+    title='Rain Rate Count per Wind Speed Bin\n Comparison Across Regions',
+    ylabel='Count of Observations',
+    ylabrot=0,
+    output_path=svnme
+)
+# - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - - - - - -- - - - - - - - - - - -- - - - - - - - - 
+
+svnme = os.path.join(path_to_put_plts, f'rain_rate_above_threshold_bin_comparison_{cde_run_dte}.png')
+plot_wind_speed_bin_comparison(
+    thr_rr_obs_ana_by_region, region_colors,
+    title='> 0 mm/h Rain Rate Count per Wind Speed Bin\n Comparison Across Regions',
+    ylabel='Count of Observations',
+    ylabrot=0,
+    output_path=svnme
+)
+
+gc.collect()  # Clean up memory
+
+
+
+
+
+
+
 #%% MINIMAL TEST: 1 PAL + 1 GPCP FILE
 # import concurrent.futures
 

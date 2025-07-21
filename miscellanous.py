@@ -376,52 +376,42 @@ delta_bt_mean = bt_series_mean - bt_t0_mean
 delta_bt = bt_series - bt_t0
 
 # 5. Plot it
-# Calculate a small margin around your BT values
 bt_min, bt_max = float(bt_series_mean.min()), float(bt_series_mean.max())
 margin = (bt_max - bt_min) * 0.05  # 5% padding
 
 fig, ax1 = plt.subplots(figsize=(8,5), dpi=1000)
 
 # Left axis: ΔBT line
-ax1.plot(times, delta_bt_mean, marker='o', color='k', linestyle='-', linewidth=0, label='ΔBT (K)')  # black dots, no line
-ax1.plot(times, delta_bt_mean, color='grey', linestyle='-', linewidth=1, label='_nolegend_')       # grey line, no marker
-ax1.axhline(0, color='grey', linestyle='--', linewidth=1)
-ax1.set_ylabel(r'$\Delta$BT$_{10.8 (µm)}$ (K)', fontsize=15, fontweight='bold')
-ax1.tick_params(axis='y', labelsize=15)
+ax1.plot(times, delta_bt_mean, marker='o', color='grey', markerfacecolor='black', label='ΔBT (K)')
+ax1.axhline(0, color='grey', linestyle='--')
+ax1.set_ylabel('ΔBT₁₀.₈ (K)', fontsize=15, fontweight='bold')
 ax1.xaxis.set_major_locator(mdates.AutoDateLocator())
 ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-plt.setp(ax1.get_xticklabels(), rotation=30, ha='right', fontsize=15, fontweight='bold')
-
-# Set left y-axis ticks to [0, 10, 20, 30]
+plt.setp(ax1.get_xticklabels(), rotation=45, ha='right', fontsize=12, fontweight='bold')
+plt.setp(ax1.get_yticklabels(), fontsize=12, fontweight='bold')
 ax1.set_yticks([0, 10, 20, 30])
-ax1.set_yticklabels(['0', '10', '20', '30'], fontsize=15, fontweight='bold')
+ax1.set_yticklabels(['0', '10', '20', '30'], fontsize=12, fontweight='bold')
 
 # Right axis: mean BT bar chart
 ax2 = ax1.twinx()
 ax2.bar(times, bt_series_mean, width=0.01, alpha=0.3, label='Mean BT')
-ax2.set_ylabel('Mean 10.8 (µm) BT (K)', fontsize=15, fontweight='bold')
+ax2.set_ylabel('Mean BT₁₀.₈ (K)', fontsize=15, fontweight='bold')
 ax2.set_ylim(bt_min - margin, bt_max + margin)
-ax2.tick_params(axis='both', labelsize=15)
-# Set right y-ticks to 6 evenly spaced values between bt_min-margin and bt_max+margin
-yticks_right = np.linspace(bt_min, bt_max + margin, 6)
-ax2.set_yticks(yticks_right)
-ax2.set_yticklabels([f"{tick:.0f}" for tick in yticks_right], fontsize=15, fontweight='bold')
+
+# Set 6 ticks from (bt_min - margin) to (bt_max + margin)
+right_ticks = np.linspace(bt_min , bt_max + margin, 6)
+ax2.set_yticks(right_ticks)
+ax2.set_yticklabels([f"{tick:.0f}" for tick in right_ticks], fontsize=12, fontweight='bold')
 
 # Legends
-line1, = ax1.plot([], [], color='k', marker='o', label=r'$\Delta$BT (K)')
-bar_proxy = plt.Rectangle((0,0),1,1,fc='C0', alpha=0.3, label='Mean BT')
-ax1.legend([line1, bar_proxy], [r'$\Delta$BT (K)', 'Mean BT'], 
-           fontsize=14, loc='best', frameon=False)
+lines, labels = ax1.get_legend_handles_labels()
+bars, bar_labels = ax2.get_legend_handles_labels()
+ax1.legend(lines + bars, labels + bar_labels, 
+           loc='best', fontsize=12, frameon=False)
 
-# Title (multi-line, bold, with t0 and ±3×15 min)
-ax1.set_title(
-    f"Cloud-Patch (10.8 (µm) BT <= 230 K) Evolution\n"
-    f"(t₀ = {str(t0)[:16]}) ; ±3×15 min",
-    fontsize=15, fontweight='bold', pad=15
-)
-
+ax1.set_title(f"Cloud-Patch (BT <= 230 K) Evolution\n (t₀ = {str(t0)[:16]}) ; ±3×15 min", fontsize=15, fontweight='bold')
 ax1.set_xlabel('Time (UTC)', fontsize=15, fontweight='bold')
-ax1.grid(True, which='major', axis='both', linestyle='--', alpha=0.7)
+ax1.grid(True, linestyle='--', linewidth=0.55)
 
 plt.tight_layout()
 plt.show()
