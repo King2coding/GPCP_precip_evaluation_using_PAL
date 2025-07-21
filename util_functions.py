@@ -547,6 +547,83 @@ def get_cdf_and_norm_pdf_(arr_input,rnge,binsz):
     del(arr1d,arr_bin_means,arr_bin_cnt)
 
     return norm_pdf, cdf, arr_bin_edges
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def plot_wind_speed_bin_comparison(data_dict, region_colors, title, ylabel, ylabrot, output_path=None):
+    """
+    Plots a 4x1 subplot bar chart comparing counts across regions for each wind speed bin.
+
+    Parameters:
+    - data_dict: dict
+        Dictionary where keys are region names and values are DataFrames with columns:
+        ['wind_speed_bin', 'count', 'percentage'].
+    - region_colors: dict
+        Dictionary mapping region names to their respective colors.
+    - title: str
+        Title for the entire figure.
+    - ylabel: str
+        Label for the y-axis.
+    - output_path: str, optional
+        If provided, saves the plot to the specified path.
+    """
+    import matplotlib.pyplot as plt
+
+    # Set font and style
+    mpl.rcParams['font.family'] = 'serif'
+    mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+    mpl.rcParams['font.weight'] = 'bold'
+    mpl.rcParams['axes.labelweight'] = 'bold'
+    mpl.rcParams['axes.titleweight'] = 'bold'
+
+    # Define wind speed bins
+    wind_speed_bins = ['0-5', '5-10', '10-15', '>15']
+    n_bins = len(wind_speed_bins)
+
+    # Create subplots
+    fig, axs = plt.subplots(n_bins, 1, figsize=(12, 20), sharex=False)
+    fig.suptitle(title, fontsize=22, fontweight='bold')
+
+    # Iterate over each wind speed bin
+    for i, wind_bin in enumerate(wind_speed_bins):
+        ax = axs[i]
+        counts = []
+        percentages = []
+        regions = []
+
+        # Collect data for the current wind speed bin
+        for region_name, df in data_dict.items():
+            bin_data = df[df['wind_speed_bin'] == wind_bin]
+            if not bin_data.empty:
+                counts.append(bin_data['count'].values[0])
+                percentages.append(bin_data['percentage'].values[0])
+                regions.append(region_name)
+
+        # Plot bar chart
+        colors = [region_colors.get(region, 'gray') for region in regions]
+        bars = ax.bar(regions, counts, color=colors)
+
+        # Annotate percentage on top of each bar
+        for bar, percentage in zip(bars, percentages):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                f'{percentage:.2f}%', ha='center', va='bottom',
+                fontsize=18, fontweight='bold'
+            )
+
+        # Set title, labels, and grid
+        ax.set_title(f'Wind Speed Bin: {wind_bin}', fontsize=18, fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=18, fontweight='bold')
+        ax.grid(True, alpha=0.5)
+        ax.tick_params(axis='x', labelrotation=0, labelsize=18)
+        ax.tick_params(axis='y', labelrotation =ylabrot, labelsize=18)
+
+    # Adjust layout and save/show plot
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    if output_path:
+        plt.savefig(output_path, bbox_inches='tight', dpi=300)
+    plt.show()
+    gc.collect()  # Clean up memory
+
 #%% DEBUG FUNCTION
 def debug_overlap_test():
     """Test the boxes_overlap function with specific PAL coordinates"""
