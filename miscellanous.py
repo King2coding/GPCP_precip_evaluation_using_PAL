@@ -22,6 +22,8 @@ all_pal_files = [os.path.join(path_to_pal_data, f) for f in os.listdir(path_to_p
 
 pal_dat = xr.open_dataset(all_pal_files[0])
 
+mbuy = xr.open_dataset(r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys/rain8n95w_dy.cdf')
+
 #%%
 import gc
 import numpy as np

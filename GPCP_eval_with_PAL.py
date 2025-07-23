@@ -57,13 +57,15 @@ print(f"Should overlap with TNEP: {overlap_result2}")
 print("="*50)
 
 #%% DEFINE PATH TO DATA
-path_to_pal_data = r'/ra1/pubdat/GPCP_eval_with_PAL/data/PAL/data_unzipped/PAL_SPURS1_SPURS2_TPOS_Others_202210'
+path_to_pal_data = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/PAL/data_unzipped/PAL_SPURS1_SPURS2_TPOS_Others_202210'
 
-path_to_gpcp_v1pt3 = r'/ra1/pubdat/GPCP_eval_with_PAL/data/GPCP/GPCP_v1_pnt_3_2010_2020'
+moored_bouys_paf = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys'
 
-path_to_gpcp_v3pt2 = r'/ra1/pubdat/GPCP_eval_with_PAL/data/GPCP/GPCP_v3_pnt_2_2010_2020'
+path_to_gpcp_v1pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v1_pnt_3_2010_2020'
 
-path_to_gpcp_v3pt3 = r'/ra1/pubdat/GPCP_eval_with_PAL/data/GPCP/GPCP_v3_pnt_3_2010_2020'
+path_to_gpcp_v3pt2 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_2_2010_2020'
+
+path_to_gpcp_v3pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_3_2010_2020'
 
 path_to_put_plts = r'/home/kkumah/Projects/GPCP_ocean_evaluation_study/Results/plots'
 #%% DEFINE GLOBAL VARIABLES
@@ -97,6 +99,45 @@ gpcp_ds_v3pt3_xr = xr.open_mfdataset(
 gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
+
+# read buoys data
+# Define directories for each region
+# List all directories in the parent folder
+all_buoy_dirs = [os.path.join(moored_bouys_paf, d) for d in os.listdir(moored_bouys_paf) if os.path.isdir(os.path.join(moored_bouys_paf, d))]
+
+# Filter directories based on region names
+pacific_buoy_dir = next((d for d in all_buoy_dirs if "PACIFIC" in d.upper()), None)
+indian_buoy_dir = next((d for d in all_buoy_dirs if "INDIAN" in d.upper()), None)
+atlantic_buoy_dir = next((d for d in all_buoy_dirs if "ATLANTIC" in d.upper()), None)
+
+# Ensure directories were found
+if not pacific_buoy_dir:
+    raise ValueError("No directory found for PACIFIC region.")
+if not indian_buoy_dir:
+    raise ValueError("No directory found for INDIAN region.")
+if not atlantic_buoy_dir:
+    raise ValueError("No directory found for ATLANTIC region.")
+
+# Get all files for each region
+pacific_buoy_files = sorted([os.path.join(pacific_buoy_dir, f) for f in os.listdir(pacific_buoy_dir) if f.endswith('.cdf')])
+indian_buoy_files = sorted([os.path.join(indian_buoy_dir, f) for f in os.listdir(indian_buoy_dir) if f.endswith('.cdf')])
+atlantic_buoy_files = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.listdir(atlantic_buoy_dir) if f.endswith('.cdf')])
+
+pacific_buoy_xr = xr.open_mfdataset(
+    pacific_buoy_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
+)
+
+indian_buoy_xr = xr.open_mfdataset(
+    indian_buoy_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
+)
+
+atlantic_buoy_xr = xr.open_mfdataset(
+    atlantic_buoy_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
+)
+
+pacific_buoy_xr
 
 gc.collect()  # Clean up memory
 #%% CLASSIFY AND GROUP PAL FILES
@@ -152,7 +193,7 @@ mpl.rcParams['ytick.labelsize'] = 18
 
 fig = plt.figure(figsize=(18, 10))
 ax = plt.axes(projection=ccrs.PlateCarree())
-ax.set_extent([-180, 180, -30, 60], crs=ccrs.PlateCarree())
+ax.set_extent([-181, 180, -30, 60], crs=ccrs.PlateCarree())
 
 ax.add_feature(cfeature.LAND, facecolor='lightgray')
 ax.add_feature(cfeature.COASTLINE, linewidth=0.6)
@@ -168,12 +209,30 @@ for region, files in pals_classed_by_region.items():
         ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
         lat = ds['lat'].values[::50]
         lon = ds['lon'].values[::50]
-        # # Remove points where lat or lon is nan
-        # mask = ~((np.isnan(lat)) | (np.isnan(lon)))
-        # lat = lat[mask]
-        # lon = lon[mask]
         ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=3)
         ds.close()
+
+# Initialize buoy counts
+buoy_counts = {"PACIFIC": len(pacific_buoy_files), "INDIAN": len(indian_buoy_files), "ATLANTIC": len(atlantic_buoy_files)}
+
+for bouy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'), 
+                                     ("INDIAN", indian_buoy_files, 's'), 
+                                     ("ATLANTIC", atlantic_buoy_files, 'd')]:
+    for fl in buoy_files: 
+        xrfile = xr.open_dataset(fl)       
+        # Plot moored buoy data
+        lat = xrfile['lat'].values[0]
+        lon = xrfile['lon'].values[0]
+        # make lon between 180 and -180
+        lon = (lon + 180) % 360 - 180
+
+        if lon == -180:
+            # shift lon slightly for plotting
+            lon = -178
+
+        # print(lon)
+        
+        ax.scatter(lon, lat, color='black', s=100, marker=marker, label=f'{bouy_reg} Buoys', transform=ccrs.PlateCarree())
 
 # Add grid lines for major ticks
 ax.grid(True, which='major', linewidth=0.55, color='grey', alpha=0.7, linestyle='--')
@@ -193,11 +252,24 @@ full_region_names = {
 }
 
 # Add full names and PAL counts to legend labels
-labels = [f"{region}: ({full_region_names[region]} ({len(pals_classed_by_region.get(region, []))})" for region in legend_regions]
+labels = [f"{region}: ({full_region_names[region]} ({len(pals_classed_by_region.get(region, []))} PALs))" for region in legend_regions]
+
+# Add buoy markers and counts to the legend
+handles.extend([
+    plt.Line2D([0], [0], color='black', marker='*', markersize=10, linestyle='None'),
+    plt.Line2D([0], [0], color='black', marker='s', markersize=10, linestyle='None'),
+    plt.Line2D([0], [0], color='black', marker='d', markersize=10, linestyle='None')
+])
+labels.extend([
+    f"PACIFIC Buoys ({buoy_counts['PACIFIC']})",
+    f"INDIAN Buoys ({buoy_counts['INDIAN']})",
+    f"ATLANTIC Buoys ({buoy_counts['ATLANTIC']})"
+])
+
 leg = plt.legend(
-    handles, labels, title="Regions", loc="lower center", bbox_to_anchor=(0.5, -0.35), 
-    fontsize=14, title_fontsize=14, ncol=3, frameon=False
-)
+    handles, labels,  loc="lower center", bbox_to_anchor=(0.5, -0.35), 
+    fontsize=14,ncol=3, frameon=False
+) # title="Regions and Buoys",  title_fontsize=14, 
 # Set legend fontweight to bold
 for text in leg.get_texts():
     text.set_fontweight('bold')
