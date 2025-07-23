@@ -1,3 +1,7 @@
+#%%
+# important links 
+# https://data.pmel.noaa.gov/generic/erddap/info/pmelTaoDyRain/index.html
+
 #%% IMPORT LIBRARIES
 
 import importlib
@@ -292,8 +296,7 @@ for label in ax.get_xticklabels() + ax.get_yticklabels():
 # Try to enforce Times New Roman, but fallback gracefully if not available
 mpl.rcParams['font.family'] = 'serif'
 mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
-
-ax.set_title("PAL Trajectories by Ocean Region", fontsize=20, 
+ax.set_title("PAL Trajectories and Buoy Locations by Ocean Region", fontsize=20, 
              fontweight='bold', fontname='Times New Roman')
 
 plt.tight_layout()
