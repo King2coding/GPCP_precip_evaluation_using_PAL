@@ -174,24 +174,24 @@ def grab_PAL_rain_and_wind_df(pal_xr_ds):
     """
 
     # Process PAL data as needed
-    df_rain = pd.DataFrame({
-        'time': pd.to_datetime(pal_xr_ds['time'].values),
-        'lat': pal_xr_ds['lat'].values,
-        'lon': pal_xr_ds['lon'].values,
-        'rain_rate': pal_xr_ds['rain_rate'].values,
-    })
+    # df_rain = pd.DataFrame({
+    #     'time': pd.to_datetime(pal_xr_ds['time'].values),
+    #     'lat': pal_xr_ds['lat'].values,
+    #     'lon': pal_xr_ds['lon'].values,
+    #     'rain_rate': pal_xr_ds['rain_rate'].values,
+    # })
 
-    df_rain['date'] = df_rain['time'].dt.date  # Extract date from time               
+    # df_rain['date'] = df_rain['time'].dt.date  # Extract date from time               
 
-    df_rain = df_rain.dropna(axis=0, how='any')  # Drop rows with any NaN values           
+    # df_rain = df_rain.dropna(axis=0, how='any')  # Drop rows with any NaN values           
 
-    # Normalize longitude to [-180, 180]
-    df_rain['lon'] = (df_rain['lon'] + 360) % 360
-    df_rain['lon'][df_rain['lon'] > 180] -= 360
+    # # Normalize longitude to [-180, 180]
+    # df_rain['lon'] = (df_rain['lon'] + 360) % 360
+    # df_rain['lon'][df_rain['lon'] > 180] -= 360
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-    df_wind = pd.DataFrame({
+    df = pd.DataFrame({
         'time': pd.to_datetime(pal_xr_ds['time'].values),
         'lat': pal_xr_ds['lat'].values,
         'lon': pal_xr_ds['lon'].values,
@@ -199,23 +199,27 @@ def grab_PAL_rain_and_wind_df(pal_xr_ds):
         'wind_speed': pal_xr_ds['wind_speed'].values,                
     })
 
-    df_wind['date'] = df_wind['time'].dt.date  # Extract date from time
+    # drop rows where wind speed is >= 15 m/s
+    df = df.drop(df[df['wind_speed'] >= 15].index) 
 
-    df_wind = df_wind.dropna(axis=0, how='any')  # Drop rows with any NaN values
+    df['date'] = df['time'].dt.date  # Extract date from time
+
+    df = df.dropna(axis=0, how='any')  # Drop rows with any NaN values
 
     # Normalize longitude to [-180, 180]
-    df_wind['lon'] = (df_wind['lon'] + 360) % 360
-    df_wind['lon'][df_wind['lon'] > 180] -= 360
+    df['lon'] = (df['lon'] + 360) % 360
+    df['lon'][df['lon'] > 180] -= 360
 
-    return df_rain, df_wind   
+    return  df   # df_rain,
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-def process_gpcp_with_PAL_rain_and_wind( pal_df_rain, pal_df_wind, gpcp_ds_xr, gpcp_version):
+def process_gpcp_with_PAL_rain_and_wind(df, gpcp_ds_xr, gpcp_version):
+    # pal_df_rain, pal_df_wind
 
     # DO PAL RAIN GPCP MATCHING    
 
-    pal_dates_rain = pd.to_datetime(pal_df_rain['date'])
-    pal_lats_rain = pal_df_rain['lat'].values
-    pal_lons_rain = pal_df_rain['lon'].values
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values
 
     # Rename latitude/longitude dims to 'lat' and 'lon' if needed
     if 'latitude' in gpcp_ds_xr.dims or 'longitude' in gpcp_ds_xr.dims:
@@ -229,7 +233,7 @@ def process_gpcp_with_PAL_rain_and_wind( pal_df_rain, pal_df_wind, gpcp_ds_xr, g
     gpcp_precip = gpcp_precip.where(gpcp_precip >= 0, np.nan)
 
     # Store matched values in the DataFrame
-    pal_df_rain[gpcp_version] = gpcp_precip
+    df[gpcp_version] = gpcp_precip
 
     # do same for probability of liquid phase if it exsists in dataset
     if gpcp_version == 'GPCP_v3pt2':
@@ -241,35 +245,35 @@ def process_gpcp_with_PAL_rain_and_wind( pal_df_rain, pal_df_wind, gpcp_ds_xr, g
         gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)
         
         # Store matched values in the DataFrame
-        pal_df_rain[f'PLP_{gpcp_version}'] = gpcp_plp
+        df[f'PLP_{gpcp_version}'] = gpcp_plp
         
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     # NOW DO THE SAME FOR WIND SPEED DATA
-    pal_dates_wind = pd.to_datetime(pal_df_wind['date'])
-    pal_lats_wind = pal_df_wind['lat'].values
-    pal_lons_wind = pal_df_wind['lon'].values
+    # pal_dates_wind = pd.to_datetime(pal_df_wind['date'])
+    # pal_lats_wind = pal_df_wind['lat'].values
+    # pal_lons_wind = pal_df_wind['lon'].values
 
-    gpcp_pr_wind_speed = gpcp_ds_xr['precip'].interp(
-        time=("points", pal_dates_wind), lat=("points", pal_lats_wind), 
-        lon=("points", pal_lons_wind), method="nearest"
-    )
-    # Set places where the values are less than 0 to NaN
-    gpcp_pr_wind_speed = gpcp_pr_wind_speed.where(gpcp_pr_wind_speed >= 0, np.nan)
-    # Store matched values in the DataFrame
-    pal_df_wind[gpcp_version] = gpcp_pr_wind_speed
+    # gpcp_pr_wind_speed = gpcp_ds_xr['precip'].interp(
+    #     time=("points", pal_dates_wind), lat=("points", pal_lats_wind), 
+    #     lon=("points", pal_lons_wind), method="nearest"
+    # )
+    # # Set places where the values are less than 0 to NaN
+    # gpcp_pr_wind_speed = gpcp_pr_wind_speed.where(gpcp_pr_wind_speed >= 0, np.nan)
+    # # Store matched values in the DataFrame
+    # pal_df_wind[gpcp_version] = gpcp_pr_wind_speed
 
-    # do same for probability of liquid phase if it exsists in dataset
-    if gpcp_version == 'GPCP_v3pt2':
-        gpcp_plp = gpcp_ds_xr['probability_liquid_phase'].interp(
-            time=("points", pal_dates_wind), lat=("points", pal_lats_wind), 
-            lon=("points", pal_lons_wind), method="nearest")
-        # Set places where the values are less than 0 to NaN
-        gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)
-        # Store matched values in the DataFrame
-        pal_df_wind[f'PLP_{gpcp_version}'] = gpcp_plp
+    # # do same for probability of liquid phase if it exsists in dataset
+    # if gpcp_version == 'GPCP_v3pt2':
+    #     gpcp_plp = gpcp_ds_xr['probability_liquid_phase'].interp(
+    #         time=("points", pal_dates_wind), lat=("points", pal_lats_wind), 
+    #         lon=("points", pal_lons_wind), method="nearest")
+    #     # Set places where the values are less than 0 to NaN
+    #     gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)
+    #     # Store matched values in the DataFrame
+    #     pal_df_wind[f'PLP_{gpcp_version}'] = gpcp_plp
 
-    return pal_df_rain, pal_df_wind
+    return df#pal_df_rain, pal_df_wind
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 def compute_rainfall_fraction_and_volume_by_windspeed_bins(
