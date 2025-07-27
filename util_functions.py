@@ -76,7 +76,7 @@ def assign_to_gpcp_grid(lat,lon, resolution):
     - gpcp_resolution: float (1.0 for v1.3, 0.5 for v3.2)
 
     Returns:
-    - pandas.DataFrame with additional columns: 'row', 'col', and 'date'
+    - tuple: 'row', 'col'
     """
     # Define affine transform for the GPCP grid
     transform = from_origin(west=-180.0, north=90.0, xsize=resolution, ysize=resolution)
