@@ -28,6 +28,7 @@ path_to_pal_data = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/PAL/data_unzipp
 
 moored_bouys_paf = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys'
 
+path_to_put_plts = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/plots'
 #%%
 # define global variables
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
@@ -108,8 +109,8 @@ focus_regions = ['TNEP', 'TNWP']
 # FIRST GROUP BUOY FILES BY REGION BASED ON THEIR LONGITUDE
 # Define longitude bounds for TNEP and TNWP
 region_bounds = {
-    'TNEP': (-180, -60),  # Longitude range for Tropical Northeastern Pacific
-    'TNWP': (60, 180)     # Longitude range for Tropical Northwestern Pacific
+    'TNEP': (-180, -60),  # Longitude range for Tropical Northeastern Pacific in [-180, 180]
+    'TNWP': (120, 180)      # Longitude range for Tropical Northwestern Pacific in [-180, 180]
 }
 
 # Group buoy files by region
@@ -124,6 +125,7 @@ for buoy_file in pacific_buoy_files:
             buoy_files_by_region[region].append(buoy_file)
             break
 
+#%%
 # Initialize an empty list to store matches
 matches = []
 
@@ -149,7 +151,7 @@ for region in focus_regions:
             pal_rain_rate = ds['rain_rate'].values  # Assuming 'rain_rate' is the variable name
             
         # Normalize longitude to [-180, 180]
-        pal_lon = (pal_lon + 180) % 360 - 180
+        pal_lon = (pal_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180] for compatibility with GPCP grid
         
         # Create a DataFrame
         pal_df = pd.DataFrame({
@@ -177,7 +179,7 @@ for region in focus_regions:
                 buoy_lat = ds['lat'].values[0]
                 buoy_lon = ds['lon'].values[0]
                 # Normalize longitude to [-180, 180]
-            buoy_lon = (buoy_lon + 180) % 360 - 180
+            buoy_lon = (buoy_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180]
 
             buoy_row, buoy_col = assign_to_gpcp_grid(buoy_lat, buoy_lon, gpcp_resolution)
             buoy_id = os.path.basename(buoy_file)  # Extract Buoy file ID from filename            
@@ -223,6 +225,8 @@ gc.collect()
 
 #%%
 # NEW METHOD
+
+gpcp_resolution = 1.0
 dfs_by_region = {}
 for region in focus_regions:
     print(f"Processing region: {region}")
@@ -256,9 +260,9 @@ for region in focus_regions:
         # Filter out rows with NaN values or negative rain_rate
         pal_df = pal_df.dropna(subset=['lat', 'lon'])
 
-        pal_df['row_col'] = pal_df.apply(
-                lambda row: assign_to_gpcp_grid(row['lat'], row['lon'], gpcp_resolution), axis=1
-            )
+        pal_df[['PAL_row', 'PAL_col']] = pal_df.apply(
+            lambda row: pd.Series(assign_to_gpcp_grid(row['lat'], row['lon'], gpcp_resolution)), axis=1
+        )
 
         pal_df['PAL_File'] = pal_file
         pal_df['PAL_ID'] = os.path.basename(pal_file)
@@ -280,26 +284,25 @@ for region, pal_df in dfs_by_region.items():
     print(f"Processing Buoy files for region: {region}")    
     
     buoy_files = buoy_files_by_region.get(region, [])
+
+    match_buoy_pal_df = []
     
     # Iterate over Buoy files in the same region
     for buoy_file in buoy_files:
-        match_buoy_pal_df = []
-        # print(f"Comparing with Buoy file: {os.path.basename(buoy_file)}")
+        
         # Extract Buoy lat/lon
-        with xr.open_dataset(buoy_file) as ds:
-            buoy_lat = ds['lat'].values[0]
-            buoy_lon = ds['lon'].values[0]
+        # with xr.open_dataset(buoy_file) as ds:
+        ds  = xr.open_dataset(buoy_file) #as ds
+        buoy_lat = ds['lat'].values[0]
+        buoy_lon = ds['lon'].values[0]
             # Normalize longitude to [-180, 180]
-        buoy_lon = (buoy_lon + 180) % 360 - 180
+        buoy_lon = (buoy_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180] for consistency
 
         buoy_row, buoy_col = assign_to_gpcp_grid(buoy_lat, buoy_lon, gpcp_resolution)
         buoy_id = os.path.basename(buoy_file)  # Extract Buoy file ID from filename            
         
         # Check if any PAL lat/lon falls in the same GPCP pixel as the Buoy
-        # Ensure row_col is converted to tuples for comparison
-        pal_df['row_col'] = pal_df['row_col'].apply(lambda x: tuple(x) if isinstance(x, list) else x)
-        match_pal_df = pal_df.loc[pal_df['row_col'] == (buoy_row, buoy_col)]
-                
+        match_pal_df = pal_df.loc[(pal_df['PAL_row'] == buoy_row) & (pal_df['PAL_col'] == buoy_col)]
         if match_pal_df.shape[0] > 0:
             print(f"Match found between PAL file {pal_df['PAL_ID'].iloc[0]} and Buoy file {buoy_id} in region {region} at row {buoy_row}, col {buoy_col}")
             # Store the match details
@@ -314,3 +317,363 @@ for region, pal_df in dfs_by_region.items():
             match_buoy_pal_df.append(match_pal_df)
     region_match_buoy_pal_df[region] = pd.concat(match_buoy_pal_df, ignore_index=True) if match_buoy_pal_df else pd.DataFrame()
 gc.collect()
+
+#%%
+# lets compare rainfall rates between PAL and Buoy data for the two focus regions
+# make pal and buoy dfs by region
+pal_dfs_by_region = {}
+buoy_dfs_by_region = {}
+
+for region in focus_regions:
+    print(f"Processing region: {region}")
+    
+    pal_files = pals_classed_by_region.get(region, [])
+    buoy_files = buoy_files_by_region.get(region, [])
+    print(f"Number of PAL files in {region}: {len(pal_files)}")
+    print(f"Number of Buoy files in {region}: {len(buoy_files)}")
+
+    # Initialize lists to store DataFrames for this region
+    pal_region_dfs = []
+    buoy_region_dfs = []
+    
+    # Iterate over PAL files
+    for pal_file in pal_files:
+        # print(f"Processing PAL file: {os.path.basename(pal_file)}")
+        # Extract PAL data into a DataFrame
+        # with xr.open_dataset(pal_file) as ds:
+        pal_ds = xr.open_dataset(pal_file)
+        pal_df = pd.DataFrame({
+            'time': pd.to_datetime(pal_ds['time'].values),            
+            'rain_rate': pal_ds['rain_rate'].values,
+            'wind_speed': pal_ds['wind_speed'].values,
+        })
+
+        # Filter out rows with negative rain_rate
+        pal_df = pal_df[pal_df['rain_rate'] >= 0]
+
+        # drop rows where wind speed is >= 15 m/s
+        pal_df = pal_df.drop(pal_df[pal_df['wind_speed'] >= 15].index)
+
+        pal_df['date'] = pal_df['time'].dt.date  # Extract date from time
+
+        pal_df = pal_df.dropna(axis=0, how='any')
+
+        # groupby date and get mean of rain_rate and GPCP data
+        daily_avg_rain = pal_df.groupby('date').mean(['rain_rate',]).reset_index()
+
+        # multiply PAL rain rate by 24 to get daily average
+        daily_avg_rain['rain_rate'] *= 24
+        daily_avg_rain['ID'] = os.path.basename(os.path.basename(pal_file))  # Extract PAL file ID from filename
+
+        # append the DataFrame for this PAL file to the list for the region
+        pal_region_dfs.append(daily_avg_rain)
+
+    # Concatenate all DataFrames for this region into a single DataFrame
+    pal_dfs_by_region[region] = pd.concat(pal_region_dfs)
+
+    # Iterate over Buoy files in the same region
+    for buoy_file in buoy_files:
+        buoy_ds = xr.open_dataset(buoy_file)
+        buoy_df = pd.DataFrame({
+            'time': pd.to_datetime(buoy_ds['time'].values),            
+            'rain_rate': buoy_ds['RN_485'].values.flatten(),
+            'quality_code': buoy_ds['QRN_5485'].values.flatten(),
+        })
+
+        # Filter out rows with negative rain_rate
+        buoy_df = buoy_df[buoy_df['rain_rate'] >= 0]
+
+        # buoys cover longer time period than pal so select date time period covering pal datetime period range
+        pal_start_date = pal_dfs_by_region[region]['date'].min()
+        pal_end_date = pal_dfs_by_region[region]['date'].max()
+        buoy_df = buoy_df[(buoy_df['time'] >= pd.to_datetime(pal_start_date)) & (buoy_df['time'] <= pd.to_datetime(pal_end_date))]
+
+        # To get probably valid data only, request QRN_5485>=1 and QRN_5485<=3.
+        buoy_df = buoy_df[(buoy_df['quality_code'] >= 1) & (buoy_df['quality_code'] <= 3)]
+
+        # daily rain rate
+        buoy_df['rain_rate'] *= 24
+        buoy_df['ID'] = os.path.basename(os.path.basename(buoy_file))  # Extract Buoy file ID from filenamebuoy_df['time'].dt.date  # Extract date from time
+
+        # append the DataFrame for this Buoy file to the list for the region
+        buoy_region_dfs.append(buoy_df)
+
+    # Concatenate all DataFrames for this region into a single DataFrame
+    buoy_dfs_by_region[region] = pd.concat(buoy_region_dfs)
+
+gc.collect()
+
+
+#%%
+bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
+
+def compute_pdf_elements(data, bins):
+    pdfc = []  # PDF by occurrence
+    pdfv = []  # PDF by volume
+    bin_labels = []  # Bin labels for the DataFrame
+
+    total_count = len(data)
+    total_volume = 0
+
+    # Loop through bins to compute PDFc and PDFv
+    for i, bn in enumerate(bins):
+        if i == 0:
+            bin_data = data[data['rain_rate'] <= bn]
+        else:
+            bin_data = data[(data['rain_rate'] > bins[i - 1]) & (data['rain_rate'] <= bn)]
+
+        # PDFc: Percentage of occurrences in the bin
+        bin_count = len(bin_data)
+        pdfc.append((bin_count / total_count) * 100)
+
+        # PDFv: Percentage of volume in the bin
+        if bin_count > 0:
+            bin_mean = bin_data['rain_rate'].mean()
+            bin_volume = bin_count * bin_mean
+        else:
+            bin_volume = 0
+
+        total_volume += bin_volume
+        pdfv.append(bin_volume)
+
+        # Add bin label
+        if i == 0:
+            bin_labels.append(f"<= {bn}")
+        else:
+            bin_labels.append(f"{bins[i - 1]} - {bn}")
+
+    # Normalize PDFv to percentages
+    pdfv = [(volume / total_volume) * 100 for volume in pdfv]
+
+    # Create a DataFrame with bin, pdfc, and pdfv
+    pdf_df = pd.DataFrame({
+        "bin": bin_values,
+        "pdfc": pdfc,
+        "pdfv": pdfv
+    })
+
+    return pdf_df
+
+tnep_pal_pdfc_pdfv = compute_pdf_elements(pal_dfs_by_region['TNEP'], bin_values)
+tnwp_pal_pdfc_pdfv = compute_pdf_elements(pal_dfs_by_region['TNWP'], bin_values)
+
+tnep_buoy_pdfc_pdfv = compute_pdf_elements(buoy_dfs_by_region['TNEP'], bin_values)
+tnwp_buoy_pdfc_pdfv = compute_pdf_elements(buoy_dfs_by_region['TNWP'], bin_values)
+
+
+# make a 2by 2 line plot of the pdfc and pdfv for pal and buoy data by region
+# in the 2by2 plot, the first row is TNEP and the second row is TNWP
+# first column is pdfc and the second column is pdfv
+# Update matplotlib parameters for consistent styling
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+
+fig, axs = plt.subplots(2, 2, figsize=(16, 10), 
+                        sharex=False, sharey=False, dpi=1000)
+
+# Set common x-axis ticks and labels
+bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
+bin_positions = range(len(bin_labels))
+lw = 2
+# Add grid lines and customize ticks
+for ax in axs.flat:
+    ax.grid(True, which='major', linestyle='--', alpha=0.7)
+    ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Line Plot TNEP PDFc
+axs[0, 0].plot(bin_positions, tnep_pal_pdfc_pdfv['pdfc'], label='PAL', marker='o',lw=lw)
+axs[0, 0].plot(bin_positions, tnep_buoy_pdfc_pdfv['pdfc'], label='Buoy', marker='x',lw=lw)
+axs[0, 0].set_title('TNEP', fontsize=18, fontweight='bold')
+axs[0, 0].set_ylabel('PDFc (%)', fontsize=18, fontweight='bold')
+axs[0, 0].set_xticks(bin_positions)
+axs[0, 0].set_xticklabels(bin_labels)
+axs[0, 0].legend(fontsize=18, frameon=False)
+
+# Line Plot TNEP PDFv
+axs[0, 1].plot(bin_positions, tnep_pal_pdfc_pdfv['pdfv'], label='PAL', marker='o', lw=lw)
+axs[0, 1].plot(bin_positions, tnep_buoy_pdfc_pdfv['pdfv'], label='Buoy', marker='x', lw=lw)
+axs[0, 1].set_title('TNEP', fontsize=18, fontweight='bold')
+axs[0, 1].set_ylabel('PDFv (%)', fontsize=18, fontweight='bold')
+axs[0, 1].set_xticks(bin_positions)
+axs[0, 1].set_xticklabels(bin_labels)
+axs[0, 1].legend(fontsize=18, frameon=False)
+
+# Line Plot TNWP PDFc
+axs[1, 0].plot(bin_positions, tnwp_pal_pdfc_pdfv['pdfc'], label='PAL', marker='o')
+axs[1, 0].plot(bin_positions, tnwp_buoy_pdfc_pdfv['pdfc'], label='Buoy', marker='x')
+axs[1, 0].set_title('TNWP', fontsize=18, fontweight='bold')
+axs[1, 0].set_ylabel('PDFc (%)', fontsize=18, fontweight='bold')
+axs[1, 0].set_xticks(bin_positions)
+axs[1, 0].set_xticklabels(bin_labels)
+axs[1, 0].legend(fontsize=18, frameon=False)
+
+# Line Plot TNWP PDFv
+axs[1, 1].plot(bin_positions, tnwp_pal_pdfc_pdfv['pdfv'], label='PAL', marker='o', lw=lw)
+axs[1, 1].plot(bin_positions, tnwp_buoy_pdfc_pdfv['pdfv'], label='Buoy', marker='x', lw=lw)
+axs[1, 1].set_title('TNWP', fontsize=18, fontweight='bold')
+axs[1, 1].set_ylabel('PDFv (%)', fontsize=18, fontweight='bold')
+axs[1, 1].set_xticks(bin_positions)
+axs[1, 1].set_xticklabels(bin_labels)
+axs[1, 1].legend(fontsize=18, frameon=False)
+
+# Adjust layout
+plt.tight_layout()
+
+# save the figure
+svnme = os.path.join(path_to_put_plts, f'pdfc_pdfv_comparison_{cde_run_dte}.png')
+plt.savefig(svnme, bbox_inches='tight')
+
+#%%
+# calculate multiyear monthly mean rainfall rate for PAL and Buoy data
+# calculate multiyear monthly mean rainfall rate for PAL and Buoy data
+def calculate_multiyear_monthly_mean_rainfall_by_region(data_dict, tme_var):
+    monthly_means_by_region = {}
+
+    for region, data in data_dict.items():
+        # Ensure 'time' column is datetime
+        if tme_var not in data.columns:
+            data = data.reset_index()  # Reset index to access 'date' if it's the index
+        data[tme_var] = pd.to_datetime(data[tme_var])
+        data['year'] = data[tme_var].dt.year
+        # Extract month and group by month to calculate mean
+        data['month'] = data[tme_var].dt.month
+        monthly_mean = data.groupby(['ID', 'year', 'month'])['rain_rate'].sum().reset_index()
+        monthly_mean = monthly_mean.groupby('month')['rain_rate'].mean().reset_index()
+
+        # Store the result in the dictionary
+        monthly_means_by_region[region] = monthly_mean
+
+    return monthly_means_by_region
+
+
+# Call the function
+pal_monthly_means_by_region = calculate_multiyear_monthly_mean_rainfall_by_region(pal_dfs_by_region,'date')
+buoy_monthly_means_by_region = calculate_multiyear_monthly_mean_rainfall_by_region(buoy_dfs_by_region,'time')
+
+
+# Plotting the multiyear monthly mean rainfall rate for PAL and Buoy data
+# Create a 2x1 plot for multiyear monthly mean rainfall rate comparison
+fig, axs = plt.subplots(2, 1, figsize=(16, 10), sharex=False, sharey=False, dpi=1000)
+
+# Update matplotlib parameters for consistent styling
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+
+# Month labels for x-axis
+month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+month_positions = range(1, 13)
+lw = 2
+
+# Add grid lines and customize ticks
+for ax in axs.flat:
+    ax.grid(True, which='major', linestyle='--', alpha=0.7)
+    ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Plot TNEP data
+axs[0].plot(month_positions, pal_monthly_means_by_region['TNEP']['rain_rate'], label='PAL', marker='o', lw=lw)
+axs[0].plot(month_positions, buoy_monthly_means_by_region['TNEP']['rain_rate'], label='Buoy', marker='x', lw=lw)
+axs[0].set_title('TNEP', fontsize=18, fontweight='bold')
+axs[0].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[0].set_xticks(month_positions)
+axs[0].set_xticklabels(month_labels)
+axs[0].legend(fontsize=18, frameon=False)
+
+# Plot TNWP data
+axs[1].plot(month_positions, pal_monthly_means_by_region['TNWP']['rain_rate'], label='PAL', marker='o', lw=lw)
+axs[1].plot(month_positions, buoy_monthly_means_by_region['TNWP']['rain_rate'], label='Buoy', marker='x', lw=lw)
+axs[1].set_title('TNWP', fontsize=18, fontweight='bold')
+axs[1].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[1].set_xticks(month_positions)
+axs[1].set_xticklabels(month_labels)
+axs[1].legend(fontsize=18, frameon=False)
+
+# Adjust layout
+plt.tight_layout()
+gc.collect()
+
+# Save the figure
+svnme = os.path.join(path_to_put_plts, f'multiyear_monthly_mean_comparison_{cde_run_dte}.png')
+plt.savefig(svnme, bbox_inches='tight')
+
+
+# - - -- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+tnep_rb, tnep_rmse, tnep_cc = calculate_metrics(pal_monthly_means_by_region['TNEP']['rain_rate'], 
+                                                buoy_monthly_means_by_region['TNEP']['rain_rate'])
+
+tnwp_rb, tnwp_rmse, tnwp_cc = calculate_metrics(pal_monthly_means_by_region['TNWP']['rain_rate'], 
+                                                buoy_monthly_means_by_region['TNWP']['rain_rate'])
+# plot scatter plot of PAL and Buoy data for TNEP and TNWP using the monthly means
+fig, axs = plt.subplots(1, 2, figsize=(18, 10), sharex=False, sharey=False, dpi=1000)
+# Update matplotlib parameters for consistent styling
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+# Removed 'Times New Roman' to avoid findfont warnings
+mpl.rcParams['ytick.labelsize'] = 18    
+
+# Add grid lines and customize ticks
+for ax in axs.flat:
+    ax.grid(True, which='major', linestyle='--', alpha=0.7)
+    ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Scatter Plot TNEP
+axs[0].scatter(pal_monthly_means_by_region['TNEP']['rain_rate'], buoy_monthly_means_by_region['TNEP']['rain_rate'], 
+               label='TNEP', color='blue', alpha=0.7, edgecolors='w', s=100)
+axs[0].set_title('TNEP', fontsize=18, fontweight='bold')
+axs[0].set_xlabel('PAL Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[0].set_ylabel('Buoy Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[0].set_xlim(0, 250)
+axs[0].set_ylim(0, 250)
+# Add 1:1 line
+axs[0].plot([0, 250], [0, 250], color='black', linestyle='--', linewidth=1.5, label='1:1 Line')
+# axs[0].legend(fontsize=18, frameon=False)
+
+axs[0].text(
+    0.05, 0.95,
+    f'RB: {tnep_rb:.2f}%\nRMSE: {tnep_rmse:.2f} mm/day\nCC: {tnep_cc:.2f}',
+    transform=axs[0].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
+    bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
+)
+
+# Scatter Plot TNWP
+axs[1].scatter(pal_monthly_means_by_region['TNWP']['rain_rate'], buoy_monthly_means_by_region['TNWP']['rain_rate'], 
+               label='TNWP', color='red', alpha=0.7, edgecolors='w', s=100)
+axs[1].set_title('TNWP', fontsize=18, fontweight='bold')
+axs[1].set_xlabel('PAL Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[1].set_ylabel('Buoy Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[1].set_xlim(0, 250)
+axs[1].set_ylim(0, 250)
+# Add 1:1 line
+axs[1].plot([0, 250], [0, 250], color='black', linestyle='--', linewidth=1.5, label='1:1 Line')
+# axs[1].legend(fontsize=18, frameon=False)
+
+axs[1].text(
+    0.05, 0.95,
+    f'RB: {tnwp_rb:.2f}%\nRMSE: {tnwp_rmse:.2f} mm/day\nCC: {tnwp_cc:.2f}',
+    transform=axs[1].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
+    bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
+)
+
+# Adjust layout
+plt.tight_layout()
+gc.collect()
+
+# Save the figure
+svnme = os.path.join(path_to_put_plts, f'multiyear_monthly_mean_scatter_{cde_run_dte}.png')
+plt.savefig(svnme, bbox_inches='tight')
