@@ -1,6 +1,7 @@
 #%%
 # important links 
 # https://data.pmel.noaa.gov/generic/erddap/info/pmelTaoDyRain/index.html
+# buoy data download link: https://www.pmel.noaa.gov/tao/drupal/disdel/
 
 #%% IMPORT LIBRARIES
 

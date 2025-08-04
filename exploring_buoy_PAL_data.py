@@ -1,4 +1,9 @@
 #%%
+# important links 
+# https://data.pmel.noaa.gov/generic/erddap/info/pmelTaoDyRain/index.html
+# buoy data download link: https://www.pmel.noaa.gov/tao/drupal/disdel/
+
+#%%
 import importlib
 import sys
 
@@ -408,53 +413,6 @@ gc.collect()
 bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
 bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
 
-def compute_pdf_elements(data, bins):
-    pdfc = []  # PDF by occurrence
-    pdfv = []  # PDF by volume
-    bin_labels = []  # Bin labels for the DataFrame
-
-    total_count = len(data)
-    total_volume = 0
-
-    # Loop through bins to compute PDFc and PDFv
-    for i, bn in enumerate(bins):
-        if i == 0:
-            bin_data = data[data['rain_rate'] <= bn]
-        else:
-            bin_data = data[(data['rain_rate'] > bins[i - 1]) & (data['rain_rate'] <= bn)]
-
-        # PDFc: Percentage of occurrences in the bin
-        bin_count = len(bin_data)
-        pdfc.append((bin_count / total_count) * 100)
-
-        # PDFv: Percentage of volume in the bin
-        if bin_count > 0:
-            bin_mean = bin_data['rain_rate'].mean()
-            bin_volume = bin_count * bin_mean
-        else:
-            bin_volume = 0
-
-        total_volume += bin_volume
-        pdfv.append(bin_volume)
-
-        # Add bin label
-        if i == 0:
-            bin_labels.append(f"<= {bn}")
-        else:
-            bin_labels.append(f"{bins[i - 1]} - {bn}")
-
-    # Normalize PDFv to percentages
-    pdfv = [(volume / total_volume) * 100 for volume in pdfv]
-
-    # Create a DataFrame with bin, pdfc, and pdfv
-    pdf_df = pd.DataFrame({
-        "bin": bin_values,
-        "pdfc": pdfc,
-        "pdfv": pdfv
-    })
-
-    return pdf_df
-
 tnep_pal_pdfc_pdfv = compute_pdf_elements(pal_dfs_by_region['TNEP'], bin_values)
 tnwp_pal_pdfc_pdfv = compute_pdf_elements(pal_dfs_by_region['TNWP'], bin_values)
 
@@ -531,26 +489,6 @@ plt.savefig(svnme, bbox_inches='tight')
 
 #%%
 # calculate multiyear monthly mean rainfall rate for PAL and Buoy data
-# calculate multiyear monthly mean rainfall rate for PAL and Buoy data
-def calculate_multiyear_monthly_mean_rainfall_by_region(data_dict, tme_var):
-    monthly_means_by_region = {}
-
-    for region, data in data_dict.items():
-        # Ensure 'time' column is datetime
-        if tme_var not in data.columns:
-            data = data.reset_index()  # Reset index to access 'date' if it's the index
-        data[tme_var] = pd.to_datetime(data[tme_var])
-        data['year'] = data[tme_var].dt.year
-        # Extract month and group by month to calculate mean
-        data['month'] = data[tme_var].dt.month
-        monthly_mean = data.groupby(['ID', 'year', 'month'])['rain_rate'].sum().reset_index()
-        monthly_mean = monthly_mean.groupby('month')['rain_rate'].mean().reset_index()
-
-        # Store the result in the dictionary
-        monthly_means_by_region[region] = monthly_mean
-
-    return monthly_means_by_region
-
 
 # Call the function
 pal_monthly_means_by_region = calculate_multiyear_monthly_mean_rainfall_by_region(pal_dfs_by_region,'date')
@@ -559,7 +497,7 @@ buoy_monthly_means_by_region = calculate_multiyear_monthly_mean_rainfall_by_regi
 
 # Plotting the multiyear monthly mean rainfall rate for PAL and Buoy data
 # Create a 2x1 plot for multiyear monthly mean rainfall rate comparison
-fig, axs = plt.subplots(2, 1, figsize=(16, 10), sharex=False, sharey=False, dpi=1000)
+fig, axs = plt.subplots(2, 1, figsize=(16, 10), sharex=False, sharey=True, dpi=1000)
 
 # Update matplotlib parameters for consistent styling
 mpl.rcParams['font.family'] = 'serif'
@@ -607,8 +545,9 @@ svnme = os.path.join(path_to_put_plts, f'multiyear_monthly_mean_comparison_{cde_
 plt.savefig(svnme, bbox_inches='tight')
 
 
-# - - -- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-
+#%%
+# scatterplot of PAL and Buoy data for TNEP and TNWP using the monthly means
+# Calculate metrics for TNEP and TNWP
 tnep_rb, tnep_rmse, tnep_cc = calculate_metrics(pal_monthly_means_by_region['TNEP']['rain_rate'], 
                                                 buoy_monthly_means_by_region['TNEP']['rain_rate'])
 
@@ -646,7 +585,7 @@ axs[0].plot([0, 250], [0, 250], color='black', linestyle='--', linewidth=1.5, la
 
 axs[0].text(
     0.05, 0.95,
-    f'RB: {tnep_rb:.2f}%\nRMSE: {tnep_rmse:.2f} mm/day\nCC: {tnep_cc:.2f}',
+    f'RB: {tnep_rb:.2f}%\nRMSE: {tnep_rmse:.2f} mm\nCC: {tnep_cc:.2f}',
     transform=axs[0].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
     bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
 )
@@ -665,7 +604,7 @@ axs[1].plot([0, 250], [0, 250], color='black', linestyle='--', linewidth=1.5, la
 
 axs[1].text(
     0.05, 0.95,
-    f'RB: {tnwp_rb:.2f}%\nRMSE: {tnwp_rmse:.2f} mm/day\nCC: {tnwp_cc:.2f}',
+    f'RB: {tnwp_rb:.2f}%\nRMSE: {tnwp_rmse:.2f} mm\nCC: {tnwp_cc:.2f}',
     transform=axs[1].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
     bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
 )

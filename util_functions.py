@@ -628,6 +628,76 @@ def plot_wind_speed_bin_comparison(data_dict, region_colors, title, ylabel, ylab
     plt.show()
     gc.collect()  # Clean up memory
 
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def compute_pdf_elements(data, bins):
+    pdfc = []  # PDF by occurrence
+    pdfv = []  # PDF by volume
+    bin_labels = []  # Bin labels for the DataFrame
+
+    total_count = len(data)
+    total_volume = 0
+
+    # Loop through bins to compute PDFc and PDFv
+    for i, bn in enumerate(bins):
+        if i == 0:
+            bin_data = data[data['rain_rate'] <= bn]
+        else:
+            bin_data = data[(data['rain_rate'] > bins[i - 1]) & (data['rain_rate'] <= bn)]
+
+        # PDFc: Percentage of occurrences in the bin
+        bin_count = len(bin_data)
+        pdfc.append((bin_count / total_count) * 100)
+
+        # PDFv: Percentage of volume in the bin
+        if bin_count > 0:
+            bin_mean = bin_data['rain_rate'].mean()
+            bin_volume = bin_count * bin_mean
+        else:
+            bin_volume = 0
+
+        total_volume += bin_volume
+        pdfv.append(bin_volume)
+
+        # Add bin label
+        if i == 0:
+            bin_labels.append(f"<= {bn}")
+        else:
+            bin_labels.append(f"{bins[i - 1]} - {bn}")
+
+    # Normalize PDFv to percentages
+    pdfv = [(volume / total_volume) * 100 for volume in pdfv]
+
+    # Create a DataFrame with bin, pdfc, and pdfv
+    pdf_df = pd.DataFrame({
+        "bin": bins,
+        "pdfc": pdfc,
+        "pdfv": pdfv
+    })
+
+    return pdf_df
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+# calculate multiyear monthly mean rainfall rate for PAL and Buoy data
+def calculate_multiyear_monthly_mean_rainfall_by_region(data_dict, tme_var):
+    monthly_means_by_region = {}
+
+    for region, data in data_dict.items():
+        # Ensure 'time' column is datetime
+        if tme_var not in data.columns:
+            data = data.reset_index()  # Reset index to access 'date' if it's the index
+        data[tme_var] = pd.to_datetime(data[tme_var])
+        data['year'] = data[tme_var].dt.year
+        # Extract month and group by month to calculate mean
+        data['month'] = data[tme_var].dt.month
+        monthly_mean = data.groupby(['ID', 'year', 'month'])['rain_rate'].sum().reset_index()
+        monthly_mean = monthly_mean.groupby('month')['rain_rate'].mean().reset_index()
+
+        # Store the result in the dictionary
+        monthly_means_by_region[region] = monthly_mean
+
+    return monthly_means_by_region
+
 #%% DEBUG FUNCTION
 def debug_overlap_test():
     """Test the boxes_overlap function with specific PAL coordinates"""
