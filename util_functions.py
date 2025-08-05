@@ -1,5 +1,7 @@
 #%% IMPORT LIBRARIES
 import warnings
+
+import matplotlib as mpl
 warnings.filterwarnings("ignore")
 import os
 import pandas as pd
@@ -895,3 +897,148 @@ def debug_overlap_test():
 
 # Call the debug function
 # debug_overlap_test()
+
+def process_imerg_with_PAL_rainV2(pal_rain_df, imerg_ds_xr):
+    """
+    Fast vectorized IMERG matching with PAL rain data.
+    
+    This function efficiently matches PAL minute-level data to IMERG daily data by:
+    1. Identifying unique date/location combinations to reduce redundant lookups
+    2. Using vectorized xarray operations for fast processing
+    3. Mapping results back to preserve original data structure
+    
+    Parameters:
+    -----------
+    pal_rain_df : pandas.DataFrame
+        PAL rain dataframe with columns: 'date', 'lat', 'lon', 'rain_rate', etc.
+    imerg_ds_xr : xarray.Dataset
+        IMERG dataset with precipitation data
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        Original PAL dataframe with added 'IMERG' column containing matched precipitation values
+    """
+    print(f"Starting fast IMERG matching for {len(pal_rain_df)} PAL records...")
+    
+    # Make a copy to avoid modifying original data
+    pal_imerg_df_rain = pal_rain_df.copy()
+    
+    # Extract arrays for processing
+    pal_dates_rain = pd.to_datetime(pal_imerg_df_rain['date'])
+    pal_lats_rain = pal_imerg_df_rain['lat'].values
+    pal_lons_rain = pal_imerg_df_rain['lon'].values
+    
+    # Copy and prepare IMERG dataset
+    imerg_ds_xr_cpy = imerg_ds_xr.copy(deep=True)
+    
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'latitude' in imerg_ds_xr_cpy.dims or 'longitude' in imerg_ds_xr_cpy.dims:
+        imerg_ds_xr_cpy = imerg_ds_xr_cpy.rename({'latitude': 'lat', 'longitude': 'lon'})
+    
+    if len(pal_dates_rain) > 0:
+        # Subset IMERG data to PAL's date range
+        min_date, max_date = pal_dates_rain.min(), pal_dates_rain.max()
+        imerg_subset = imerg_ds_xr_cpy.sel(time=slice(min_date, max_date))
+        
+        # VECTORIZED APPROACH - Much faster than one-by-one processing
+        print("Creating unique location-date combinations to reduce redundant lookups...")
+        pal_coords = pd.DataFrame({
+            'date': pal_dates_rain,
+            'lat': pal_lats_rain,
+            'lon': pal_lons_rain,
+            'original_index': range(len(pal_dates_rain))
+        })
+        
+        # Group by date, lat, lon to find unique combinations
+        unique_coords = pal_coords.groupby(['date', 'lat', 'lon']).first().reset_index()
+        print(f"Reduced to {len(unique_coords)} unique date/location combinations (from {len(pal_coords)})")
+        
+        # Use xarray's vectorized selection for all unique points at once
+        try:
+            print("Performing vectorized IMERG lookup...")
+            
+            # Create DataArrays for coordinates
+            coord_dates = xr.DataArray(unique_coords['date'], dims=['points'])
+            coord_lats = xr.DataArray(unique_coords['lat'], dims=['points']) 
+            coord_lons = xr.DataArray(unique_coords['lon'], dims=['points'])
+            
+            # Vectorized selection - much faster than loops
+            imerg_results = imerg_subset['precipitation'].sel(
+                time=coord_dates,
+                lat=coord_lats, 
+                lon=coord_lons,
+                method='nearest'
+            )
+            
+            # Convert to values and handle missing data
+            imerg_unique_values = imerg_results.values
+            imerg_unique_values[imerg_unique_values < 0] = np.nan
+            
+            # Map results back to original dataframe
+            unique_coords['IMERG'] = imerg_unique_values
+            
+            # Merge back with original data
+            pal_coords_with_imerg = pal_coords.merge(
+                unique_coords[['date', 'lat', 'lon', 'IMERG']], 
+                on=['date', 'lat', 'lon'], 
+                how='left'
+            )
+            
+            # Sort by original index to maintain order
+            pal_coords_with_imerg = pal_coords_with_imerg.sort_values('original_index')
+            
+            # Assign results
+            pal_imerg_df_rain['IMERG'] = pal_coords_with_imerg['IMERG'].values
+            
+            successful_matches = len([v for v in pal_coords_with_imerg['IMERG'].values if not np.isnan(v)])
+            print(f"✓ SUCCESS! Matched {successful_matches} out of {len(pal_imerg_df_rain)} points to IMERG data")
+            print(f"✓ Efficiency gain: {len(pal_coords)}/{len(unique_coords)} = {len(pal_coords)/len(unique_coords):.1f}x fewer lookups needed!")
+            
+        except Exception as e:
+            print(f"Vectorized approach failed: {e}")
+            print("Falling back to batch processing...")
+            
+            # Fallback to efficient batch processing
+            batch_size = 1000
+            imerg_values = []
+            
+            for i in range(0, len(unique_coords), batch_size):
+                end_idx = min(i + batch_size, len(unique_coords))
+                batch = unique_coords.iloc[i:end_idx]
+                
+                try:
+                    batch_results = imerg_subset['precipitation'].sel(
+                        time=('points', batch['date'].values),
+                        lat=('points', batch['lat'].values),
+                        lon=('points', batch['lon'].values),
+                        method='nearest'
+                    ).values
+                    
+                    batch_results[batch_results < 0] = np.nan
+                    imerg_values.extend(batch_results)
+                    
+                    if (i // batch_size + 1) % 10 == 0:
+                        print(f"Processed batch {i // batch_size + 1}/{(len(unique_coords) + batch_size - 1) // batch_size}")
+                        
+                except Exception as batch_error:
+                    print(f"Batch {i // batch_size + 1} failed: {batch_error}")
+                    imerg_values.extend([np.nan] * (end_idx - i))
+            
+            # Map results back
+            unique_coords['IMERG'] = imerg_values[:len(unique_coords)]
+            pal_coords_with_imerg = pal_coords.merge(
+                unique_coords[['date', 'lat', 'lon', 'IMERG']], 
+                on=['date', 'lat', 'lon'], 
+                how='left'
+            )
+            pal_coords_with_imerg = pal_coords_with_imerg.sort_values('original_index')
+            pal_imerg_df_rain['IMERG'] = pal_coords_with_imerg['IMERG'].values
+            
+            successful_matches = len([v for v in pal_coords_with_imerg['IMERG'].values if not np.isnan(v)])
+            print(f"✓ Batch processing complete: {successful_matches} successful matches")
+    else:
+        pal_imerg_df_rain['IMERG'] = np.nan
+        print("No PAL data to process")
+    
+    return pal_imerg_df_rain
