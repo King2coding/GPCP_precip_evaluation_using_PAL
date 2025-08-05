@@ -16,6 +16,8 @@ import subprocess
 
 
 from scipy import stats
+from joblib import Parallel, delayed
+import dask
 #%% GLOBAL VARIABLES
 
 def format_lon(x, pos=None):
@@ -274,6 +276,40 @@ def process_gpcp_with_PAL_rain_and_wind(df, gpcp_ds_xr, gpcp_version):
     #     pal_df_wind[f'PLP_{gpcp_version}'] = gpcp_plp
 
     return df#pal_df_rain, pal_df_wind
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def process_imerg_with_PAL_rain(df, imerg_ds_xr):
+    """
+    Process IMERG data with PAL rain data.
+    Parameters:
+    - df: DataFrame containing PAL rain data.
+    - imerg_ds_xr: xarray dataset containing IMERG data.
+    Returns:
+    - df: DataFrame with IMERG rain data added.
+    """
+
+    # Extract relevant columns from the DataFrame
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values
+
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'latitude' in imerg_ds_xr.dims or 'longitude' in imerg_ds_xr.dims:
+        imerg_ds_xr = imerg_ds_xr.rename({'latitude': 'lat', 'longitude': 'lon'})
+
+    # Use dask to handle large datasets and avoid memory issues
+    imerg_precip = imerg_ds_xr.interp(
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain),
+        lon=("points", pal_lons_rain), method="nearest"
+    ).compute()  # Compute the result to avoid lazy evaluation issues
+
+    # Set places where the values are less than 0 to NaN
+    imerg_precip = imerg_precip.where(imerg_precip >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df['IMERG'] = imerg_precip.values  # Ensure values are extracted to avoid dask objects
+
+    return df
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 def compute_rainfall_fraction_and_volume_by_windspeed_bins(
@@ -698,6 +734,93 @@ def calculate_multiyear_monthly_mean_rainfall_by_region(data_dict, tme_var):
 
     return monthly_means_by_region
 
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def read_nc_imger_file(file_path, product):
+    imerg_precip_data = xr.open_dataset(file_path)
+    if product == 'imerg_fn':
+        precip_aray = imerg_precip_data.precipitation.data 
+    elif product == 'imerg_mw':
+        precip_aray = imerg_precip_data.MWprecipitation.data 
+    precip_aray = np.flip(precip_aray[0,:,:].transpose(), axis=0)
+    imerg_time = imerg_precip_data.attrs['BeginDate']
+    imerg_precip_data.close()
+    
+    # Convert time to pandas datetime
+    imerg_time_index = pd.to_datetime(imerg_time,format='%Y-%m-%d')
+
+    del(imerg_precip_data,imerg_time)
+    
+    return precip_aray, imerg_time_index
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def process_imerg(files, product):
+    img_lon, img_lat = return_imerg_cords(files[0])
+
+    # Use parallel processing to read files
+    def process_file(imf):
+        imerg_fn = read_nc_imger_file(imf, product)
+        return imerg_fn[0], imerg_fn[1]
+
+    results = Parallel(n_jobs=20)(delayed(process_file)(imf) for imf in files)
+
+    # Unpack results
+    all_imfn_prcp, all_imfn_tms = zip(*results)
+
+    # Ensure data is sorted by time
+    sorted_indices = np.argsort(np.array(all_imfn_tms))
+    all_imfn_prcp = np.array(all_imfn_prcp)[sorted_indices]
+    all_imfn_tms = np.array(all_imfn_tms)[sorted_indices]
+
+    # Process the files to aggregate data
+    imerg_xarr_data = create_xarray(all_imfn_prcp, all_imfn_tms, img_lon, img_lat)
+
+    return imerg_xarr_data
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def create_xarray(all_precip, all_time_index, lon, lat, attrs=None):
+    """
+    Create an xarray DataArray from the list of 2D precipitation arrays and add attributes.
+
+    Parameters:
+    - all_precip: List or array of 2D precipitation arrays
+    - all_time_index: List of timestamps
+    - lon: Array of longitudes
+    - lat: Array of latitudes
+    - attrs: Dictionary of attributes to add to the DataArray (optional)
+
+    Returns:
+    - precip_data: xarray DataArray with the specified attributes
+    """
+    # Create a pandas DatetimeIndex from the list of timestamps
+    time_index = pd.to_datetime(all_time_index)
+    
+    # Create an xarray DataArray from the list of 2D precipitation arrays
+    precip_data = xr.DataArray(
+        data=all_precip,
+        dims=["time", "lat", "lon"],
+        coords={
+            "time": time_index,
+            "lat": lat,
+            "lon": lon
+        }
+    )
+
+    # Add attributes if provided
+    if attrs:
+        precip_data.attrs.update(attrs)
+    
+    return precip_data
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def return_imerg_cords(file):
+    file_dat = xr.open_dataset(file)
+    lon = file_dat.coords['lon'].values
+    lat = np.flip(file_dat.coords['lat']).values
+
+    del(file_dat)
+
+    return lon, lat
 #%% DEBUG FUNCTION
 def debug_overlap_test():
     """Test the boxes_overlap function with specific PAL coordinates"""
