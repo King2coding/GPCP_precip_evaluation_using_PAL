@@ -52,40 +52,12 @@ dask_client = None
 #%% DEBUG: Check current region bounds and test overlap function
 print("CURRENT REGION BOUNDS:")
 print("="*50)
-for region, bounds in region_bounds.items():
+for region, bounds in buoy_region_bounds.items():
     print(f"{region}: {bounds}")
-
-print("\nTEST OVERLAP FUNCTION:")
-print("-" * 30)
-# Test PAL 19412: Lat 1.04-3.09, Lon 164.90-174.91 vs TNWP
-pal_lat_min, pal_lat_max = 1.04, 3.09
-pal_lon_min, pal_lon_max = 164.90, 174.91
-
-tnwp_bounds = region_bounds["TNWP"]
-print(f"PAL 19412: Lat {pal_lat_min}-{pal_lat_max}, Lon {pal_lon_min}-{pal_lon_max}")
-print(f"TNWP: {tnwp_bounds}")
-
-overlap_result = simple_box_check(pal_lat_min, pal_lat_max, pal_lon_min, pal_lon_max,
-                                 tnwp_bounds["lat_min"], tnwp_bounds["lat_max"],
-                                 tnwp_bounds["lon_min"], tnwp_bounds["lon_max"])
-print(f"Should overlap with TNWP: {overlap_result}")
-
-# Test PAL 6874 vs TNEP  
-pal2_lat_min, pal2_lat_max = 1.50, 4.59
-pal2_lon_min, pal2_lon_max = -165.53, -140.20
-
-tnep_bounds = region_bounds["TNEP"]
-print(f"\nPAL 6874: Lat {pal2_lat_min}-{pal2_lat_max}, Lon {pal2_lon_min}-{pal2_lon_max}")
-print(f"TNEP: {tnep_bounds}")
-
-overlap_result2 = simple_box_check(pal2_lat_min, pal2_lat_max, pal2_lon_min, pal2_lon_max,
-                                  tnep_bounds["lat_min"], tnep_bounds["lat_max"],
-                                  tnep_bounds["lon_min"], tnep_bounds["lon_max"])
-print(f"Should overlap with TNEP: {overlap_result2}")
 print("="*50)
 
 #%% DEFINE PATH TO DATA
-path_to_pal_data = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/PAL/data_unzipped/PAL_SPURS1_SPURS2_TPOS_Others_202210'
+# path_to_pal_data = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/PAL/data_unzipped/PAL_SPURS1_SPURS2_TPOS_Others_202210'
 
 moored_bouys_paf = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys'
 
@@ -102,7 +74,7 @@ path_to_put_plts = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/pl
 
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
 
-all_pal_files = sorted([os.path.join(path_to_pal_data, f) for f in os.listdir(path_to_pal_data) if f.endswith('.nc')])
+# all_pal_files = sorted([os.path.join(path_to_pal_data, f) for f in os.listdir(path_to_pal_data) if f.endswith('.nc')])
 
 all_gpcp_v1pt3_files = sorted([os.path.join(path_to_gpcp_v1pt3, f) for f in os.listdir(path_to_gpcp_v1pt3) if f.endswith('.nc')])
 
@@ -134,8 +106,33 @@ if not atlantic_buoy_dir:
 
 # Get all files for each region
 pacific_buoy_files = sorted([os.path.join(pacific_buoy_dir, f) for f in os.listdir(pacific_buoy_dir) if f.endswith('.cdf')])
-indian_buoy_files = sorted([os.path.join(indian_buoy_dir, f) for f in os.listdir(indian_buoy_dir) if f.endswith('.cdf')])
-atlantic_buoy_files = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.listdir(atlantic_buoy_dir) if f.endswith('.cdf')])
+
+# define buoy files by regions
+pacific_buoy_regions = ['ENP', 'WNP']
+
+# FIRST GROUP BUOY FILES BY REGION BASED ON THEIR LONGITUDE
+# Define longitude bounds for ENP and WNP
+pacific_region_bounds = {
+    'ENP': (-180, -60),  # Longitude range for Eastern North Pacific in [-180, 180]
+    'WNP': (120, 180)      # Longitude range for Western North Pacific in [-180, 180]
+}
+
+# Group buoy files by region
+buoy_files_by_region = {'ENP': [], 'WNP': []}
+for buoy_file in pacific_buoy_files:
+    with xr.open_dataset(buoy_file) as ds:
+        buoy_lon = ds['lon'].values[0]
+        buoy_lon = (buoy_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180]
+
+    for region, bounds in pacific_region_bounds.items():
+        if bounds[0] <= buoy_lon <= bounds[1]:
+            buoy_files_by_region[region].append(buoy_file)
+            break
+
+# add the india and atlantic buoys
+buoy_files_by_region['IND'] = sorted([os.path.join(indian_buoy_dir, f) for f in os.listdir(indian_buoy_dir) if f.endswith('.cdf')])
+buoy_files_by_region['ATL'] = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.listdir(atlantic_buoy_dir) if f.endswith('.cdf')])
+
 
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
@@ -262,55 +259,7 @@ else:
 
 gc.collect()  # Clean up memory
 print("Data loading phase complete!")
-#%% CLASSIFY AND GROUP PAL FILES
-pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
 
-# CLASSIFICATION SUMMARY
-# Print classification summary
-print("\n" + "="*50)
-print("PAL CLASSIFICATION SUMMARY")
-print("="*50)
-for region, files in pals_classed_by_region.items():
-    if region != "Unclassified":
-        print(f"{region}: {len(files)} PALs")
-print("="*50)
-
-# Expected counts from your figure:
-expected_counts = {
-    "ETNP": 4,   # Extratropical North Pacific
-    "TNEP": 20,  # Tropical Northeastern Pacific  
-    "TSEP": 6,   # Tropical Southeastern Pacific
-    "STNA": 18,  # Subtropical North Atlantic
-    "TNIO": 3,   # Tropical North Indian Ocean
-    "TNWP": 7    # Tropical Northwestern Pacific
-}
-
-print("\nCOMPARISON WITH EXPECTED COUNTS:")
-print("-" * 30)
-total_expected = sum(expected_counts.values())
-total_actual = sum(len(files) for region, files in pals_classed_by_region.items() if region != "Unclassified")
-
-for region in expected_counts:
-    actual = len(pals_classed_by_region.get(region, []))
-    expected = expected_counts[region]
-    status = "✓" if actual == expected else "✗"
-    print(f"{region}: Expected {expected}, Got {actual} {status}")
-
-print(f"\nTotal Expected: {total_expected}")
-print(f"Total Actual: {total_actual}")
-print(f"Difference: {total_actual - total_expected}")
-
-gc.collect()  # Clean up memory
-
-# Save checkpoint after data loading and classification
-print("Saving data loading checkpoint...")
-save_data_loading_checkpoint(
-    gpcp_ds_v1pt3_xr=gpcp_ds_v1pt3_xr,
-    gpcp_ds_v3pt2_xr=gpcp_ds_v3pt2_xr, 
-    gpcp_ds_v3pt3_xr=gpcp_ds_v3pt3_xr,
-    imerg_ds_xr=imerg_ds_xr,
-    pals_classed_by_region=pals_classed_by_region
-)
 #%% PLOT - FIGURE 1
 # === Plot ===
 # Set font to Times New Roman and bold for all texts
@@ -331,26 +280,20 @@ ax.add_feature(cfeature.LAND, facecolor='lightgray')
 ax.add_feature(cfeature.COASTLINE, linewidth=0.6)
 ax.add_feature(cfeature.BORDERS, linestyle=':')
 
-for region, files in pals_classed_by_region.items():
-    if region == "Unclassified" or len(files) == 0:
-        continue  # Skip unclassified and empty regions for plotting bounds
-    
-    color = region_colors[region]
-    for file in files:
-        # Load only lat and lon efficiently, downsample by slicing
-        ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
-        lat = ds['lat'].values[::50]
-        lon = ds['lon'].values[::50]
-        ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=3)
-        ds.close()
-
 # Initialize buoy counts
-buoy_counts = {"PACIFIC": len(pacific_buoy_files), "INDIAN": len(indian_buoy_files), "ATLANTIC": len(atlantic_buoy_files)}
+buoy_counts = {}
+for region, bfiles in buoy_files_by_region.items():
+    buoy_counts[region] = len(bfiles)
 
-for bouy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'), 
-                                     ("INDIAN", indian_buoy_files, 's'), 
-                                     ("ATLANTIC", atlantic_buoy_files, 'd')]:
-    for fl in buoy_files: 
+    # set region markers
+    if (region == "ENP") or (region == "WNP"):
+        marker = '*'
+    elif region == "ATL":
+        marker = 'd'
+    elif region == "IND":
+        marker = 's'
+    
+    for fl in bfiles: 
         xrfile = xr.open_dataset(fl)       
         # Plot moored buoy data
         lat = xrfile['lat'].values[0]
@@ -362,46 +305,41 @@ for bouy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'),
             # shift lon slightly for plotting
             lon = -178
 
-        # print(lon)
-        
-        ax.scatter(lon, lat, color='black', s=100, marker=marker, label=f'{bouy_reg} Buoys', transform=ccrs.PlateCarree())
+        ax.scatter(lon, lat, color=buoy_region_colors[region], 
+                   s=200, marker=marker, label=f'{region} Buoys', 
+                   transform=ccrs.PlateCarree())
 
 # Add grid lines for major ticks
 ax.grid(True, which='major', linewidth=0.55, color='grey', alpha=0.7, linestyle='--')
 
-# Create legend with full region names and PAL counts
-legend_regions = [r for r in region_colors.keys() if r != "Unclassified"]
-handles = [plt.Line2D([0], [0], color=region_colors[r], lw=2) for r in legend_regions]
+# Create legend with full region names and buoy counts
+legend_regions = [r for r in buoy_files_by_region.keys()]
 
 # Full region names mapping
-full_region_names = {
-    "ETNP": "Extratropical North Pacific",
-    "TNEP": "Tropical Northeastern Pacific", 
-    "TSEP": "Tropical Southeastern Pacific",
-    "STNA": "Subtropical North Atlantic",
-    "TNIO": "Tropical North Indian Ocean",
-    "TNWP": "Tropical Northwestern Pacific"
+full_region_names = {    
+    "ENP": "Eastern Pacific",
+    "WNP": "Western Pacific",
+    "IND": "Indian Ocean",
+    "ATL": "Atlantic Ocean",    
 }
 
-# Add full names and PAL counts to legend labels
-labels = [f"{region}: ({full_region_names[region]} ({len(pals_classed_by_region.get(region, []))} PALs)" for region in legend_regions]
-
-# Add buoy markers and counts to the legend
-handles.extend([
-    plt.Line2D([0], [0], color='black', marker='*', markersize=10, linestyle='None'),
-    plt.Line2D([0], [0], color='black', marker='s', markersize=10, linestyle='None'),
-    plt.Line2D([0], [0], color='black', marker='d', markersize=10, linestyle='None')
-])
-labels.extend([
-    f"PACIFIC ({buoy_counts['PACIFIC']} buoys)",
-    f"INDIAN ({buoy_counts['INDIAN']} buoys)",
-    f"ATLANTIC ({buoy_counts['ATLANTIC']} buoys)"
-])
+# Add full names and buoy counts to legend labels
+handles = []
+labels = []
+for region in legend_regions:
+    if region in ["ENP", "WNP"]:
+        marker = '*'
+    elif region == "ATL":
+        marker = 'd'
+    elif region == "IND":
+        marker = 's'
+    handles.append(plt.Line2D([0], [0], color=buoy_region_colors[region], marker=marker, markersize=10, linestyle='None'))
+    labels.append(f"{full_region_names[region]} ({buoy_counts[region]} buoys)")
 
 leg = plt.legend(
-    handles, labels,  loc="lower center", bbox_to_anchor=(0.5, -0.35), 
-    fontsize=14,ncol=3, frameon=False
-) # title="Regions and Buoys",  title_fontsize=14, 
+    handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.35), 
+    fontsize=18, ncol=2, frameon=False
+)
 # Set legend fontweight to bold
 for text in leg.get_texts():
     text.set_fontweight('bold')
@@ -424,127 +362,16 @@ for label in ax.get_xticklabels() + ax.get_yticklabels():
 # Try to enforce Times New Roman, but fallback gracefully if not available
 mpl.rcParams['font.family'] = 'serif'
 mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
-ax.set_title("PAL Trajectories and Buoy Locations by Ocean Region", fontsize=20, 
+ax.set_title("Buoy Locations by Ocean Region", fontsize=20, 
              fontweight='bold', fontname='Times New Roman')
 
 plt.tight_layout()
 plt.subplots_adjust(bottom=0.3)  # Add extra space at the bottom for legend
 
-svname = os.path.join(path_to_put_plts, f'PAL_trajectories_by_region_{cde_run_dte}.png')
+svname = os.path.join(path_to_put_plts, f'Buoy_by_region_{cde_run_dte}.png')
 plt.savefig(svname, bbox_inches='tight', dpi=500)
 plt.show()
 gc.collect()  # Clean up memory
-
-
-#%% DO DATA INVENTORY PER REGION
-# COUNT THE TOTAL NUMBER OF DAYS PER YEAR WITH NON NAN DATA FOR EACH REGION
-# Build inventory: count number of non-NaN daily rain_rate observations per region per year
-regional_inventory = []
-for region_name, pal_files in pals_classed_by_region.items():
-    if region_name != "Unclassified" and len(pal_files) > 0:
-        print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
-        for pal_file in pal_files:
-            pal_ds = xr.open_dataset(pal_file)
-            df = pd.DataFrame({
-                'time': pd.to_datetime(pal_ds['time'].values),
-                'rain_rate': pal_ds['rain_rate'].values
-            })
-            df = df.dropna(subset=['rain_rate'])  # Only keep rows with valid rain_rate
-            if not df.empty:
-                df.set_index('time', inplace=True)
-                # Resample to daily, taking the mean rain_rate per day
-                daily_df = df.resample('D').mean()
-                daily_df = daily_df.dropna(subset=['rain_rate'])  # Only keep days with valid mean
-                daily_df = daily_df.reset_index()
-                daily_df['date'] = daily_df['time'].dt.date
-                daily_df['year'] = daily_df['time'].dt.year
-                daily_df['region'] = region_name
-                daily_df['pal_file'] = os.path.basename(pal_file)
-                regional_inventory.append(daily_df[['region', 'year', 'date', 'pal_file']])
-            pal_ds.close()
-gc.collect()  # Clean up memory
-
-# Combine all PALs' valid daily records
-regional_inventory_df = pd.concat(regional_inventory, ignore_index=True)
-# PAL count per region for legend
-region_counts = regional_inventory_df.groupby('region')['pal_file'].nunique().to_dict()
-
-# Count number of valid daily observations per region per year
-regional_inventory_df = (
-    regional_inventory_df
-    .groupby(['region', 'year'])
-    .agg(rain_rate=('date', 'count'))
-    .reset_index()
-)
-
-
-
-# plot bar plot of year on x axis and count of days with non-NaN rain_rate on y axis
-# comparing regions
-mpl.rcParams['font.family'] = 'serif'
-mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
-mpl.rcParams['font.weight'] = 'bold'
-mpl.rcParams['axes.labelweight'] = 'bold'
-mpl.rcParams['axes.titleweight'] = 'bold'
-mpl.rcParams['xtick.labelsize'] = 18
-mpl.rcParams['ytick.labelsize'] = 18
-# Removed 'Times New Roman' to avoid findfont warnings
-mpl.rcParams['font.family'] = 'serif'
-mpl.rcParams['ytick.labelsize'] = 18
-mpl.rcParams['xtick.labelsize'] = 18
-
-fg, ax = plt.subplots(figsize=(10, 6))
-sns.barplot(data=regional_inventory_df, x='year', y='rain_rate', hue='region', 
-            palette=region_colors, ax=ax)
-ax.set_xlabel('Year', fontsize=18, fontweight='bold')
-ax.set_ylabel('Total Number of\n  daily observations', fontsize=15, fontweight='bold')
-ax.set_title('Yearly distribution of daily observations by Region', fontsize=20, fontweight='bold')
-ax.tick_params(axis='both', which='major', labelsize=18, )
-ax.tick_params(axis='both', which='minor', labelsize=18)
-ax.grid(True, alpha=0.3)
-ax.set_facecolor('white')
-ax.spines['top'].set_visible(False)
-ax.spines['right'].set_visible(False)
-ax.spines['bottom'].set_visible(True)
-ax.spines['left'].set_visible(True)
-ax.spines['bottom'].set_color('black')
-ax.spines['left'].set_color('black')
-ax.spines['bottom'].set_linewidth(2)
-ax.spines['left'].set_linewidth(2)
-ax.spines['bottom'].set_zorder(2)
-ax.spines['left'].set_zorder(2)
-ax.set_zorder(1)
-# Slant the x-axis tick labels for readability
-plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
-# Set y-axis ticks to show as 2000, 4000, 6000, 8000, etc.
-# yticks = np.arange(0, regional_inventory_df['rain_rate'].max() + 2000, 2000)
-# ax.set_yticks(yticks)
-# ax.set_yticklabels([f"{int(y):,}" for y in yticks])
-
-# Set y-axis to log scale for readability
-# ax.set_yscale('log')
-
-# Add legend with PAL counts per region (remove the default legend first)
-handles, labels_ = ax.get_legend_handles_labels()
-ax.legend_.remove()  # Remove the default legend
-
-labels_with_counts = [
-    f"{label} ({region_counts.get(label, 0)} PALs)" for label in labels_
-]
-ax.legend(handles, labels_with_counts, title='Regions', loc='upper center', bbox_to_anchor=(0.5, -0.25), 
-          fontsize=14, title_fontsize=14, ncol=3, frameon=False)
-# # Add legend
-# handles, labels_ = ax.get_legend_handles_labels()
-# ax.legend(handles, labels_, title='Regions', loc='upper center', bbox_to_anchor=(0.5, -0.15), 
-#           fontsize=14, title_fontsize=14, ncol=3, frameon=False)
-plt.tight_layout()
-# Set legend fontweight to bold
-for text in ax.get_legend().get_texts():
-    text.set_fontweight('bold')
-svname = os.path.join(path_to_put_plts, f'region_daily_observation_inventory_{cde_run_dte}.png')
-plt.savefig(svname, dpi=500, bbox_inches='tight')
-gc.collect()  # Clean up memory
-
 
 #%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
 # regional_PAL_GPCP_wind_dfs_dict = {}

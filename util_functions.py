@@ -68,6 +68,15 @@ region_bounds = {
     "TNIO": {"lon_min": 60,   "lon_max": 100,  "lat_min": -5, "lat_max": 20},  # Tropical North Indian Ocean
     "TNWP": {"lon_min": 120,  "lon_max": 180,  "lat_min": -5, "lat_max": 30},  # Tropical Northwestern Pacific
 }
+
+buoy_region_bounds = {
+    "ENP": {"lon_min": -180, "lon_max": -60, "lat_min": -30, "lat_max": 15},  # Eastern Pacific
+    "WNP": {"lon_min": 120, "lon_max": 180, "lat_min": -15, "lat_max": 15},    # Western Pacific
+    "IND": {"lon_min": 40, "lon_max": 110, "lat_min": -15, "lat_max": 30},     # Indian Ocean
+    "ATL": {"lon_min": -70, "lon_max": 20, "lat_min": -30, "lat_max": 30},     # Atlantic Ocean
+}
+
+
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 # DEFINE COLORS FOR EACH REGION
@@ -79,6 +88,16 @@ region_colors = {
     "TNIO": "#ffcc33",      # yellow/orange
     "STNA": "#b35959",      # brown/red
     "Unclassified": "black",
+}
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# DEFINE COLORS FOR EACH BUOY REGION
+buoy_region_colors = {
+    "ENP": "#3366ff",      # blue
+    "WNP": "#66ccff",      # light blue
+    "IND": "#33cc33",      # green
+    "ATL": "#b35959",      # brown/red
+    
 }
 #%% DEFINE FUNCTIONS
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
