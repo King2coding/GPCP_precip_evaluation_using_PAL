@@ -37,17 +37,18 @@ from kernel_recovery import (
     save_analysis_checkpoint, check_what_needs_reloading
 )
 
-# Set up memory management early - use fast setup to avoid slow imports
-print("Setting up memory management...")
+# Set up minimal memory management - server friendly
+print("Setting up minimal memory management...")
 try:
-    # Use fast setup by default (no distributed client = faster imports)
-    dask_client = fast_setup()
-    print("✓ Fast memory management setup complete")
+    # Use minimal setup with limited resources for shared server
+    dask.config.set({'scheduler': 'threads', 'num_workers': 1})
+    print("✓ Minimal memory management setup complete")
 except Exception as e:
     print(f"Warning: Could not set up memory management: {e}")
     print("Continuing with default configuration...")
-    dask_client = None
-    
+
+dask_client = None
+
 #%% DEBUG: Check current region bounds and test overlap function
 print("CURRENT REGION BOUNDS:")
 print("="*50)
@@ -141,47 +142,33 @@ atlantic_buoy_files = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.lis
 # read all GPCP into a single xr data
 # Limit the number of simultaneously open files to avoid kernel crash
 
-# Enhanced memory-safe data loading
-print("Starting memory-safe data loading...")
-monitor_memory_usage()
+# Simple data loading without CPU-intensive optimizations (server-friendly)
+print("Starting data loading...")
 
-# Configure dask for better memory management
+# Simple dask configuration - minimal CPU usage
 dask.config.set({
-    'array.slicing.split_large_chunks': False,
-    'array.chunk-size': '64MB',  # Smaller chunks for better memory management
+    'array.chunk-size': '128MB',  # Reasonable chunk size
+    'scheduler': 'threads',       # Use threads instead of processes
+    'num_workers': 2              # Limit workers to be server-friendly
 })
 
-# Reduce batch size for better memory management
-batch_size = 20  # Reduced from 50 to prevent memory overload
+# Use moderate batch size
+batch_size = 30
 
-def safe_process_gpcp_batch(batch, version):
-    """Safely process a batch of GPCP files with error handling"""
+def simple_process_gpcp_batch(batch, version):
+    """Simple processing of GPCP files without intensive optimizations"""
     try:
         processed_batch = xr.open_mfdataset(
             batch, 
             combine='by_coords', 
-            parallel=True, 
-            engine='netcdf4', 
-            chunks={'time': 10, 'lat': 90, 'lon': 180}  # Smaller chunks
+            parallel=False,  # Disable parallel processing to reduce CPU load
+            engine='netcdf4'
         )
         processed_batch = ds_swaplon(processed_batch)
         return processed_batch
     except Exception as e:
         print(f"Error processing {version} batch: {e}")
-        # Try with even smaller chunks
-        try:
-            processed_batch = xr.open_mfdataset(
-                batch, 
-                combine='by_coords', 
-                parallel=False,  # Disable parallel processing
-                engine='netcdf4', 
-                chunks={'time': 5, 'lat': 45, 'lon': 90}  # Much smaller chunks
-            )
-            processed_batch = ds_swaplon(processed_batch)
-            return processed_batch
-        except Exception as e2:
-            print(f"Failed to process {version} batch even with smaller chunks: {e2}")
-            return None
+        return None
 
 # Process GPCP v1.3 files in smaller batches with better error handling
 print(f"Processing GPCP v1.3 files in batches of {batch_size}...")
@@ -189,25 +176,24 @@ gpcp_v1pt3_batches = [all_gpcp_v1pt3_files[i:i + batch_size] for i in range(0, l
 gpcp_ds_v1pt3_xr_list = []
 
 for i, batch in enumerate(gpcp_v1pt3_batches):
-    print(f"Processing GPCP v1.3 batch {i+1}/{len(gpcp_v1pt3_batches)}")
-    monitor_memory_usage()
+    if i % 30 == 0:
+        # Print progress every 30 batches
+        print(f"Processing GPCP v1.3 batch {i+1}/{len(gpcp_v1pt3_batches)}")
     
-    processed_batch = safe_process_gpcp_batch(batch, "v1.3")
+    processed_batch = simple_process_gpcp_batch(batch, "v1.3")
     if processed_batch is not None:
         gpcp_ds_v1pt3_xr_list.append(processed_batch)
     
-    # Force garbage collection after each batch
+    # Simple garbage collection
     gc.collect()
 
-# Combine all processed batches into a single xarray dataset using dask
+# Combine all processed batches into a single xarray dataset - simple version
 if gpcp_ds_v1pt3_xr_list:
-    gpcp_ds_v1pt3_xr = xr.concat(gpcp_ds_v1pt3_xr_list, dim="time").chunk({'time': -1})
+    gpcp_ds_v1pt3_xr = xr.concat(gpcp_ds_v1pt3_xr_list, dim="time")
     print("GPCP v1.3 loading complete")
 else:
     print("Warning: No GPCP v1.3 data was successfully loaded")
     gpcp_ds_v1pt3_xr = None
-
-monitor_memory_usage()
 
 # Process GPCP v3.2 files in smaller batches with better error handling
 print(f"Processing GPCP v3.2 files in batches of {batch_size}...")
@@ -215,25 +201,23 @@ gpcp_v3pt2_batches = [all_gpcp_v3pt2_files[i:i + batch_size] for i in range(0, l
 gpcp_ds_v3pt2_xr_list = []
 
 for i, batch in enumerate(gpcp_v3pt2_batches):
-    print(f"Processing GPCP v3.2 batch {i+1}/{len(gpcp_v3pt2_batches)}")
-    monitor_memory_usage()
+    if i % 30 == 0:
+        print(f"Processing GPCP v3.2 batch {i+1}/{len(gpcp_v3pt2_batches)}")
     
-    processed_batch = safe_process_gpcp_batch(batch, "v3.2")
+    processed_batch = simple_process_gpcp_batch(batch, "v3.2")
     if processed_batch is not None:
         gpcp_ds_v3pt2_xr_list.append(processed_batch)
     
-    # Force garbage collection after each batch
+    # Simple garbage collection
     gc.collect()
 
-# Combine all processed batches into a single xarray dataset using dask
+# Combine all processed batches into a single xarray dataset - simple version
 if gpcp_ds_v3pt2_xr_list:
-    gpcp_ds_v3pt2_xr = xr.concat(gpcp_ds_v3pt2_xr_list, dim="time").chunk({'time': -1})
+    gpcp_ds_v3pt2_xr = xr.concat(gpcp_ds_v3pt2_xr_list, dim="time")
     print("GPCP v3.2 loading complete")
 else:
     print("Warning: No GPCP v3.2 data was successfully loaded")
     gpcp_ds_v3pt2_xr = None
-
-monitor_memory_usage()
 
 # Process GPCP v3.3 files in smaller batches with better error handling
 print(f"Processing GPCP v3.3 files in batches of {batch_size}...")
@@ -241,54 +225,62 @@ gpcp_v3pt3_batches = [all_gpcp_v3pt3_files[i:i + batch_size] for i in range(0, l
 gpcp_ds_v3pt3_xr_list = []
 
 for i, batch in enumerate(gpcp_v3pt3_batches):
-    print(f"Processing GPCP v3.3 batch {i+1}/{len(gpcp_v3pt3_batches)}")
-    monitor_memory_usage()
-    
-    processed_batch = safe_process_gpcp_batch(batch, "v3.3")
+    if i % 30 == 0:
+        print(f"Processing GPCP v3.3 batch {i+1}/{len(gpcp_v3pt3_batches)}")
+
+    processed_batch = simple_process_gpcp_batch(batch, "v3.3")
     if processed_batch is not None:
         gpcp_ds_v3pt3_xr_list.append(processed_batch)
     
-    # Force garbage collection after each batch
+    # Simple garbage collection
     gc.collect()
 
-# Combine all processed batches into a single xarray dataset using dask
+# Combine all processed batches into a single xarray dataset - simple version
 if gpcp_ds_v3pt3_xr_list:
-    gpcp_ds_v3pt3_xr = xr.concat(gpcp_ds_v3pt3_xr_list, dim="time").chunk({'time': -1})
+    gpcp_ds_v3pt3_xr = xr.concat(gpcp_ds_v3pt3_xr_list, dim="time")
     print("GPCP v3.3 loading complete")
 else:
     print("Warning: No GPCP v3.3 data was successfully loaded")
     gpcp_ds_v3pt3_xr = None
 
-monitor_memory_usage()
+def simple_process_imerg_batch(batch):
+    """Simple IMERG processing without parallel jobs for server-friendly operation"""
+    try:
+        # Use the existing process_imerg but we'll load files sequentially instead
+        processed_batch = xr.open_mfdataset(
+            batch, 
+            combine='by_coords', 
+            parallel=False,  # No parallel processing
+            engine='netcdf4'
+        )
+        return processed_batch
+    except Exception as e:
+        print(f"Error processing IMERG batch: {e}")
+        return None
 
-# Process IMERG files in smaller batches with better error handling
+# Process IMERG files - server friendly version
 print(f"Processing IMERG files in batches of {batch_size}...")
 imerg_batches = [all_imerg_files[i:i + batch_size] for i in range(0, len(all_imerg_files), batch_size)]
 imerg_ds_xr_list = []
 
 for i, batch in enumerate(imerg_batches):
-    print(f"Processing IMERG batch {i+1}/{len(imerg_batches)}")
-    monitor_memory_usage()
+    if i % 30 == 0:
+        print(f"Processing IMERG batch {i+1}/{len(imerg_batches)}")
     
     try:
-        # Process each batch and store the result as a dask-backed xarray dataset
-        processed_batch = process_imerg(batch, 'imerg_fn').chunk({'time': 10, 'lat': 90, 'lon': 180})
-        imerg_ds_xr_list.append(processed_batch)
+        # Use simple processing instead of the CPU-intensive process_imerg function
+        processed_batch = simple_process_imerg_batch(batch)
+        if processed_batch is not None:
+            imerg_ds_xr_list.append(processed_batch)
     except Exception as e:
         print(f"Error processing IMERG batch {i+1}: {e}")
-        # Try with smaller parameters
-        try:
-            processed_batch = process_imerg(batch, 'imerg_fn').chunk({'time': 5, 'lat': 45, 'lon': 90})
-            imerg_ds_xr_list.append(processed_batch)
-        except Exception as e2:
-            print(f"Failed to process IMERG batch {i+1} even with smaller chunks: {e2}")
     
-    # Force garbage collection after each batch
+    # Simple garbage collection
     gc.collect()
 
-# Combine all processed batches into a single xarray dataset using dask
+# Combine all processed batches into a single xarray dataset - simple version
 if imerg_ds_xr_list:
-    imerg_ds_xr = xr.concat(imerg_ds_xr_list, dim="time").chunk({'time': -1})
+    imerg_ds_xr = xr.concat(imerg_ds_xr_list, dim="time")
     print("IMERG loading complete")
 else:
     print("Warning: No IMERG data was successfully loaded")
@@ -309,7 +301,6 @@ else:
 # pacific_buoy_xr
 
 gc.collect()  # Clean up memory
-monitor_memory_usage()
 print("Data loading phase complete!")
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
@@ -650,49 +641,32 @@ for region_name, pal_files in pals_classed_by_region.items():
             # pal_gpcpv3pt3_df_wind.index = pd.to_datetime(pal_gpcpv3pt3_df_wind['time'])    # Ensure index is datetime
 
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
-            # Process IMERG data with PAL
-            pal_rain_imerg_df = pal_rain_df.copy()
+            # Process IMERG data with PAL - DISABLED for server-friendly operation
+            # TODO: Re-enable with single-threaded version later
+            print(f"Skipping IMERG-PAL matching for {os.path.basename(pal_file)} (server-friendly mode)")
+            pal_imerg_df_rain = pal_rain_df.copy()  # Placeholder
             
-            pal_imerg_df_rain = process_imerg_with_PAL_rain(
-                                            pal_rain_imerg_df, imerg_ds_xr)
+            # pal_imerg_df_rain = process_imerg_with_PAL_rain(
+            #                                pal_rain_imerg_df, imerg_ds_xr)
 
             
-            pal_dates_rain = pd.to_datetime(pal_rain_imerg_df['date'])
-            pal_lats_rain = pal_rain_imerg_df['lat'].values
-            pal_lons_rain = pal_rain_imerg_df['lon'].values
+            # Store the processed dataframes for this PAL file
+            region_pal_gpcp_dfs.append({
+                'pal_file': os.path.basename(pal_file),
+                'region': region_name,
+                'gpcp_v1pt3': pal_gpcpv1pt3_df_rain,
+                'gpcp_v3pt2': pal_gpcpv3pt2_df_rain, 
+                'gpcp_v3pt3': pal_gpcpv3pt3_df_rain,
+                'imerg': pal_imerg_df_rain  # Placeholder for now
+            })
+            
+            pal_ds.close()
 
-            imerg_ds_xr_cpy = imerg_ds_xr.copy()
+        # Store regional results
+        regional_PAL_GPCP_dfs_daily_lst.extend(region_pal_gpcp_dfs)
+        print(f"Completed processing {region_name}")
 
-            # Rename latitude/longitude dims to 'lat' and 'lon' if needed
-            if 'latitude' in imerg_ds_xr_cpy.dims or 'longitude' in imerg_ds_xr_cpy.dims:
-                imerg_ds_xr_cpy = imerg_ds_xr_cpy.rename({'latitude': 'lat', 'longitude': 'lon'})
-
-            # Subset IMERG data to PAL's date range
-            min_date, max_date = pal_dates_rain.min(), pal_dates_rain.max()
-            # Use Dask to subset the dataset lazily
-            imerg_ds_xr_cpy = imerg_ds_xr_cpy.sel(time=slice(min_date, max_date)).chunk({'time': 100})
-
-            # Split the data into chunks and process in parallel
-            chunks = [(start_idx, min(start_idx + 1000, len(pal_rain_imerg_df))) for start_idx in range(0, len(pal_rain_imerg_df), 1000)]
-            # Use Dask for lazy evaluation and parallel processing
-            import dask.array as da
-            def process_chunk_dask(start_idx, end_idx):
-                chunk_dates = pal_dates_rain[start_idx:end_idx]
-                chunk_lats = pal_lats_rain[start_idx:end_idx]
-                chunk_lons = pal_lons_rain[start_idx:end_idx]
-
-                # Interpolate IMERG data for the current chunk
-                imerg_precip_chunk = imerg_ds_xr_cpy.interp(
-                    time=("points", chunk_dates), lat=("points", chunk_lats),
-                    lon=("points", chunk_lons), method="nearest"
-                ).compute()
-                
-                # Convert to DataFrame and set index
-                imerg_precip_chunk_df = imerg_precip_chunk.to_dataframe().reset_index()
-                imerg_precip_chunk_df = imerg_precip_chunk_df[['time', 'precipitationCal']]  # Adjust variable name if needed
-                imerg_precip_chunk_df.rename(columns={'precipitationCal': 'IMERG'}, inplace=True)
-                imerg_precip_chunk_df.set_index('time', inplace=True)
-                # Set places where the values are less than 0 to NaN
+gc.collect()  # Clean up memory
                 imerg_precip_chunk_df.loc[imerg_precip_chunk_df['IMERG'] < 0, 'IMERG'] = np.nan
                 return imerg_precip_chunk_df
 
