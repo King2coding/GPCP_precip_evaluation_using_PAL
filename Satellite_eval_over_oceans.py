@@ -155,21 +155,6 @@ dask.config.set({
 # Use moderate batch size
 batch_size = 30
 
-def simple_process_gpcp_batch(batch, version):
-    """Simple processing of GPCP files without intensive optimizations"""
-    try:
-        processed_batch = xr.open_mfdataset(
-            batch, 
-            combine='by_coords', 
-            parallel=False,  # Disable parallel processing to reduce CPU load
-            engine='netcdf4'
-        )
-        processed_batch = ds_swaplon(processed_batch)
-        return processed_batch
-    except Exception as e:
-        print(f"Error processing {version} batch: {e}")
-        return None
-
 # Process GPCP v1.3 files in smaller batches with better error handling
 print(f"Processing GPCP v1.3 files in batches of {batch_size}...")
 gpcp_v1pt3_batches = [all_gpcp_v1pt3_files[i:i + batch_size] for i in range(0, len(all_gpcp_v1pt3_files), batch_size)]
@@ -194,6 +179,7 @@ if gpcp_ds_v1pt3_xr_list:
 else:
     print("Warning: No GPCP v1.3 data was successfully loaded")
     gpcp_ds_v1pt3_xr = None
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 # Process GPCP v3.2 files in smaller batches with better error handling
 print(f"Processing GPCP v3.2 files in batches of {batch_size}...")
@@ -218,6 +204,7 @@ if gpcp_ds_v3pt2_xr_list:
 else:
     print("Warning: No GPCP v3.2 data was successfully loaded")
     gpcp_ds_v3pt2_xr = None
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 # Process GPCP v3.3 files in smaller batches with better error handling
 print(f"Processing GPCP v3.3 files in batches of {batch_size}...")
@@ -242,21 +229,8 @@ if gpcp_ds_v3pt3_xr_list:
 else:
     print("Warning: No GPCP v3.3 data was successfully loaded")
     gpcp_ds_v3pt3_xr = None
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
-def simple_process_imerg_batch(batch):
-    """Simple IMERG processing without parallel jobs for server-friendly operation"""
-    try:
-        # Use the existing process_imerg but we'll load files sequentially instead
-        processed_batch = xr.open_mfdataset(
-            batch, 
-            combine='by_coords', 
-            parallel=False,  # No parallel processing
-            engine='netcdf4'
-        )
-        return processed_batch
-    except Exception as e:
-        print(f"Error processing IMERG batch: {e}")
-        return None
 
 # Process IMERG files - server friendly version
 print(f"Processing IMERG files in batches of {batch_size}...")
@@ -285,20 +259,6 @@ if imerg_ds_xr_list:
 else:
     print("Warning: No IMERG data was successfully loaded")
     imerg_ds_xr = None
-
-# pacific_buoy_xr = xr.open_mfdataset(
-#     pacific_buoy_files, combine='nested', parallel=False, engine='netcdf4', chunks={}
-# )
-
-# indian_buoy_xr = xr.open_mfdataset(
-#     indian_buoy_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
-# )
-
-# atlantic_buoy_xr = xr.open_mfdataset(
-#     atlantic_buoy_files, combine='by_coords', parallel=False, engine='netcdf4', chunks={}
-# )
-
-# pacific_buoy_xr
 
 gc.collect()  # Clean up memory
 print("Data loading phase complete!")

@@ -349,6 +349,38 @@ def process_imerg_with_PAL_rain(df, imerg_ds_xr, chunk_size=10000, n_jobs=20):
     return df
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def simple_process_gpcp_batch(batch, version):
+    """Simple processing of GPCP files without intensive optimizations"""
+    try:
+        processed_batch = xr.open_mfdataset(
+            batch, 
+            combine='by_coords', 
+            parallel=False,  # Disable parallel processing to reduce CPU load
+            engine='netcdf4'
+        )
+        processed_batch = ds_swaplon(processed_batch)
+        return processed_batch
+    except Exception as e:
+        print(f"Error processing {version} batch: {e}")
+        return None
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def simple_process_imerg_batch(batch):
+    """Simple IMERG processing without parallel jobs for server-friendly operation"""
+    try:
+        # Use the existing process_imerg but we'll load files sequentially instead
+        processed_batch = xr.open_mfdataset(
+            batch, 
+            combine='by_coords', 
+            parallel=False,  # No parallel processing
+            engine='netcdf4'
+        )
+        return processed_batch
+    except Exception as e:
+        print(f"Error processing IMERG batch: {e}")
+        return None
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 def compute_rainfall_fraction_and_volume_by_windspeed_bins(
         rainfall_df,products, bn_size=1, threshold=0.2):
     """
