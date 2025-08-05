@@ -11,7 +11,14 @@ from evaluation_fucntions_algorithms import *
 from rasterio.transform import from_origin
 from rasterio.transform import rowcol
 
-from osgeo import gdal, osr
+# Optional GDAL imports - code will work without these
+try:
+    from osgeo import gdal, osr
+    HAS_GDAL = True
+except ImportError:
+    print("Warning: GDAL not available. Some functions may be limited.")
+    HAS_GDAL = False
+
 import subprocess
 
 
@@ -38,6 +45,11 @@ def format_lat(y, pos=None):
         return f"{int(y)}°N"
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def run_gdalinfo(file_path):
+    """Run gdalinfo command using subprocess"""
+    if not HAS_GDAL:
+        print("Warning: GDAL not available. Cannot run gdalinfo.")
+        return
+    
     # Run the gdalinfo command using subprocess
     result = subprocess.run(['gdalinfo', file_path], capture_output=True, text=True)
     
@@ -278,12 +290,14 @@ def process_gpcp_with_PAL_rain_and_wind(df, gpcp_ds_xr, gpcp_version):
     return df#pal_df_rain, pal_df_wind
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-def process_imerg_with_PAL_rain(df, imerg_ds_xr):
+def process_imerg_with_PAL_rain(df, imerg_ds_xr, chunk_size=10000, n_jobs=20):
     """
-    Process IMERG data with PAL rain data.
+    Process IMERG data with PAL rain data in chunks using Dask for lazy evaluation and parallel processing.
     Parameters:
     - df: DataFrame containing PAL rain data.
     - imerg_ds_xr: xarray dataset containing IMERG data.
+    - chunk_size: Number of rows to process in each chunk.
+    - n_jobs: Number of parallel jobs to run (default is 20 cores).
     Returns:
     - df: DataFrame with IMERG rain data added.
     """
@@ -297,17 +311,38 @@ def process_imerg_with_PAL_rain(df, imerg_ds_xr):
     if 'latitude' in imerg_ds_xr.dims or 'longitude' in imerg_ds_xr.dims:
         imerg_ds_xr = imerg_ds_xr.rename({'latitude': 'lat', 'longitude': 'lon'})
 
-    # Use dask to handle large datasets and avoid memory issues
-    imerg_precip = imerg_ds_xr.interp(
-        time=("points", pal_dates_rain), lat=("points", pal_lats_rain),
-        lon=("points", pal_lons_rain), method="nearest"
-    ).compute()  # Compute the result to avoid lazy evaluation issues
+    # Subset IMERG data to PAL's date range
+    min_date, max_date = pal_dates_rain.min(), pal_dates_rain.max()
+    # Use Dask to subset the dataset lazily
+    imerg_ds_xr = imerg_ds_xr.sel(time=slice(min_date, max_date)).chunk({'time': 100})
 
-    # Set places where the values are less than 0 to NaN
-    imerg_precip = imerg_precip.where(imerg_precip >= 0, np.nan)
+    # Removed process_chunk as it is redundant
 
-    # Store matched values in the DataFrame
-    df['IMERG'] = imerg_precip.values  # Ensure values are extracted to avoid dask objects
+    # Split the data into chunks and process in parallel
+    chunks = [(start_idx, min(start_idx + chunk_size, len(df))) for start_idx in range(0, len(df), chunk_size)]
+    # Use Dask for lazy evaluation and parallel processing
+    import dask.array as da
+
+    def process_chunk_dask(start_idx, end_idx):
+        chunk_dates = pal_dates_rain[start_idx:end_idx]
+        chunk_lats = pal_lats_rain[start_idx:end_idx]
+        chunk_lons = pal_lons_rain[start_idx:end_idx]
+
+        # Interpolate IMERG data for the current chunk
+        imerg_precip_chunk = imerg_ds_xr.interp(
+            time=("points", chunk_dates), lat=("points", chunk_lats),
+            lon=("points", chunk_lons), method="nearest"
+        )
+        # Set places where the values are less than 0 to NaN
+        imerg_precip_chunk = imerg_precip_chunk.where(imerg_precip_chunk >= 0, np.nan)
+        return imerg_precip_chunk
+    # Use Dask for lazy evaluation and parallel processing
+    import dask.array as da
+    dask_chunks = [process_chunk_dask(start, min(start + chunk_size, len(df))) for start in range(0, len(df), chunk_size)]
+    dask_results = da.concatenate([da.from_array(chunk.values) for chunk in dask_chunks])
+
+    # Compute the results and add to the DataFrame
+    df['IMERG'] = dask_results.compute()
 
     return df
 

@@ -1,0 +1,41 @@
+# Requirements file for Satellite Evaluation over Oceans Project
+# Generated based on imports found in the codebase
+
+# Core scientific computing
+numpy
+pandas
+scipy
+
+# Data analysis and visualization
+matplotlib
+seaborn
+
+# Geospatial and meteorological data
+xarray
+netcdf4
+cartopy
+rasterio
+
+# Geospatial libraries
+gdal
+pyproj
+
+# Parallel computing and memory management
+dask[complete]
+joblib
+psutil
+
+# Evaluation metrics
+HydroErr
+
+# Development and utilities
+ipykernel
+jupyter
+
+# Additional dependencies that might be needed
+h5py
+cftime
+bottleneck
+
+# For handling large datasets efficiently  
+zarr
