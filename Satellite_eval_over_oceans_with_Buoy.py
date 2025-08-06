@@ -709,21 +709,26 @@ for region in regions:
                                                         'GPCP_v3pt3',
                                                          'IMERG'
                                                                  ]].sum().reset_index()
-    # buoy_yr_monthly = df.groupby(['year', 'month'])[['rain_rate', 
+    # buoy_yr_monthly = df.groupby(['ID','year', 'month'])[['rain_rate', 
     #                                                             # 'GPCP_v1pt3', 
     #                                                             # 'GPCP_v3pt2', 
     #                                                             'GPCP_v3pt3', 
     #                                                             'IMERG']].sum().reset_index()
+    # buoy_yr_monthly = buoy_yr_monthly.groupby(['year', 'month'])[['rain_rate', 
+    #                                                             # 'GPCP_v1pt3', 
+    #                                                             # 'GPCP_v3pt2', 
+    #                                                             'GPCP_v3pt3', 
+    #                                                             'IMERG']].mean().reset_index  
     # Now, for each month, compute mean, Q1, Q3 across buoys (i.e., for each month, use all buoys' accumulations)
-    stats = buoy_monthly.groupby('month').agg({
+    stats_ = buoy_monthly.groupby('month').agg({
         'rain_rate': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
         # 'GPCP_v1pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
         # 'GPCP_v3pt2': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
         'GPCP_v3pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
         'IMERG': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
     })
-    stats.columns = ['_'.join(col).rstrip('_') for col in stats.columns.values]
-    monthly_stats[region] = stats.reset_index()
+    stats_.columns = ['_'.join(col).rstrip('_') for col in stats_.columns.values]
+    monthly_stats[region] = stats_.reset_index()
     # Also store the PAL monthly accumulations for scatter/vertical lines
     monthly_stats[region + '_buoy_monthly'] = buoy_monthly
 
@@ -748,12 +753,12 @@ mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif
 
 # for i, region in enumerate(region_order):
 #     ax = axs[i]
-#     stats = monthly_stats[region]
+#     stats_ = monthly_stats[region]
 #     buoy_monthly = monthly_stats[region + '_buoy_monthly']
 #     # PAL: for each month, plot mean as a point, and Q1-Q3 as vertical line
-#     pal_mean = stats['rain_rate_mean'].values
-#     pal_q1 = stats['rain_rate_q1'].values
-#     pal_q3 = stats['rain_rate_q3'].values
+#     pal_mean = stats_['rain_rate_mean'].values
+#     pal_q1 = stats_['rain_rate_q1'].values
+#     pal_q3 = stats_['rain_rate_q3'].values
 #     # Plot PAL mean as scatter, Q1-Q3 as vertical line
 #     for m_idx, m in enumerate(months):
 #         mean = pal_mean[m_idx]
@@ -764,17 +769,17 @@ mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif
 #             ax.scatter(m, mean, color='k', s=40, zorder=4, label='PAL Obs. Mean' if m_idx == 0 else None)
 #             ax.vlines(m, q1, q3, color='gray', lw=2, zorder=3, label='PAL Obs. [Q1,Q3]' if m_idx == 0 else None)
 #     # GPCP v3.2
-#     # ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean')
-#     # ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 Est. [Q1,Q3]')
+#     # ax.plot(months, stats_['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean')
+#     # ax.fill_between(months, stats_['GPCP_v3pt2_q1'], stats_['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 Est. [Q1,Q3]')
 #     # GPCP v1.3
-#     # ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean')
-#     # ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 Est. [Q1,Q3]')
+#     # ax.plot(months, stats_['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean')
+#     # ax.fill_between(months, stats_['GPCP_v1pt3_q1'], stats_['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 Est. [Q1,Q3]')
 #     # GPCP v3.3
-#     ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
-#     ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
+#     ax.plot(months, stats_['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
+#     ax.fill_between(months, stats_['GPCP_v3pt3_q1'], stats_['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
 #     # IMERG
-#     ax.plot(months, stats['IMERG_mean'], color='orange', label='IMERG Est. Mean')
-#     ax.fill_between(months, stats['IMERG_q1'], stats['IMERG_q3'], color='orange', alpha=0.2, label='IMERG Est. [Q1,Q3]')
+#     ax.plot(months, stats_['IMERG_mean'], color='orange', label='IMERG Est. Mean')
+#     ax.fill_between(months, stats_['IMERG_q1'], stats_['IMERG_q3'], color='orange', alpha=0.2, label='IMERG Est. [Q1,Q3]')
 #     # Title, labels
 #     ax.set_title(region_titles[region], fontsize=18, fontweight='bold')
 #     ax.set_xticks(months)
