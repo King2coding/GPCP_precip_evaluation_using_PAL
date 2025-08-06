@@ -901,7 +901,7 @@ mpl.rcParams['axes.titleweight'] = 'bold'
 mpl.rcParams['xtick.labelsize'] = 18
 mpl.rcParams['ytick.labelsize'] = 18
 
-fig, axs = plt.subplots(1, 2, figsize=(16, 8), dpi=300)
+fig, axs = plt.subplots(1, 2, figsize=(16, 8), dpi=500)
 
 # Set common x-axis ticks and labels
 bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
@@ -917,21 +917,21 @@ for ax in axs:
 axs[0].plot(bin_positions, buoy_pdfc_pdfv['pdfc'], label='Buoy', marker='o', lw=lw)
 axs[0].plot(bin_positions, img_pdfc_pdfv['pdfc'], label='IMERG', marker='x', lw=lw)
 axs[0].plot(bin_positions, gpcp_pdfc_pdfv['pdfc'], label='GPCP v3.3', marker='s', lw=lw)
-axs[0].set_title('PDFc Comparison', fontsize=18, fontweight='bold')
+# axs[0].set_title('PDFc Comparison', fontsize=18, fontweight='bold')
 axs[0].set_ylabel('PDFc (%)', fontsize=18, fontweight='bold')
 axs[0].set_xticks(bin_positions)
-axs[0].set_xticklabels(bin_labels, fontsize=14, fontweight='bold')
-axs[0].legend(fontsize=14, frameon=False)
+axs[0].set_xticklabels(bin_labels, fontsize=16, fontweight='bold')
+axs[0].legend(fontsize=16, frameon=False)
 
 # Plot PDFv for all products in ax[1]
 axs[1].plot(bin_positions, buoy_pdfc_pdfv['pdfv'], label='Buoy', marker='o', lw=lw)
 axs[1].plot(bin_positions, img_pdfc_pdfv['pdfv'], label='IMERG', marker='x', lw=lw)
 axs[1].plot(bin_positions, gpcp_pdfc_pdfv['pdfv'], label='GPCP v3.3', marker='s', lw=lw)
-axs[1].set_title('PDFv Comparison', fontsize=18, fontweight='bold')
+# axs[1].set_title('PDFv Comparison', fontsize=18, fontweight='bold')
 axs[1].set_ylabel('PDFv (%)', fontsize=18, fontweight='bold')
 axs[1].set_xticks(bin_positions)
-axs[1].set_xticklabels(bin_labels, fontsize=14, fontweight='bold')
-axs[1].legend(fontsize=14, frameon=False)
+axs[1].set_xticklabels(bin_labels, fontsize=16, fontweight='bold')
+axs[1].legend(fontsize=16, frameon=False)
 
 # Set common x-axis label
 for ax in axs:
