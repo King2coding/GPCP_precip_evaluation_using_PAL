@@ -70,6 +70,9 @@ path_to_gpcp_v3pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_
 path_to_imerg = r'/ra1/pubdat/AVHRR_CloudSat_proj/IMERG/IMERGV7/Data_V7_daily_1998-2025'
 
 path_to_put_plts = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/plots'
+
+path_to_put_dfs = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/dfs'
+
 #%% DEFINE GLOBAL VARIABLES
 
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
@@ -690,6 +693,10 @@ else:
     all_daily['date'] = pd.to_datetime(all_daily['date'])
 all_daily['month'] = all_daily['date'].dt.month
 all_daily['year'] = all_daily['date'].dt.year
+
+
+# save all daily data to a csv file
+all_daily.to_csv(os.path.join(path_to_put_dfs, f'all_daily_Buoy_sate_data_{cde_run_dte}.csv'), index=False)
 
 regions = [r for r in regional_buoy_sate_dfs_daily_mean.keys()]
 
