@@ -899,78 +899,78 @@ region_order = ["TNEP", "TNWP", "TNIO", "TSEP", "ETNP", "STNA"]
 mpl.rcParams['font.family'] = 'serif'
 mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
 
-fig, axs = plt.subplots(2, 3, figsize=(25, 10))
-axs = axs.flatten()
-months = np.arange(1, 13)
-month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+# fig, axs = plt.subplots(2, 3, figsize=(25, 10))
+# axs = axs.flatten()
+# months = np.arange(1, 13)
+# month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-for i, region in enumerate(region_order):
-    ax = axs[i]
-    stats = monthly_stats[region]
-    pal_monthly = monthly_stats[region + '_pal_monthly']
-    # PAL: for each month, plot mean as a point, and Q1-Q3 as vertical line
-    pal_mean = stats['rain_rate_mean'].values
-    pal_q1 = stats['rain_rate_q1'].values
-    pal_q3 = stats['rain_rate_q3'].values
-    # Plot PAL mean as scatter, Q1-Q3 as vertical line
-    for m_idx, m in enumerate(months):
-        mean = pal_mean[m_idx]
-        q1 = pal_q1[m_idx]
-        q3 = pal_q3[m_idx]
-        # Only plot if not nan
-        if not np.isnan(mean):
-            ax.scatter(m, mean, color='k', s=40, zorder=4, label='PAL Obs. Mean' if m_idx == 0 else None)
-            ax.vlines(m, q1, q3, color='gray', lw=2, zorder=3, label='PAL Obs. [Q1,Q3]' if m_idx == 0 else None)
-    # GPCP v3.2
-    ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean')
-    ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 Est. [Q1,Q3]')
-    # GPCP v1.3
-    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean')
-    ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 Est. [Q1,Q3]')
-    # GPCP v3.3
-    ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
-    ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
-    # IMERG
-    ax.plot(months, stats['IMERG_mean'], color='orange', label='IMERG Est. Mean')
-    ax.fill_between(months, stats['IMERG_q1'], stats['IMERG_q3'], color='orange', alpha=0.2, label='IMERG Est. [Q1,Q3]')
-    # Title, labels
-    ax.set_title(region_titles[region], fontsize=18, fontweight='bold')
-    ax.set_xticks(months)
-    ax.set_xticklabels(month_labels,  fontsize=20, fontweight='bold')
-    ax.tick_params(axis='both', which='major', labelsize=18)
-    ax.set_ylabel('Rainfall [mm]', fontsize=20, fontweight='bold')
-    ax.grid(True, alpha=0.3)
-    # Make y-axis tick labels bold
-    for label in ax.get_yticklabels():
-        label.set_fontweight('bold')
-    # Add N= count
-    n_pal = len(pals_classed_by_region[region])
-    ax.text(0.02, 0.95, f'N = {n_pal} PALs', 
-            transform=ax.transAxes, fontsize=18, 
-            fontweight='bold', va='top')
+# for i, region in enumerate(region_order):
+#     ax = axs[i]
+#     stats = monthly_stats[region]
+#     pal_monthly = monthly_stats[region + '_pal_monthly']
+#     # PAL: for each month, plot mean as a point, and Q1-Q3 as vertical line
+#     pal_mean = stats['rain_rate_mean'].values
+#     pal_q1 = stats['rain_rate_q1'].values
+#     pal_q3 = stats['rain_rate_q3'].values
+#     # Plot PAL mean as scatter, Q1-Q3 as vertical line
+#     for m_idx, m in enumerate(months):
+#         mean = pal_mean[m_idx]
+#         q1 = pal_q1[m_idx]
+#         q3 = pal_q3[m_idx]
+#         # Only plot if not nan
+#         if not np.isnan(mean):
+#             ax.scatter(m, mean, color='k', s=40, zorder=4, label='PAL Obs. Mean' if m_idx == 0 else None)
+#             ax.vlines(m, q1, q3, color='gray', lw=2, zorder=3, label='PAL Obs. [Q1,Q3]' if m_idx == 0 else None)
+#     # GPCP v3.2
+#     ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean')
+#     ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 Est. [Q1,Q3]')
+#     # GPCP v1.3
+#     ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean')
+#     ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 Est. [Q1,Q3]')
+#     # GPCP v3.3
+#     ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
+#     ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
+#     # IMERG
+#     ax.plot(months, stats['IMERG_mean'], color='orange', label='IMERG Est. Mean')
+#     ax.fill_between(months, stats['IMERG_q1'], stats['IMERG_q3'], color='orange', alpha=0.2, label='IMERG Est. [Q1,Q3]')
+#     # Title, labels
+#     ax.set_title(region_titles[region], fontsize=18, fontweight='bold')
+#     ax.set_xticks(months)
+#     ax.set_xticklabels(month_labels,  fontsize=20, fontweight='bold')
+#     ax.tick_params(axis='both', which='major', labelsize=18)
+#     ax.set_ylabel('Rainfall [mm]', fontsize=20, fontweight='bold')
+#     ax.grid(True, alpha=0.3)
+#     # Make y-axis tick labels bold
+#     for label in ax.get_yticklabels():
+#         label.set_fontweight('bold')
+#     # Add N= count
+#     n_pal = len(pals_classed_by_region[region])
+#     ax.text(0.02, 0.95, f'N = {n_pal} PALs', 
+#             transform=ax.transAxes, fontsize=18, 
+#             fontweight='bold', va='top')
 
-# Collect legend handles/labels from the first axis
-handles, labels = axs[0].get_legend_handles_labels()
-unique = dict(zip(labels, handles))
-# Create the legend object
-leg = fig.legend(
-    unique.values(), unique.keys(),
-    loc='lower center', bbox_to_anchor=(0.5, -0.05),
-    fontsize=20, ncol=4, frameon=False
-)
+# # Collect legend handles/labels from the first axis
+# handles, labels = axs[0].get_legend_handles_labels()
+# unique = dict(zip(labels, handles))
+# # Create the legend object
+# leg = fig.legend(
+#     unique.values(), unique.keys(),
+#     loc='lower center', bbox_to_anchor=(0.5, -0.05),
+#     fontsize=20, ncol=4, frameon=False
+# )
 
-# Set fontweight to bold for all legend texts
-for text in leg.get_texts():
-    text.set_fontweight('bold')
-if leg.get_title() is not None:
-    leg.get_title().set_fontweight('bold')
+# # Set fontweight to bold for all legend texts
+# for text in leg.get_texts():
+#     text.set_fontweight('bold')
+# if leg.get_title() is not None:
+#     leg.get_title().set_fontweight('bold')
 
-plt.tight_layout(rect=[0, 0.08, 1, 1])
-# Save plot to disk
-monthly_plot_path = os.path.join(path_to_put_plts, f'PAL_satellite_monthly_stats_by_region_{cde_run_dte}.png')
-plt.savefig(monthly_plot_path, bbox_inches='tight', dpi=500)
-plt.show()
-gc.collect()  # Clean up memory
+# plt.tight_layout(rect=[0, 0.08, 1, 1])
+# # Save plot to disk
+# monthly_plot_path = os.path.join(path_to_put_plts, f'PAL_satellite_monthly_stats_by_region_{cde_run_dte}.png')
+# plt.savefig(monthly_plot_path, bbox_inches='tight', dpi=500)
+# plt.show()
+# gc.collect()  # Clean up memory
 
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
@@ -989,7 +989,7 @@ for i, region in enumerate(region_order):
     # GPCP v3.2
     ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean', linewidth=2)
     # GPCP v1.3
-    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1pt3 Est. Mean', linewidth=2)
+    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean', linewidth=2)
     # GPCP v3.3
     ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean', linewidth=2)
     # IMERG
@@ -1046,18 +1046,68 @@ gc.collect()
 
 
 #%% DO SOME WINDY ANALYSIS
-# col2ana = ['rain_rate', 'wind_speed', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']
-# for region_name,data_df in regional_PAL_GPCP_wind_dfs_dict.items():
-#     print(f"Region: {region_name}, Number of records: {(data_df.shape[0])}")
+bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
 
-#     data2ana = data_df[col2ana].copy()
-#     data2ana = data2ana.dropna(axis=0, how='any')
+# Compute PDF elements for all datasets
+pal_pdfc_pdfv = compute_pdf_elements(all_daily, 'rain_rate', bin_values)
+img_pdfc_pdfv = compute_pdf_elements(all_daily, 'IMERG', bin_values)
+gpcp_v1pt3_pdfc_pdfv = compute_pdf_elements(all_daily, 'GPCP_v1pt3', bin_values)
+gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(all_daily, 'GPCP_v3pt2', bin_values)
+gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(all_daily, 'GPCP_v3pt3', bin_values)
 
-#     rr_data2ana = data2ana[['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']].copy()
+# Plotting PDF for PAL, IMERG, and GPCP versions
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
 
-#     # DO PDFC AND PDFV
-#     pdfc_pdfv_results = compute_rainfall_fraction_and_volume_by_windspeed_bins(
-#         data2ana, col2ana, bn_size=2, threshold=0.5)
+fig, axs = plt.subplots(1, 2, figsize=(16, 8), dpi=500)
+
+# Set common x-axis ticks and labels
+bin_positions = range(len(bin_labels))
+lw = 2
+
+# Add grid lines and customize ticks
+for ax in axs:
+    ax.grid(True, which='major', linestyle='--', alpha=0.7)
+    ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Plot PDFc for all products in ax[0]
+axs[0].plot(bin_positions, pal_pdfc_pdfv['pdfc'], label='PAL', marker='o', lw=lw, color='black')
+axs[0].plot(bin_positions, img_pdfc_pdfv['pdfc'], label='IMERG', marker='x', lw=lw, color='orange')
+axs[0].plot(bin_positions, gpcp_v1pt3_pdfc_pdfv['pdfc'], label='GPCP v1.3', marker='s', lw=lw, color='blue')
+axs[0].plot(bin_positions, gpcp_v3pt2_pdfc_pdfv['pdfc'], label='GPCP v3.2', marker='^', lw=lw, color='blue')
+axs[0].plot(bin_positions, gpcp_v3pt3_pdfc_pdfv['pdfc'], label='GPCP v3.3', marker='d', lw=lw, color='blue')
+axs[0].set_ylabel('PDFc (%)', fontsize=18, fontweight='bold')
+axs[0].set_xticks(bin_positions)
+axs[0].set_xticklabels(bin_labels, fontsize=16, fontweight='bold')
+axs[0].legend(fontsize=16, frameon=False)
+
+# Plot PDFv for all products in ax[1]
+axs[1].plot(bin_positions, pal_pdfc_pdfv['pdfv'], label='PAL', marker='o', lw=lw, color='black')
+axs[1].plot(bin_positions, img_pdfc_pdfv['pdfv'], label='IMERG', marker='x', lw=lw, color='orange')
+axs[1].plot(bin_positions, gpcp_v1pt3_pdfc_pdfv['pdfv'], label='GPCP v1.3', marker='s', lw=lw, color='blue')
+axs[1].plot(bin_positions, gpcp_v3pt2_pdfc_pdfv['pdfv'], label='GPCP v3.2', marker='^', lw=lw, color='blue')
+axs[1].plot(bin_positions, gpcp_v3pt3_pdfc_pdfv['pdfv'], label='GPCP v3.3', marker='d', lw=lw, color='blue')
+axs[1].set_ylabel('PDFv (%)', fontsize=18, fontweight='bold')
+axs[1].set_xticks(bin_positions)
+axs[1].set_xticklabels(bin_labels, fontsize=16, fontweight='bold')
+axs[1].legend(fontsize=16, frameon=False)
+
+# Set common x-axis label
+for ax in axs:
+    ax.set_xlabel('Rain Rate Bins [mm/day]', fontsize=18, fontweight='bold')
+
+# Adjust layout
+plt.tight_layout()
+
+# Save the figure
+svnme = os.path.join(path_to_put_plts, f'pdfc_pdfv_comparison_pal_imerg_gpcp_versions_{cde_run_dte}.png')
+plt.savefig(svnme, bbox_inches='tight')
     
 
 #%%  A CONCENTRATED ANALYSIS OF PAL RAIN RATE WITH ITS WIND SPEED
