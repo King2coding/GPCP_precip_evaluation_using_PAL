@@ -754,7 +754,7 @@ def plot_wind_speed_bin_comparison(data_dict, region_colors, title, ylabel, ylab
 
 
 # - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
-def compute_pdf_elements(data, bins):
+def compute_pdf_elements(data, colname, bins):
     pdfc = []  # PDF by occurrence
     pdfv = []  # PDF by volume
     bin_labels = []  # Bin labels for the DataFrame
@@ -765,9 +765,9 @@ def compute_pdf_elements(data, bins):
     # Loop through bins to compute PDFc and PDFv
     for i, bn in enumerate(bins):
         if i == 0:
-            bin_data = data[data['rain_rate'] <= bn]
+            bin_data = data[data[colname] <= bn]
         else:
-            bin_data = data[(data['rain_rate'] > bins[i - 1]) & (data['rain_rate'] <= bn)]
+            bin_data = data[(data[colname] > bins[i - 1]) & (data[colname] <= bn)]
 
         # PDFc: Percentage of occurrences in the bin
         bin_count = len(bin_data)
@@ -775,7 +775,7 @@ def compute_pdf_elements(data, bins):
 
         # PDFv: Percentage of volume in the bin
         if bin_count > 0:
-            bin_mean = bin_data['rain_rate'].mean()
+            bin_mean = bin_data[colname].mean()
             bin_volume = bin_count * bin_mean
         else:
             bin_volume = 0
@@ -1674,3 +1674,198 @@ def process_imerg_with_PAL_rainV2(pal_rain_df, imerg_ds_xr):
         print("No PAL data to process")
     
     return pal_imerg_df_rain
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def load_imerg_for_dates(imerg_file_index, required_dates, max_memory_gb=8):
+    """
+    Memory-efficient IMERG loading for specific dates only.
+    
+    This function loads only the IMERG files needed for the specified dates,
+    significantly reducing memory usage compared to loading all files.
+    
+    Parameters:
+    -----------
+    imerg_file_index : dict
+        Dictionary mapping dates to IMERG file paths
+    required_dates : list or pd.DatetimeIndex
+        List of dates for which IMERG data is needed
+    max_memory_gb : float
+        Maximum memory limit in GB (used to determine batch size)
+        
+    Returns:
+    --------
+    xarray.Dataset or None
+        IMERG dataset containing only the required dates, or None if loading fails
+    """
+    import psutil
+    import gc
+    
+    # Convert required dates to pandas datetime if needed
+    if not isinstance(required_dates, pd.DatetimeIndex):
+        required_dates = pd.to_datetime(required_dates)
+    
+    # Find unique dates and corresponding files
+    unique_dates = sorted(set(required_dates.date))
+    required_files = []
+    
+    for date in unique_dates:
+        date_obj = pd.to_datetime(date)
+        if date_obj in imerg_file_index:
+            required_files.append(imerg_file_index[date_obj])
+    
+    if not required_files:
+        print("❌ No IMERG files found for the required dates")
+        return None
+    
+    print(f"📊 Loading {len(required_files)} IMERG files (out of {len(imerg_file_index)} total)")
+    print(f"📊 Date range: {min(unique_dates)} to {max(unique_dates)}")
+    
+    try:
+        # Get current memory usage
+        memory_info = psutil.virtual_memory()
+        available_memory_gb = memory_info.available / (1024**3)
+        
+        # Estimate batch size based on available memory
+        # Assume each IMERG file is ~50MB when loaded
+        estimated_file_size_gb = 0.05
+        max_files_per_batch = max(1, int((max_memory_gb * 0.8) / estimated_file_size_gb))
+        
+        if len(required_files) <= max_files_per_batch:
+            # Load all files at once if they fit in memory
+            print(f"💾 Loading all {len(required_files)} files at once (within memory limit)")
+            
+            # Use xr.open_mfdataset with chunking for memory efficiency
+            imerg_ds = xr.open_mfdataset(
+                required_files,
+                combine='by_coords',
+                chunks={'time': 30, 'lat': 200, 'lon': 200},  # Chunking for memory efficiency
+                engine='netcdf4',
+                parallel=True
+            )
+            
+            # Swap longitude if needed
+            if 'longitude' in imerg_ds.dims:
+                imerg_ds = ds_swaplon(imerg_ds)
+            
+            print(f"✅ Successfully loaded IMERG data for {len(required_files)} files")
+            return imerg_ds
+            
+        else:
+            # Load in batches to manage memory
+            print(f"💾 Loading in batches of {max_files_per_batch} files to manage memory")
+            
+            imerg_datasets = []
+            num_batches = (len(required_files) + max_files_per_batch - 1) // max_files_per_batch
+            
+            for i in range(0, len(required_files), max_files_per_batch):
+                batch_files = required_files[i:i + max_files_per_batch]
+                batch_num = (i // max_files_per_batch) + 1
+                
+                print(f"  📦 Loading batch {batch_num}/{num_batches} ({len(batch_files)} files)")
+                
+                try:
+                    batch_ds = xr.open_mfdataset(
+                        batch_files,
+                        combine='by_coords',
+                        chunks={'time': 30, 'lat': 200, 'lon': 200},
+                        engine='netcdf4'
+                    )
+                    
+                    # Swap longitude if needed
+                    if 'longitude' in batch_ds.dims:
+                        batch_ds = ds_swaplon(batch_ds)
+                    
+                    imerg_datasets.append(batch_ds)
+                    
+                    # Monitor memory usage
+                    memory_percent = psutil.virtual_memory().percent
+                    if memory_percent > 85:
+                        print(f"  ⚠️  Memory usage high: {memory_percent:.1f}%")
+                        gc.collect()
+                    
+                except Exception as e:
+                    print(f"  ❌ Failed to load batch {batch_num}: {e}")
+                    continue
+            
+            if not imerg_datasets:
+                print("❌ No IMERG batches were successfully loaded")
+                return None
+            
+            # Combine all batches
+            print(f"🔗 Combining {len(imerg_datasets)} batches...")
+            combined_ds = xr.concat(imerg_datasets, dim='time')
+            
+            # Clean up individual datasets
+            del imerg_datasets
+            gc.collect()
+            
+            print(f"✅ Successfully loaded and combined IMERG data")
+            return combined_ds
+            
+    except Exception as e:
+        print(f"❌ Error loading IMERG data: {e}")
+        return None
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def process_imerg_with_PAL_rainV3_memory_efficient(pal_rain_df, imerg_file_index):
+    """
+    Ultra memory-efficient IMERG matching with PAL rain data.
+    
+    This function loads only the IMERG dates needed for the PAL data,
+    dramatically reducing memory usage compared to loading all IMERG files.
+    
+    Parameters:
+    -----------
+    pal_rain_df : pandas.DataFrame
+        PAL rain dataframe with columns: 'date', 'lat', 'lon', 'rain_rate', etc.
+    imerg_file_index : dict
+        Dictionary mapping dates to IMERG file paths
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        Original PAL dataframe with added 'IMERG' column containing matched precipitation values
+    """
+    import gc
+    
+    print(f"🚀 Starting ultra memory-efficient IMERG matching for {len(pal_rain_df)} PAL records...")
+    
+    # Make a copy to avoid modifying original data
+    pal_imerg_df_rain = pal_rain_df.copy()
+    
+    # Extract dates and find unique dates needed
+    pal_dates = pd.to_datetime(pal_imerg_df_rain['date'])
+    required_dates = sorted(set(pal_dates.dt.date))
+    
+    print(f"📅 PAL data spans {len(required_dates)} unique dates")
+    print(f"📅 Date range: {min(required_dates)} to {max(required_dates)}")
+    
+    # Load only the IMERG data we need
+    imerg_ds_subset = load_imerg_for_dates(imerg_file_index, required_dates, max_memory_gb=6)
+    
+    if imerg_ds_subset is None:
+        print("❌ Failed to load IMERG data")
+        pal_imerg_df_rain['IMERG'] = np.nan
+        return pal_imerg_df_rain
+    
+    # Use the existing vectorized matching function
+    try:
+        result = process_imerg_with_PAL_rainV2(pal_imerg_df_rain, imerg_ds_subset)
+        
+        # Clean up IMERG data immediately
+        del imerg_ds_subset
+        gc.collect()
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error during IMERG matching: {e}")
+        
+        # Clean up and return original dataframe with NaN IMERG values
+        del imerg_ds_subset
+        gc.collect()
+        
+        pal_imerg_df_rain['IMERG'] = np.nan
+        return pal_imerg_df_rain

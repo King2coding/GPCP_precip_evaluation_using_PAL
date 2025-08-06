@@ -599,11 +599,11 @@ for region_name, pal_files in pals_classed_by_region.items():
             pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
 
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
-            # Process IMERG data with PAL - DISABLED for server-friendly operation
+            # Process IMERG data with PAL - Ultra memory-efficient approach
             pal_rain_imerg_df = pal_rain_df.copy() 
             
-            # Use the new fast vectorized IMERG matching function
-            pal_imerg_df_rain = process_imerg_with_PAL_rainV2(pal_rain_imerg_df, imerg_ds_xr)
+            # Use the new ultra memory-efficient IMERG matching function
+            pal_imerg_df_rain = process_imerg_with_PAL_rainV3_memory_efficient(pal_rain_imerg_df, imerg_file_index)
 
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
 

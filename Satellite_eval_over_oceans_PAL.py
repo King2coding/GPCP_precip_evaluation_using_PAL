@@ -232,24 +232,63 @@ else:
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 
-# Process IMERG files - memory-efficient version for large datasets
-print(f"Processing IMERG files using memory-efficient approach...")
-print(f"Total IMERG files to process: {len(all_imerg_files)}")
+# Process IMERG files - memory-efficient version using the same approach as Buoy processing
+print(f"Processing IMERG files in batches of {batch_size}...")
+imerg_batches = [all_imerg_files[i:i + batch_size] for i in range(0, len(all_imerg_files), batch_size)]
+imerg_ds_xr_list = []
 
-try:
-    # Use memory-efficient processing to prevent crashes with large datasets
-    imerg_ds_xr = process_imerg_memory_efficient(all_imerg_files, product="imerg_fn", max_workers=4)
+# Use smaller batch size for IMERG to reduce memory pressure
+imerg_batch_size = min(batch_size, 100)  # Limit IMERG batch size
+print(f"Using IMERG batch size: {imerg_batch_size}")
+
+# Re-create batches with smaller size
+imerg_batches = [all_imerg_files[i:i + imerg_batch_size] for i in range(0, len(all_imerg_files), imerg_batch_size)]
+
+for i, batch in enumerate(imerg_batches):
+    if i % 10 == 0:  # More frequent progress updates
+        print(f"Processing IMERG batch {i+1}/{len(imerg_batches)} ({len(batch)} files)")
     
-    if imerg_ds_xr is not None:
-        print("✅ IMERG loading complete using memory-efficient approach")
-        print(f"IMERG dataset shape: {imerg_ds_xr.dims}")
-        print(f"IMERG time range: {imerg_ds_xr.time.min().values} to {imerg_ds_xr.time.max().values}")
-    else:
-        print("❌ Warning: No IMERG data was successfully loaded")
-        
-except Exception as e:
-    print(f"❌ Error during memory-efficient IMERG processing: {e}")
-    print("This error suggests the dataset is too large for available memory.")
+    try:
+        # Use memory-efficient processing
+        processed_batch = simple_process_imerg_batch_memory_efficient(
+            batch, 
+            product="imerg_fn", 
+            processing_mode="auto"
+        )
+        if processed_batch is not None:
+            imerg_ds_xr_list.append(processed_batch)
+            print(f"  Batch {i+1} completed successfully")
+        else:
+            print(f"  Warning: Batch {i+1} returned None")
+    except Exception as e:
+        print(f"Error processing IMERG batch {i+1}: {e}")
+        # Continue with next batch instead of stopping
+        continue
+    
+    # Aggressive garbage collection
+    import gc
+    gc.collect()
+    
+    # Optional: Print memory usage if psutil is available
+    try:
+        import psutil
+        memory_percent = psutil.virtual_memory().percent
+        if memory_percent > 80:
+            print(f"  Warning: Memory usage at {memory_percent:.1f}%")
+    except ImportError:
+        pass
+
+# Combine all processed batches into a single xarray dataset
+if imerg_ds_xr_list:
+    print(f"Combining {len(imerg_ds_xr_list)} IMERG batches...")
+    imerg_ds_xr = xr.concat(imerg_ds_xr_list, dim="time")
+    print("IMERG loading complete")
+    
+    # Clean up batch list to free memory
+    del imerg_ds_xr_list
+    gc.collect()
+else:
+    print("Warning: No IMERG data was successfully loaded")
     imerg_ds_xr = None
 
 gc.collect()  # Clean up memory
@@ -591,11 +630,11 @@ for region_name, pal_files in pals_classed_by_region.items():
             pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
 
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
-            # Process IMERG data with PAL - DISABLED for server-friendly operation
+            # Process IMERG data with PAL - Using same memory-efficient approach as Buoy processing
             pal_rain_imerg_df = pal_rain_df.copy() 
             
-            # Use the new fast vectorized IMERG matching function
-            pal_imerg_df_rain = process_imerg_with_PAL_rainV2_memory_efficient(pal_rain_imerg_df, imerg_ds_xr, chunk_size=50)
+            # Use the fast vectorized IMERG matching function with the pre-loaded dataset
+            pal_imerg_df_rain = process_imerg_with_PAL_rainV2(pal_rain_imerg_df, imerg_ds_xr)
 
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
 
