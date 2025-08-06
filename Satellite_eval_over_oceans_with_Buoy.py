@@ -229,30 +229,61 @@ else:
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 
-# Process IMERG files - server friendly version
+# Process IMERG files - memory-efficient version
 print(f"Processing IMERG files in batches of {batch_size}...")
 imerg_batches = [all_imerg_files[i:i + batch_size] for i in range(0, len(all_imerg_files), batch_size)]
 imerg_ds_xr_list = []
 
+# Use smaller batch size for IMERG to reduce memory pressure
+imerg_batch_size = min(batch_size, 100)  # Limit IMERG batch size
+print(f"Using IMERG batch size: {imerg_batch_size}")
+
+# Re-create batches with smaller size
+imerg_batches = [all_imerg_files[i:i + imerg_batch_size] for i in range(0, len(all_imerg_files), imerg_batch_size)]
+
 for i, batch in enumerate(imerg_batches):
-    if i % 30 == 0:
-        print(f"Processing IMERG batch {i+1}/{len(imerg_batches)}")
+    if i % 10 == 0:  # More frequent progress updates
+        print(f"Processing IMERG batch {i+1}/{len(imerg_batches)} ({len(batch)} files)")
     
     try:
-        # Use simple processing instead of the CPU-intensive process_imerg function
-        processed_batch = simple_process_imerg_batch(batch)
+        # Use memory-efficient processing
+        processed_batch = simple_process_imerg_batch_memory_efficient(
+            batch, 
+            product="imerg_fn", 
+            processing_mode="auto"
+        )
         if processed_batch is not None:
             imerg_ds_xr_list.append(processed_batch)
+            print(f"  Batch {i+1} completed successfully")
+        else:
+            print(f"  Warning: Batch {i+1} returned None")
     except Exception as e:
         print(f"Error processing IMERG batch {i+1}: {e}")
+        # Continue with next batch instead of stopping
+        continue
     
-    # Simple garbage collection
+    # Aggressive garbage collection
+    import gc
     gc.collect()
+    
+    # Optional: Print memory usage if psutil is available
+    try:
+        import psutil
+        memory_percent = psutil.virtual_memory().percent
+        if memory_percent > 80:
+            print(f"  Warning: Memory usage at {memory_percent:.1f}%")
+    except ImportError:
+        pass
 
-# Combine all processed batches into a single xarray dataset - simple version
+# Combine all processed batches into a single xarray dataset
 if imerg_ds_xr_list:
+    print(f"Combining {len(imerg_ds_xr_list)} IMERG batches...")
     imerg_ds_xr = xr.concat(imerg_ds_xr_list, dim="time")
     print("IMERG loading complete")
+    
+    # Clean up batch list to free memory
+    del imerg_ds_xr_list
+    gc.collect()
 else:
     print("Warning: No IMERG data was successfully loaded")
     imerg_ds_xr = None
@@ -373,141 +404,149 @@ plt.savefig(svname, bbox_inches='tight', dpi=500)
 plt.show()
 gc.collect()  # Clean up memory
 
-#%% SPATIOTEMPORAL MATCHING OF PAL AND GPCP DATA
-# regional_PAL_GPCP_wind_dfs_dict = {}
-# regional_PAL_GPCP_wind_dfs_lst = []
-regional_PAL_sate_dfs_daily_mean = {}
-regional_PAL_sate_dfs_daily_lst = []
-for region_name, pal_files in pals_classed_by_region.items():
-    if region_name != "Unclassified" and len(pal_files) > 0:
-        print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")
+#%% SPATIOTEMPORAL MATCHING OF Buoy, IMERG AND GPCP DATA
+regional_buoy_sate_dfs_daily_mean = {}
+regional_buoy_sate_dfs_daily_lst = []
+for region_name, buoy_files in buoy_files_by_region.items():
+    print(f"Processing region: {region_name}")
+        # store Buoy and GPCP dataframes
+    region_buoy_sate_dfs = []  
 
-        # store PAL and GPCP dataframes
-        region_pal_sate_dfs = []     
+    # LOAD Buoy DATA
+    for b_file in buoy_files[:2]:
+        b_ds = xr.open_dataset(b_file)
+        b_lat = b_ds['lat'].values[0]
+        b_lon = b_ds['lon'].values[0]
+        b_lon = (b_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180]
 
-        # LOAD PAL DATA
-        for pal_file in pal_files:
-            pal_ds = xr.open_dataset(pal_file)
+        b_df = b_ds[['time', 'RN_485', 'QRN_5485']].to_dataframe().reset_index()
+        b_df.rename(columns={'RN_485': 'rain_rate', 'QRN_5485': 'quality_flag'}, inplace=True)
+        b_df['date'] = pd.to_datetime(b_df['time']).dt.date  # Extract date from time
+        # Filter out rows with negative rain_rate
+        b_df = b_df[b_df['rain_rate'] >= 0]
 
-            print(f"Processing PAL file: {os.path.basename(pal_file)}")
-
-            # gran required dfs
-            # , pal_wind_df
-            pal_rain_df = grab_PAL_rain_and_wind_df(pal_ds)             
-
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-            # Process GPCP data with PAL
+        print(f"Processing Buoy file: {os.path.basename(b_file)}")
+       
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+        # Process GPCP data with Buoy
+        # GPCP v1.3 - Memory efficient version (Note: this appears to use v3.2 dataset)
+        # print(f"Extracting GPCP v1.3 data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
+        # b_rain_gpcpv1pt3_df = extract_buoy_gpcp_data_memory_efficient(
+        #     gpcp_ds_v3pt2_xr, b_lat, b_lon, version="v1pt3", chunk_size=200
+        # )
+        
+        # if b_rain_gpcpv1pt3_df is None:
+        #     print("Warning: Failed to extract GPCP v1.3 data, creating empty dataframe")
+        #     b_rain_gpcpv1pt3_df = pd.DataFrame(columns=['date', 'GPCP_v1pt3'])
             
-            pal_rain_gpcpv1pt3_df = pal_rain_df.copy()
-            
-            pal_gpcpv1pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
-                                            pal_rain_gpcpv1pt3_df,                                             
-                                            gpcp_ds_v1pt3_xr, 'GPCP_v1pt3')
-            #  , pal_gpcpv1pt3_df_wind, pal_wind_gpcpv1pt3_df,
-            
-            pal_gpcpv1pt3_df_rain.index = pd.to_datetime(pal_gpcpv1pt3_df_rain['time'])
-            
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-            pal_rain_gpcpv3pt2_df = pal_rain_df.copy()   
-            
-            pal_gpcpv3pt2_df_rain = process_gpcp_with_PAL_rain_and_wind(
-                                            pal_rain_gpcpv3pt2_df,
-                                            gpcp_ds_v3pt2_xr, 'GPCP_v3pt2') # , pal_wind_gpcpv3pt2_df,
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
 
-            pal_gpcpv3pt2_df_rain.index = pd.to_datetime(pal_gpcpv3pt2_df_rain['time'])  # Ensure index is datetime
+        # Process GPCP v3.2 - Memory efficient version
+        # print(f"Extracting GPCP v3.2 data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
+        # b_rain_gpcpv3pt2_df = extract_buoy_gpcp_data_memory_efficient(
+        #     gpcp_ds_v3pt2_xr, b_lat, b_lon, version="v3pt2", chunk_size=200
+        # )
+        
+        # if b_rain_gpcpv3pt2_df is None:
+        #     print("Warning: Failed to extract GPCP v3.2 data, creating empty dataframe")
+        #     b_rain_gpcpv3pt2_df = pd.DataFrame(columns=['date', 'GPCP_v3pt2'])
 
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-            pal_rain_gpcpv3pt3_df = pal_rain_df.copy()           
-            
-            pal_gpcpv3pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
-                                            pal_rain_gpcpv3pt3_df,
-                                            gpcp_ds_v3pt3_xr, 'GPCP_v3pt3')  # , pal_wind_gpcpv3pt3_df
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+        # Process GPCP v3.3 - Memory efficient version
+        print(f"Extracting GPCP v3.3 data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
+        b_rain_gpcpv3pt3_df = extract_buoy_gpcp_data_memory_efficient(
+            gpcp_ds_v3pt3_xr, b_lat, b_lon, version="v3pt3", chunk_size=200
+        )
+        
+        if b_rain_gpcpv3pt3_df is None:
+            print("Warning: Failed to extract GPCP v3.3 data, creating empty dataframe")
+            b_rain_gpcpv3pt3_df = pd.DataFrame(columns=['date', 'GPCP_v3pt3'])
 
-            pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+        
+        # Process IMERG data with Buoy - Memory efficient version (optimized for 0.1° resolution)
+        print(f"Extracting IMERG data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
+        # Use smaller chunk size for IMERG due to high spatial resolution (0.1° vs 0.5°/1° for GPCP)
+        b_rain_imerg_df = extract_buoy_imerg_data_memory_efficient(
+            imerg_ds_xr, b_lat, b_lon, chunk_size=50  # Reduced from 100 to 50 for IMERG
+        )
+        
+        if b_rain_imerg_df is None:
+            print("Warning: Failed to extract IMERG data, creating empty dataframe")
+            b_rain_imerg_df = pd.DataFrame(columns=['date', 'IMERG'])
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
 
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
-            # Process IMERG data with PAL - DISABLED for server-friendly operation
-            pal_rain_imerg_df = pal_rain_df.copy() 
-            
-            # Use the new fast vectorized IMERG matching function
-            pal_imerg_df_rain = process_imerg_with_PAL_rainV2(pal_rain_imerg_df, imerg_ds_xr)
+        # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data        
+        # COMBINE BY RAINFALL RATE
+        b_df_combined_rain = b_df[['date', 'rain_rate', 'quality_flag']].copy()
+        
+        # merge GPCP v3.1 data            
+        # b_df_combined_rain = b_df_combined_rain.merge(
+        #     b_rain_gpcpv1pt3_df[['date','GPCP_v3pt1']], 
+        #     on='date', how='left', suffixes=('', '_v3pt1')
+        # )
+         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
+        # merge GPCP v3.2 data
+        # b_df_combined_rain = b_df_combined_rain.merge(
+        #     b_rain_gpcpv3pt2_df[['date','GPCP_v3pt2', 'PLP_GPCP_v3pt2']], 
+        #     on='date', how='left', suffixes=('', '_v3pt2')
+        # )
 
-            # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data        
-            # COMBINE BY RAINFALL RATE
-            pal_df_combined_rain = pal_gpcpv1pt3_df_rain.copy()
-            pal_df_combined_rain = pal_df_combined_rain[['date','rain_rate', 'GPCP_v1pt3']].copy()
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-            # merge GPCP v3.2 data            
-            pal_df_combined_rain = pal_df_combined_rain.merge(
-                pal_gpcpv3pt2_df_rain[['date','GPCP_v3pt2', 'PLP_GPCP_v3pt2']], 
-                left_index=True, right_index=True, how='left', suffixes=('', '_v3pt2')
-            )
-            
-            # Remove any duplicate columns from previous merges
-            for col in ['GPCP_v3pt2_v3pt2', 'PLP_GPCP_v3pt2_v3pt2', 'date_v3pt2']:
-                if col in pal_df_combined_rain.columns:
-                    pal_df_combined_rain.drop(columns=col, inplace=True)
+        # merge GPCP v3.3 data
+        b_df_combined_rain = b_df_combined_rain.merge(
+            b_rain_gpcpv3pt3_df[['date','GPCP_v3pt3', 'PLP_GPCP_v3pt3']], 
+            on='date', how='left', suffixes=('', '_v3pt3')
+        )
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # merge IMERG data - merge on 'date' column instead of index
+        b_df_combined_rain = b_df_combined_rain.merge(
+            b_rain_imerg_df[['date', 'IMERG']], 
+            on='date', how='left', suffixes=('', '_IMERG')
+        )
 
-            # merge GPCP v3.3 data
-            pal_df_combined_rain = pal_df_combined_rain.merge(
-                pal_gpcpv3pt3_df_rain[['date','GPCP_v3pt3']], 
-                left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
-            )
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-            # Remove any duplicate columns from previous merges
-            pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
-                                                    ['GPCP_v3pt3_v3pt3', 'date_v3pt3']], 
-                                                    inplace=True)
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # retain only columns where PLP_GPCP_v3pt2 is == 100
+        # b_df_combined_rain = b_df_combined_rain[b_df_combined_rain['PLP_GPCP_v3pt2'] == 100]
+        # retain only columns where PLP_GPCP_v3pt3 is == 100
+        b_df_combined_rain = b_df_combined_rain[b_df_combined_rain['PLP_GPCP_v3pt3'] == 100]
 
-            # merge IMERG data - merge on 'date' column instead of index
-            pal_df_combined_rain = pal_df_combined_rain.merge(
-                pal_imerg_df_rain[['date','IMERG']], 
-                on='date', how='left', suffixes=('', '_IMERG')
-            )
-            # Remove any duplicate columns from previous merges
-            pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
-                                                    ['IMERG_IMERG', 'date_IMERG']], 
-                                                    inplace=True)
 
-            # retain only columns where PLP_GPCP_v3pt2 is == 100
-            pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP_v3pt2'] == 100]
+        # To get probably valid data only, request QRN_5485>=1 and QRN_5485<=3.
+        b_df_combined_rain = b_df_combined_rain[(b_df_combined_rain['quality_flag'] >= 1) & \
+                                                    (b_df_combined_rain['quality_flag'] <= 3)]
 
-            # groupby date and get mean of rain_rate and GPCP data
-            daily_avg_rain = pal_df_combined_rain.groupby('date').mean([['rain_rate', 
-                                                                        'GPCP_v1pt3', 
-                                                                        'GPCP_v3pt2', 
-                                                                        'GPCP_v3pt3', 
-                                                                        'IMERG']]
-                                                                        ).reset_index()
-            # multiply PAL rain rate by 24 to get daily average
-            daily_avg_rain['rain_rate'] *= 24
-            # add region name and track_PAL_id to the dataframe
-            daily_avg_rain['region'] = region_name  # Add region name for clarity
-            daily_avg_rain['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
 
-            region_pal_sate_dfs.append(daily_avg_rain)
+    
+        # multiply PAL rain rate by 24 to get daily average
+        b_df_combined_rain['rain_rate'] *= 24
+        # add region name and track_PAL_id to the dataframe
+        b_df_combined_rain['region'] = region_name  # Add region name for clarity
+        b_df_combined_rain['ID'] = os.path.basename(b_file).split('.')[0]
 
-            pal_ds.close()
+        region_buoy_sate_dfs.append(b_df_combined_rain)
+
+        b_ds.close()
 
     # Combine all region PAL-GPCP dataframes into a single dataframe
-    region_pal_sate_df = pd.concat(region_pal_sate_dfs)        
-    
+    region_buoy_sate_df = pd.concat(region_buoy_sate_dfs)
+
     # calculate daily mean per track_PAL_id
-    region_pal_sate_df_daily_mean = region_pal_sate_df.groupby(['track_PAL_id'])[['rain_rate', 
-                                                                                  'GPCP_v1pt3', 
-                                                                                  'GPCP_v3pt2', 
-                                                                                  'GPCP_v3pt3', 
-                                                                                  'IMERG']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
-    region_pal_sate_df_daily_mean['region'] = region_name  # Add region name for clarity
-    regional_PAL_sate_dfs_daily_mean[region_name] = region_pal_sate_df_daily_mean
+    region_buoy_sate_df_daily_mean = region_buoy_sate_df.groupby(['ID'])[['rain_rate', 
+                                                                        # 'GPCP_v1pt3', 
+                                                                        # 'GPCP_v3pt2', 
+                                                                        'GPCP_v3pt3', 
+                                                                        'IMERG']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
+    region_buoy_sate_df_daily_mean['region'] = region_name  # Add region name for clarity
+    regional_buoy_sate_dfs_daily_mean[region_name] = region_buoy_sate_df_daily_mean
 
     # Append to the list for later processing
-    regional_PAL_sate_dfs_daily_lst.append(region_pal_sate_df)
+    regional_buoy_sate_dfs_daily_lst.append(region_buoy_sate_df)
 
 
 gc.collect()  # Clean up memory
@@ -516,15 +555,15 @@ gc.collect()  # Clean up memory
 # calculate RB, RMSE and CC using all PAL-GPCP pairs in axes plot and show this in the plot
 # as RB = , RMSE = , CC =
 #- - - - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-pal_gpcv1_3_cmp = pd.concat([df[['rain_rate', 'GPCP_v1pt3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP_v3pt2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP_v3pt3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_imerg_cmp = pd.concat([df[['rain_rate', 'IMERG']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# b_gpcv1_3_cmp = pd.concat([df[['rain_rate', 'GPCP_v1pt3']] for df in regional_buoy_sate_dfs_daily_mean.values()], ignore_index=True)
+# b_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP_v3pt2']] for df in regional_buoy_sate_dfs_daily_mean.values()], ignore_index=True)
+b_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP_v3pt3']] for df in regional_buoy_sate_dfs_daily_mean.values()], ignore_index=True)
+b_imerg_cmp = pd.concat([df[['rain_rate', 'IMERG']] for df in regional_buoy_sate_dfs_daily_mean.values()], ignore_index=True)
 # calcute metrics for all regions combined
-rb_v1pt3, rmse_v1pt3, cc_v1pt3 = calculate_metrics(pal_gpcv1_3_cmp['rain_rate'], pal_gpcv1_3_cmp['GPCP_v1pt3'])
-rb_v3pt2, rmse_v3pt2, cc_v3pt2 = calculate_metrics(pal_gpcv3_2_cmp['rain_rate'], pal_gpcv3_2_cmp['GPCP_v3pt2'])
-rb_v3pt3, rmse_v3pt3, cc_v3pt3 = calculate_metrics(pal_gpcv3_3_cmp['rain_rate'], pal_gpcv3_3_cmp['GPCP_v3pt3'])
-rb_img, rmse_img, cc_img = calculate_metrics(pal_imerg_cmp['rain_rate'], pal_imerg_cmp['IMERG'])
+# rb_v1pt3, rmse_v1pt3, cc_v1pt3 = calculate_metrics(b_gpcv1_3_cmp['rain_rate'], b_gpcv1_3_cmp['GPCP_v1pt3'])
+# rb_v3pt2, rmse_v3pt2, cc_v3pt2 = calculate_metrics(b_gpcv3_2_cmp['rain_rate'], b_gpcv3_2_cmp['GPCP_v3pt2'])
+rb_v3pt3, rmse_v3pt3, cc_v3pt3 = calculate_metrics(b_gpcv3_3_cmp['rain_rate'], b_gpcv3_3_cmp['GPCP_v3pt3'])
+rb_img, rmse_img, cc_img = calculate_metrics(b_imerg_cmp['rain_rate'], b_imerg_cmp['IMERG'])
 #- - - - -   - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
 # MAKE SCATTER PLOTS (PAL vs GPCP) - DAILY MEAN - ALL REGIONS - FIGURE 2
@@ -538,29 +577,29 @@ mpl.rcParams['ytick.labelsize'] = 18
 # Removed 'Times New Roman' to avoid findfont warnings
 mpl.rcParams['ytick.labelsize'] = 18
 
-fg, ax = plt.subplots(1, 4, figsize=(20, 6), gridspec_kw={'wspace': 0.35})  # Increased wspace for wider interval
+fg, ax = plt.subplots(1, 2, figsize=(20, 6), gridspec_kw={'wspace': 0.35})  # Increased wspace for wider interval
 
 # Get PAL counts per region for legend
-region_pal_counts = {region: len(pals_classed_by_region[region]) for region in regional_PAL_sate_dfs_daily_mean.keys()}
+region_pal_counts = {region: len(buoy_files_by_region[region]) for region in regional_buoy_sate_dfs_daily_mean.keys()}
 
-for region, df in regional_PAL_sate_dfs_daily_mean.items():
+for region, df in regional_buoy_sate_dfs_daily_mean.items():
     reg_col = region_colors[region]
-    pal_gpcv1_3 = df[['rain_rate', 'GPCP_v1pt3']]
-    pal_gpcv3_2 = df[['rain_rate', 'GPCP_v3pt2']]
-    pal_gpcv3_3 = df[['rain_rate', 'GPCP_v3pt3']]
-    pal_img_df = df[['rain_rate', 'IMERG']]
+    # b_gpcv1_3 = df[['rain_rate', 'GPCP_v1pt3']]
+    # b_gpcpv3_2 = df[['rain_rate', 'GPCP_v3pt2']]
+    b_gpcv3_3 = df[['rain_rate', 'GPCP_v3pt3']]
+    b_img_df = df[['rain_rate', 'IMERG']]
 
-    # Plot GPCP v1.3
-    ax[0].scatter(pal_gpcv1_3['rain_rate'], pal_gpcv1_3['GPCP_v1pt3'],
-                  color=reg_col, label=f"{region} ({region_pal_counts[region]})", s=80)
-    # Plot GPCP v3.2
-    ax[1].scatter(pal_gpcv3_2['rain_rate'] , pal_gpcv3_2['GPCP_v3pt2'],
-                  color=reg_col, label=f"{region} ({region_pal_counts[region]})", s=80)
+    # # Plot GPCP v1.3
+    # ax[0].scatter(b_gpcv1_3['rain_rate'], b_gpcv1_3['GPCP_v1pt3'],
+    #               color=reg_col, label=f"{region} ({region_pal_counts[region]})", s=80)
+    # # Plot GPCP v3.2
+    # ax[1].scatter(b_gpcpv3_2['rain_rate'], b_gpcpv3_2['GPCP_v3pt2'],
+    #               color=reg_col, label=f"{region} ({region_pal_counts[region]})", s=80)
     # Plot GPCP v3.3
-    ax[2].scatter(pal_gpcv3_3['rain_rate'], pal_gpcv3_3['GPCP_v3pt3'],
+    ax[0].scatter(b_gpcv3_3['rain_rate'], b_gpcv3_3['GPCP_v3pt3'],
                   color=reg_col, label=f"{region} ({region_pal_counts[region]})", s=80)
     # Plot IMERG
-    ax[3].scatter(pal_img_df['rain_rate'], pal_img_df['IMERG'],
+    ax[1].scatter(b_img_df['rain_rate'], b_img_df['IMERG'],
                   color=reg_col, label=f"{region} ({region_pal_counts[region]})", s=80)
 
 # Set axes limits, ticks, grids, and major ticks for all subplots
@@ -578,49 +617,41 @@ for i, a in enumerate(ax):
     a.plot(x, x, color='gray', linestyle='--')
     # Set axis labels and title with bold fontweight
     if i == 0:
-        a.set_xlabel('PAL Observations [mm/day]', fontsize=18, fontweight='bold')
-        a.set_ylabel('GPCP v1.3 Estimates [mm/day]', fontsize=18, fontweight='bold')
-        a.set_title('GPCP v1.3 vs PAL', fontsize=20, fontweight='bold')
-    elif i == 1:
-        a.set_xlabel('PAL Observations [mm/day]', fontsize=18, fontweight='bold')
-        a.set_ylabel('GPCP v3.2 Estimates [mm/day]', fontsize=18, fontweight='bold')
-        a.set_title('GPCP v3.2 vs PAL', fontsize=20, fontweight='bold')
-    elif i == 2:
-        a.set_xlabel('PAL Observations [mm/day]', fontsize=18, fontweight='bold')
+        a.set_xlabel('Buoy Observations [mm/day]', fontsize=18, fontweight='bold')
         a.set_ylabel('GPCP v3.3 Estimates [mm/day]', fontsize=18, fontweight='bold')
-        a.set_title('GPCP v3.3 vs PAL', fontsize=20, fontweight='bold')
-    elif i == 3:
-        a.set_xlabel('PAL Observations [mm/day]', fontsize=18, fontweight='bold')
+        a.set_title('GPCP v3.3 vs Buoy', fontsize=20, fontweight='bold')
+    elif i == 1:
+        a.set_xlabel('Buoy Observations [mm/day]', fontsize=18, fontweight='bold')
         a.set_ylabel('IMERG Estimates [mm/day]', fontsize=18, fontweight='bold')
-        a.set_title('IMERG vs PAL', fontsize=20, fontweight='bold')
+        a.set_title('IMERG vs Buoy', fontsize=20, fontweight='bold')
     # Make tick labels bold
     for label in a.get_xticklabels() + a.get_yticklabels():
         label.set_fontweight('bold')
 
 # Add metrics text to each subplot, with RMSE unit, bold font
+# ax[0].text(
+#     0.05, 0.95,
+#     f'RB: {rb_v1pt3:.2f}%\nRMSE: {rmse_v1pt3:.2f} mm/day\nCC: {cc_v1pt3:.2f}',
+#     transform=ax[0].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
+#     bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
+# )
+# ax[1].text(
+#     0.05, 0.95,
+#     f'RB: {rb_v3pt2:.2f}%\nRMSE: {rmse_v3pt2:.2f} mm/day\nCC: {cc_v3pt2:.2f}',
+#     transform=ax[1].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
+#     bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
+# )
 ax[0].text(
     0.05, 0.95,
-    f'RB: {rb_v1pt3:.2f}%\nRMSE: {rmse_v1pt3:.2f} mm/day\nCC: {cc_v1pt3:.2f}',
+    f'RB: {rb_v3pt3:.2f}%\nRMSE: {rmse_v3pt3:.2f} mm/day\nCC: {cc_v3pt3:.2f}',
     transform=ax[0].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
     bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
 )
+
 ax[1].text(
     0.05, 0.95,
-    f'RB: {rb_v3pt2:.2f}%\nRMSE: {rmse_v3pt2:.2f} mm/day\nCC: {cc_v3pt2:.2f}',
-    transform=ax[1].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
-    bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
-)
-ax[2].text(
-    0.05, 0.95,
-    f'RB: {rb_v3pt3:.2f}%\nRMSE: {rmse_v3pt3:.2f} mm/day\nCC: {cc_v3pt3:.2f}',
-    transform=ax[2].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
-    bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
-)
-
-ax[3].text(
-    0.05, 0.95,
     f'RB: {rb_img:.2f}%\nRMSE: {rmse_img:.2f} mm/day\nCC: {cc_img:.2f}',
-    transform=ax[3].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
+    transform=ax[1].transAxes, fontsize=18, fontweight='bold', verticalalignment='top',
     bbox=dict(facecolor='none', alpha=0.8, edgecolor='none')
 )
 
@@ -641,7 +672,7 @@ if leg.get_title() is not None:
 
 # plt.tight_layout(rect=[0, 0.08, 1, 1])  # leave space for legend
 # save the figure
-svnme = os.path.join(path_to_put_plts, f'PAL_satellite_scatter_plots_{cde_run_dte}.png')
+svnme = os.path.join(path_to_put_plts, f'Buoy_IMERG_GPCP_satellite_scatter_plots_{cde_run_dte}.png')
 plt.savefig(svnme, bbox_inches='tight', dpi=500)
 gc.collect()  # Clean up memory
 
@@ -651,7 +682,7 @@ gc.collect()  # Clean up memory
 monthly_stats = {}
 
 # Prepare a DataFrame with all daily data
-all_daily = pd.concat(regional_PAL_sate_dfs_daily_lst)
+all_daily = pd.concat(regional_buoy_sate_dfs_daily_lst)
 all_daily = all_daily.reset_index()  # Ensure 'date' is a column after concat
 if 'date' not in all_daily.columns:
     all_daily['date'] = pd.to_datetime(all_daily['index'])
@@ -660,18 +691,22 @@ else:
 all_daily['month'] = all_daily['date'].dt.month
 all_daily['year'] = all_daily['date'].dt.year
 
-regions = [r for r in regional_PAL_sate_dfs_daily_mean.keys()]
+regions = [r for r in regional_buoy_sate_dfs_daily_mean.keys()]
 
 for region in regions:
     df = all_daily[all_daily['region'] == region].copy()
     # Compute monthly accumulation per PAL (track_PAL_id)
-    pal_monthly = df.groupby(['track_PAL_id', 'year', 'month'])[['rain_rate', 'GPCP_v1pt3', 'GPCP_v3pt2', 'GPCP_v3pt3']].sum().reset_index()
+    pal_monthly = df.groupby(['track_PAL_id', 'year', 'month'])[['rain_rate', 
+                                                                 # 'GPCP_v1pt3', 
+                                                                 'GPCP_v3pt2', 
+                                                                 # 'GPCP_v3pt3'
+                                                                 ]].sum().reset_index()
     # Now, for each month, compute mean, Q1, Q3 across PALs (i.e., for each month, use all PALs' accumulations)
     stats = pal_monthly.groupby('month').agg({
         'rain_rate': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
-        'GPCP_v1pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
+        # 'GPCP_v1pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
         'GPCP_v3pt2': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
-        'GPCP_v3pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
+        # 'GPCP_v3pt3': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
         'IMERG': ['mean', ('q1', lambda x: np.percentile(x, 25)), ('q3', lambda x: np.percentile(x, 75))],
     })
     stats.columns = ['_'.join(col).rstrip('_') for col in stats.columns.values]
@@ -721,11 +756,11 @@ for i, region in enumerate(region_order):
     ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean')
     ax.fill_between(months, stats['GPCP_v3pt2_q1'], stats['GPCP_v3pt2_q3'], color='b', alpha=0.2, label='GPCP v3.2 Est. [Q1,Q3]')
     # GPCP v1.3
-    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean')
-    ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 Est. [Q1,Q3]')
+    # ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1.3 Est. Mean')
+    # ax.fill_between(months, stats['GPCP_v1pt3_q1'], stats['GPCP_v1pt3_q3'], color='r', alpha=0.2, label='GPCP v1.3 Est. [Q1,Q3]')
     # GPCP v3.3
-    ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
-    ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
+    # ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean')
+    # ax.fill_between(months, stats['GPCP_v3pt3_q1'], stats['GPCP_v3pt3_q3'], color='g', alpha=0.2, label='GPCP v3.3 Est. [Q1,Q3]')
     # IMERG
     ax.plot(months, stats['IMERG_mean'], color='orange', label='IMERG Est. Mean')
     ax.fill_between(months, stats['IMERG_q1'], stats['IMERG_q3'], color='orange', alpha=0.2, label='IMERG Est. [Q1,Q3]')
@@ -740,8 +775,8 @@ for i, region in enumerate(region_order):
     for label in ax.get_yticklabels():
         label.set_fontweight('bold')
     # Add N= count
-    n_pal = len(pals_classed_by_region[region])
-    ax.text(0.02, 0.95, f'N = {n_pal} PALs', 
+    n_buoy = len(buoy_files_by_region[region])
+    ax.text(0.02, 0.95, f'N = {n_buoy} Buoys', 
             transform=ax.transAxes, fontsize=18, 
             fontweight='bold', va='top')
 
@@ -785,9 +820,9 @@ for i, region in enumerate(region_order):
     # GPCP v3.2
     ax.plot(months, stats['GPCP_v3pt2_mean'], color='b', label='GPCP v3.2 Est. Mean', linewidth=2)
     # GPCP v1.3
-    ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1pt3 Est. Mean', linewidth=2)
+    # ax.plot(months, stats['GPCP_v1pt3_mean'], color='r', label='GPCP v1pt3 Est. Mean', linewidth=2)
     # GPCP v3.3
-    ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean', linewidth=2)
+    # ax.plot(months, stats['GPCP_v3pt3_mean'], color='g', label='GPCP v3.3 Est. Mean', linewidth=2)
     # IMERG
     ax.plot(months, stats['IMERG_mean'], color='orange', label='IMERG Est. Mean', linewidth=2)
     # Title, labels
@@ -801,8 +836,8 @@ for i, region in enumerate(region_order):
     for label in ax.get_yticklabels():
         label.set_fontweight('bold')
     # Add N= count
-    n_pal = len(pals_classed_by_region[region])
-    ax.text(0.02, 0.95, f'N = {n_pal} PALs', 
+    n_buoy = len(buoy_files_by_region[region])
+    ax.text(0.02, 0.95, f'N = {n_buoy} Buoys', 
             transform=ax.transAxes, fontsize=18, 
             fontweight='bold', va='top')
     # Add minor ticks to y-axis (no labels)

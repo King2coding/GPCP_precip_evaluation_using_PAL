@@ -232,32 +232,24 @@ else:
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 
-# Process IMERG files - server friendly version
-print(f"Processing IMERG files in batches of {batch_size}...")
-imerg_batches = [all_imerg_files[i:i + batch_size] for i in range(0, len(all_imerg_files), batch_size)]
-imerg_ds_xr_list = []
+# Process IMERG files - memory-efficient version for large datasets
+print(f"Processing IMERG files using memory-efficient approach...")
+print(f"Total IMERG files to process: {len(all_imerg_files)}")
 
-for i, batch in enumerate(imerg_batches):
-    if i % 30 == 0:
-        print(f"Processing IMERG batch {i+1}/{len(imerg_batches)}")
+try:
+    # Use memory-efficient processing to prevent crashes with large datasets
+    imerg_ds_xr = process_imerg_memory_efficient(all_imerg_files, product="imerg_fn", max_workers=4)
     
-    try:
-        # Use simple processing instead of the CPU-intensive process_imerg function
-        processed_batch = simple_process_imerg_batch(batch)
-        if processed_batch is not None:
-            imerg_ds_xr_list.append(processed_batch)
-    except Exception as e:
-        print(f"Error processing IMERG batch {i+1}: {e}")
-    
-    # Simple garbage collection
-    gc.collect()
-
-# Combine all processed batches into a single xarray dataset - simple version
-if imerg_ds_xr_list:
-    imerg_ds_xr = xr.concat(imerg_ds_xr_list, dim="time")
-    print("IMERG loading complete")
-else:
-    print("Warning: No IMERG data was successfully loaded")
+    if imerg_ds_xr is not None:
+        print("✅ IMERG loading complete using memory-efficient approach")
+        print(f"IMERG dataset shape: {imerg_ds_xr.dims}")
+        print(f"IMERG time range: {imerg_ds_xr.time.min().values} to {imerg_ds_xr.time.max().values}")
+    else:
+        print("❌ Warning: No IMERG data was successfully loaded")
+        
+except Exception as e:
+    print(f"❌ Error during memory-efficient IMERG processing: {e}")
+    print("This error suggests the dataset is too large for available memory.")
     imerg_ds_xr = None
 
 gc.collect()  # Clean up memory
@@ -303,14 +295,14 @@ print(f"Difference: {total_actual - total_expected}")
 gc.collect()  # Clean up memory
 
 # Save checkpoint after data loading and classification
-print("Saving data loading checkpoint...")
-save_data_loading_checkpoint(
-    gpcp_ds_v1pt3_xr=gpcp_ds_v1pt3_xr,
-    gpcp_ds_v3pt2_xr=gpcp_ds_v3pt2_xr, 
-    gpcp_ds_v3pt3_xr=gpcp_ds_v3pt3_xr,
-    imerg_ds_xr=imerg_ds_xr,
-    pals_classed_by_region=pals_classed_by_region
-)
+# print("Saving data loading checkpoint...")
+# save_data_loading_checkpoint(
+#     gpcp_ds_v1pt3_xr=gpcp_ds_v1pt3_xr,
+#     gpcp_ds_v3pt2_xr=gpcp_ds_v3pt2_xr, 
+#     gpcp_ds_v3pt3_xr=gpcp_ds_v3pt3_xr,
+#     imerg_ds_xr=imerg_ds_xr,
+#     pals_classed_by_region=pals_classed_by_region
+# )
 #%% PLOT - FIGURE 1
 # === Plot ===
 # Set font to Times New Roman and bold for all texts
@@ -603,7 +595,7 @@ for region_name, pal_files in pals_classed_by_region.items():
             pal_rain_imerg_df = pal_rain_df.copy() 
             
             # Use the new fast vectorized IMERG matching function
-            pal_imerg_df_rain = process_imerg_with_PAL_rainV2(pal_rain_imerg_df, imerg_ds_xr)
+            pal_imerg_df_rain = process_imerg_with_PAL_rainV2_memory_efficient(pal_rain_imerg_df, imerg_ds_xr, chunk_size=50)
 
             # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
 

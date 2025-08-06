@@ -842,6 +842,45 @@ def read_nc_imger_file(file_path, product):
     return precip_aray, imerg_time_index
 
 # - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def read_nc_imger_file_memory_efficient(file_path, product):
+    """
+    Memory-efficient version of read_nc_imger_file that uses float32 precision
+    and better memory management.
+    
+    Parameters:
+    - file_path: Path to the IMERG NetCDF file
+    - product: Product type ('imerg_fn' or 'imerg_mw')
+    
+    Returns:
+    - precip_array: 2D precipitation array (float32)
+    - imerg_time_index: Pandas datetime index
+    """
+    try:
+        with xr.open_dataset(file_path) as imerg_precip_data:
+            if product == 'imerg_fn':
+                precip_aray = imerg_precip_data.precipitation.data 
+            elif product == 'imerg_mw':
+                precip_aray = imerg_precip_data.MWprecipitation.data 
+            else:
+                raise ValueError(f"Unknown product type: {product}")
+            
+            # Process the array and convert to float32 to save memory
+            precip_aray = np.flip(precip_aray[0,:,:].transpose(), axis=0).astype(np.float32)
+            imerg_time = imerg_precip_data.attrs['BeginDate']
+    
+        # Convert time to pandas datetime
+        imerg_time_index = pd.to_datetime(imerg_time, format='%Y-%m-%d')
+        
+        # Clean up
+        del imerg_time
+        
+        return precip_aray, imerg_time_index
+        
+    except Exception as e:
+        print(f"Error reading file {file_path}: {e}")
+        return None, None
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
 def process_imerg(files, product):
     img_lon, img_lat = return_imerg_cords(files[0])
 
@@ -864,6 +903,176 @@ def process_imerg(files, product):
     imerg_xarr_data = create_xarray(all_imfn_prcp, all_imfn_tms, img_lon, img_lat)
 
     return imerg_xarr_data
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def process_imerg_memory_efficient(files, product, max_workers=4):
+    """
+    Memory-efficient version of process_imerg that reduces parallel processing load
+    and implements better memory management.
+    
+    Parameters:
+    - files: List of file paths to process
+    - product: Product type ('imerg_fn' or 'imerg_mw')
+    - max_workers: Maximum number of parallel workers (reduced from 20)
+    
+    Returns:
+    - imerg_xarr_data: xarray DataArray
+    """
+    import gc
+    
+    if not files:
+        return None
+        
+    img_lon, img_lat = return_imerg_cords(files[0])
+
+    # Use fewer parallel workers to reduce memory pressure
+    def process_file(imf):
+        try:
+            imerg_fn = read_nc_imger_file_memory_efficient(imf, product)
+            return imerg_fn[0], imerg_fn[1]
+        except Exception as e:
+            print(f"Error processing file {imf}: {e}")
+            return None, None
+
+    # Reduce parallel workers and add better error handling
+    results = Parallel(n_jobs=max_workers, backend='threading')(
+        delayed(process_file)(imf) for imf in files
+    )
+
+    # Filter out failed results and unpack
+    valid_results = [(prcp, tms) for prcp, tms in results if prcp is not None]
+    
+    if not valid_results:
+        print("Warning: No valid IMERG files processed")
+        return None
+        
+    all_imfn_prcp, all_imfn_tms = zip(*valid_results)
+
+    # Clean up results to free memory
+    del results, valid_results
+    gc.collect()
+
+    # Ensure data is sorted by time
+    sorted_indices = np.argsort(np.array(all_imfn_tms))
+    all_imfn_prcp = np.array(all_imfn_prcp)[sorted_indices]
+    all_imfn_tms = np.array(all_imfn_tms)[sorted_indices]
+
+    # Process the files to aggregate data
+    imerg_xarr_data = create_xarray_memory_efficient(all_imfn_prcp, all_imfn_tms, img_lon, img_lat)
+
+    # Clean up temporary arrays
+    del all_imfn_prcp, all_imfn_tms, sorted_indices
+    gc.collect()
+
+    return imerg_xarr_data
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def process_imerg_sequential(files, product):
+    """
+    Sequential (non-parallel) version of process_imerg for maximum memory efficiency.
+    Use this when memory is very limited.
+    
+    Parameters:
+    - files: List of file paths to process
+    - product: Product type ('imerg_fn' or 'imerg_mw')
+    
+    Returns:
+    - imerg_xarr_data: xarray DataArray
+    """
+    import gc
+    
+    if not files:
+        return None
+        
+    img_lon, img_lat = return_imerg_cords(files[0])
+    
+    all_imfn_prcp = []
+    all_imfn_tms = []
+    
+    print(f"Processing {len(files)} IMERG files sequentially...")
+    
+    for i, imf in enumerate(files):
+        if i % 50 == 0:
+            print(f"  Processing file {i+1}/{len(files)}")
+            
+        try:
+            precip_array, time_index = read_nc_imger_file_memory_efficient(imf, product)
+            if precip_array is not None:
+                all_imfn_prcp.append(precip_array)
+                all_imfn_tms.append(time_index)
+            
+            # Clean up variables
+            del precip_array, time_index
+            
+            # Periodic garbage collection
+            if i % 100 == 0:
+                gc.collect()
+                
+        except Exception as e:
+            print(f"Error processing file {imf}: {e}")
+            continue
+
+    if not all_imfn_prcp:
+        print("Warning: No valid IMERG files processed")
+        return None
+
+    # Ensure data is sorted by time
+    sorted_indices = np.argsort(np.array(all_imfn_tms))
+    all_imfn_prcp = np.array(all_imfn_prcp)[sorted_indices]
+    all_imfn_tms = np.array(all_imfn_tms)[sorted_indices]
+
+    # Process the files to aggregate data
+    imerg_xarr_data = create_xarray_memory_efficient(all_imfn_prcp, all_imfn_tms, img_lon, img_lat)
+
+    # Clean up temporary arrays
+    del all_imfn_prcp, all_imfn_tms, sorted_indices
+    gc.collect()
+
+    return imerg_xarr_data
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def simple_process_imerg_batch_memory_efficient(files, product="imerg_fn", processing_mode="parallel"):
+    """
+    Simple memory-efficient IMERG batch processing function.
+    
+    Parameters:
+    - files: List of file paths to process
+    - product: Product type ('imerg_fn' or 'imerg_mw')
+    - processing_mode: "parallel", "sequential", or "auto" 
+    
+    Returns:
+    - imerg_xarr_data: xarray DataArray or None if processing fails
+    """
+    import gc
+    
+    if not files:
+        return None
+    
+    # Auto-select processing mode based on batch size
+    if processing_mode == "auto":
+        if len(files) > 200:
+            processing_mode = "sequential"
+            print(f"Large batch ({len(files)} files) - using sequential processing")
+        else:
+            processing_mode = "parallel"
+            print(f"Small batch ({len(files)} files) - using parallel processing")
+    
+    try:
+        if processing_mode == "sequential":
+            result = process_imerg_sequential(files, product)
+        else:
+            # Use reduced parallel processing
+            result = process_imerg_memory_efficient(files, product, max_workers=3)
+        
+        # Force garbage collection after processing
+        gc.collect()
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error in simple_process_imerg_batch_memory_efficient: {e}")
+        gc.collect()
+        return None
 
 # - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
 def create_xarray(all_precip, all_time_index, lon, lat, attrs=None):
@@ -899,6 +1108,242 @@ def create_xarray(all_precip, all_time_index, lon, lat, attrs=None):
         precip_data.attrs.update(attrs)
     
     return precip_data
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def create_xarray_memory_efficient(all_precip, all_time_index, lon, lat, attrs=None):
+    """
+    Memory-efficient version of create_xarray that uses explicit data type control
+    and chunking for better memory management.
+
+    Parameters:
+    - all_precip: List or array of 2D precipitation arrays
+    - all_time_index: List of timestamps
+    - lon: Array of longitudes
+    - lat: Array of latitudes
+    - attrs: Dictionary of attributes to add to the DataArray (optional)
+
+    Returns:
+    - precip_data: xarray DataArray with the specified attributes
+    """
+    import gc
+    
+    # Create a pandas DatetimeIndex from the list of timestamps
+    time_index = pd.to_datetime(all_time_index)
+    
+    # Convert to numpy array with explicit dtype to control memory usage
+    # Use float32 instead of float64 to halve memory usage
+    if isinstance(all_precip, list):
+        all_precip = np.array(all_precip, dtype=np.float32)
+    elif all_precip.dtype == np.float64:
+        all_precip = all_precip.astype(np.float32)
+    
+    # Create an xarray DataArray with chunking for better memory management
+    precip_data = xr.DataArray(
+        data=all_precip,
+        dims=["time", "lat", "lon"],
+        coords={
+            "time": time_index,
+            "lat": lat,
+            "lon": lon
+        }
+    )
+    
+    # Add chunking to improve memory efficiency during operations
+    # Chunk by time dimension to allow processing in smaller pieces
+    chunk_size = min(100, len(time_index))  # Limit chunks to 100 time steps
+    precip_data = precip_data.chunk({'time': chunk_size})
+
+    # Add attributes if provided
+    if attrs:
+        precip_data.attrs.update(attrs)
+    
+    # Clean up intermediate variables
+    del time_index
+    gc.collect()
+    
+    return precip_data
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def extract_timeseries_memory_efficient(xr_dataset, lat, lon, var_name=None, chunk_size=100):
+    """
+    Memory-efficient extraction of time series data from large xarray datasets.
+    Processes data in chunks to avoid loading entire dataset into memory.
+    
+    Parameters:
+    - xr_dataset: xarray DataArray or Dataset
+    - lat: latitude of the point
+    - lon: longitude of the point  
+    - var_name: variable name if working with Dataset (None for DataArray)
+    - chunk_size: number of time steps to process at once
+    
+    Returns:
+    - pandas DataFrame with time series data
+    """
+    import gc
+    
+    # Select the nearest lat/lon point (this doesn't load data yet)
+    if var_name:
+        selected_data = xr_dataset[var_name].sel(lat=lat, lon=lon, method='nearest')
+    else:
+        selected_data = xr_dataset.sel(lat=lat, lon=lon, method='nearest')
+    
+    # Get time dimension
+    times = selected_data.time.values
+    total_times = len(times)
+    
+    print(f"Extracting time series for lat={lat:.2f}, lon={lon:.2f}")
+    print(f"Total time steps: {total_times}, processing in chunks of {chunk_size}")
+    
+    # Initialize list to store chunks
+    data_chunks = []
+    
+    # Process in chunks
+    for i in range(0, total_times, chunk_size):
+        end_idx = min(i + chunk_size, total_times)
+        
+        if i % (chunk_size * 10) == 0:  # Progress every 10 chunks
+            print(f"  Processing chunk {i//chunk_size + 1}/{(total_times-1)//chunk_size + 1}")
+        
+        try:
+            # Select time slice and compute (this loads only the chunk)
+            chunk_data = selected_data.isel(time=slice(i, end_idx)).compute()
+            
+            # Ensure the DataArray has a name for DataFrame conversion
+            if chunk_data.name is None:
+                if var_name:
+                    chunk_data.name = var_name
+                else:
+                    # For IMERG data, assign a default name
+                    chunk_data.name = 'precipitation'
+            
+            # Convert to dataframe
+            chunk_df = chunk_data.to_dataframe().reset_index()
+            data_chunks.append(chunk_df)
+            
+            # Clean up
+            del chunk_data
+            gc.collect()
+            
+        except Exception as e:
+            print(f"Error processing chunk {i//chunk_size + 1}: {e}")
+            continue
+    
+    if not data_chunks:
+        print("Warning: No data chunks were successfully processed")
+        return None
+    
+    # Combine all chunks
+    print("Combining chunks...")
+    result_df = pd.concat(data_chunks, ignore_index=True)
+    
+    # Clean up
+    del data_chunks
+    gc.collect()
+    
+    print(f"Extraction complete: {len(result_df)} records")
+    return result_df
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def extract_buoy_imerg_data_memory_efficient(imerg_ds_xr, b_lat, b_lon, chunk_size=100):
+    """
+    Memory-efficient extraction of IMERG data at buoy locations.
+    
+    Parameters:
+    - imerg_ds_xr: IMERG xarray DataArray
+    - b_lat: buoy latitude
+    - b_lon: buoy longitude
+    - chunk_size: number of time steps to process at once
+    
+    Returns:
+    - pandas DataFrame with IMERG time series
+    """
+    try:
+        # Extract time series using memory-efficient method
+        # For IMERG DataArray, don't pass var_name since it's already a DataArray
+        b_rain_imerg_df = extract_timeseries_memory_efficient(
+            imerg_ds_xr, b_lat, b_lon, chunk_size=chunk_size
+        )
+        
+        if b_rain_imerg_df is None:
+            return None
+        
+        # Add date column and rename
+        b_rain_imerg_df['date'] = pd.to_datetime(b_rain_imerg_df['time']).dt.date
+        
+        # Rename the data column (it will be the actual variable name from the DataArray)
+        data_cols = [col for col in b_rain_imerg_df.columns if col not in ['time', 'lat', 'lon', 'date']]
+        if len(data_cols) == 1:
+            b_rain_imerg_df.rename(columns={data_cols[0]: 'IMERG'}, inplace=True)
+        else:
+            print(f"Warning: Expected 1 data column, found {len(data_cols)}: {data_cols}")
+        
+        return b_rain_imerg_df
+        
+    except Exception as e:
+        print(f"Error extracting IMERG data: {e}")
+        return None
+
+# - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
+def extract_buoy_gpcp_data_memory_efficient(gpcp_ds_xr, b_lat, b_lon, version="v3.1", chunk_size=100):
+    """
+    Memory-efficient extraction of GPCP data at buoy locations.
+    
+    Parameters:
+    - gpcp_ds_xr: GPCP xarray Dataset
+    - b_lat: buoy latitude
+    - b_lon: buoy longitude
+    - version: GPCP version for column naming
+    - chunk_size: number of time steps to process at once
+    
+    Returns:
+    - pandas DataFrame with GPCP time series
+    """
+    try:
+        # Extract precipitation data using memory-efficient method
+        b_rain_gpcp_df = extract_timeseries_memory_efficient(
+            gpcp_ds_xr, b_lat, b_lon, var_name='precip', chunk_size=chunk_size
+        )
+        
+        if b_rain_gpcp_df is None:
+            return None
+        
+        # For GPCP v3.2 and v3.3, also extract probability_liquid_phase
+        if version in ['v3.2', 'v3pt2', 'v3.3', 'v3pt3']:
+            try:
+                print(f"  Also extracting probability_liquid_phase for GPCP {version}")
+                b_plp_gpcp_df = extract_timeseries_memory_efficient(
+                    gpcp_ds_xr, b_lat, b_lon, var_name='probability_liquid_phase', chunk_size=chunk_size
+                )
+                
+                if b_plp_gpcp_df is not None:
+                    # Merge probability_liquid_phase data with precipitation data
+                    b_rain_gpcp_df = b_rain_gpcp_df.merge(
+                        b_plp_gpcp_df[['time', 'probability_liquid_phase']], 
+                        on='time', how='left'
+                    )
+                    print(f"  ✅ Successfully merged probability_liquid_phase data")
+                else:
+                    print(f"  ⚠️ Warning: Failed to extract probability_liquid_phase for {version}")
+                    
+            except Exception as e:
+                print(f"  ⚠️ Warning: Could not extract probability_liquid_phase for {version}: {e}")
+        
+        # Add date column and rename columns
+        b_rain_gpcp_df['date'] = pd.to_datetime(b_rain_gpcp_df['time']).dt.date
+        b_rain_gpcp_df.rename(columns={'precip': f'GPCP_{version}'}, inplace=True)
+        
+        # Rename probability_liquid_phase if it exists
+        if 'probability_liquid_phase' in b_rain_gpcp_df.columns:
+            b_rain_gpcp_df.rename(
+                columns={'probability_liquid_phase': f'PLP_GPCP_{version}'}, 
+                inplace=True
+            )
+        
+        return b_rain_gpcp_df
+        
+    except Exception as e:
+        print(f"Error extracting GPCP {version} data: {e}")
+        return None
 
 # - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
 def return_imerg_cords(file):
@@ -948,6 +1393,142 @@ def debug_overlap_test():
 
 # Call the debug function
 # debug_overlap_test()
+
+def process_imerg_with_PAL_rainV2_memory_efficient(pal_rain_df, imerg_ds_xr, chunk_size=100):
+    """
+    Memory-efficient IMERG matching with PAL rain data using chunked processing.
+    
+    This function efficiently matches PAL minute-level data to IMERG daily data by:
+    1. Processing data in temporal chunks to prevent memory overload
+    2. Identifying unique date/location combinations to reduce redundant lookups
+    3. Using vectorized xarray operations for fast processing within chunks
+    4. Mapping results back to preserve original data structure
+    
+    Parameters:
+    -----------
+    pal_rain_df : pandas.DataFrame
+        PAL rain dataframe with columns: 'date', 'lat', 'lon', 'rain_rate', etc.
+    imerg_ds_xr : xarray.Dataset
+        IMERG dataset with precipitation data
+    chunk_size : int
+        Number of time steps to process at once (default: 100)
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        Original PAL dataframe with added 'IMERG' column containing matched precipitation values
+    """
+    print(f"Starting memory-efficient IMERG matching for {len(pal_rain_df)} PAL records...")
+    
+    # Make a copy to avoid modifying original data
+    pal_imerg_df_rain = pal_rain_df.copy()
+    
+    # Extract arrays for processing
+    pal_dates_rain = pd.to_datetime(pal_imerg_df_rain['date'])
+    pal_lats_rain = pal_imerg_df_rain['lat'].values
+    pal_lons_rain = pal_imerg_df_rain['lon'].values
+    
+    # Copy and prepare IMERG dataset
+    imerg_ds_xr_cpy = imerg_ds_xr.copy(deep=True)
+    
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'latitude' in imerg_ds_xr_cpy.dims or 'longitude' in imerg_ds_xr_cpy.dims:
+        imerg_ds_xr_cpy = imerg_ds_xr_cpy.rename({'latitude': 'lat', 'longitude': 'lon'})
+    
+    if len(pal_dates_rain) > 0:
+        # Get date range
+        min_date, max_date = pal_dates_rain.min(), pal_dates_rain.max()
+        print(f"Processing date range: {min_date} to {max_date}")
+        
+        # Create unique location-date combinations
+        print("Creating unique location-date combinations to reduce redundant lookups...")
+        pal_coords = pd.DataFrame({
+            'date': pal_dates_rain,
+            'lat': pal_lats_rain,
+            'lon': pal_lons_rain,
+            'original_index': range(len(pal_dates_rain))
+        })
+        
+        # Group by date, lat, lon to find unique combinations
+        unique_coords = pal_coords.groupby(['date', 'lat', 'lon']).first().reset_index()
+        print(f"Reduced to {len(unique_coords)} unique date/location combinations (from {len(pal_coords)})")
+        
+        # Initialize IMERG results
+        unique_coords['IMERG'] = np.nan
+        
+        # Get unique dates and process in chunks
+        unique_dates = sorted(unique_coords['date'].unique())
+        date_chunks = [unique_dates[i:i + chunk_size] for i in range(0, len(unique_dates), chunk_size)]
+        
+        print(f"Processing {len(unique_dates)} unique dates in {len(date_chunks)} chunks of {chunk_size}")
+        
+        for chunk_idx, date_chunk in enumerate(date_chunks):
+            try:
+                if chunk_idx % 10 == 0 or chunk_idx == len(date_chunks) - 1:
+                    print(f"  Processing chunk {chunk_idx + 1}/{len(date_chunks)} ({len(date_chunk)} dates)")
+                
+                # Subset IMERG data to current date chunk - MEMORY SAFE
+                chunk_min_date, chunk_max_date = min(date_chunk), max(date_chunk)
+                imerg_chunk = imerg_ds_xr_cpy.sel(time=slice(chunk_min_date, chunk_max_date))
+                
+                # Get coordinates for this chunk
+                chunk_coords = unique_coords[unique_coords['date'].isin(date_chunk)].copy()
+                
+                if len(chunk_coords) > 0:
+                    # Create DataArrays for coordinates
+                    coord_dates = xr.DataArray(chunk_coords['date'], dims=['points'])
+                    coord_lats = xr.DataArray(chunk_coords['lat'], dims=['points']) 
+                    coord_lons = xr.DataArray(chunk_coords['lon'], dims=['points'])
+                    
+                    # Vectorized selection within this chunk
+                    imerg_results = imerg_chunk['precipitation'].sel(
+                        time=coord_dates,
+                        lat=coord_lats, 
+                        lon=coord_lons,
+                        method='nearest'
+                    )
+                    
+                    # Convert to values and handle missing data
+                    imerg_chunk_values = imerg_results.values
+                    imerg_chunk_values[imerg_chunk_values < 0] = np.nan
+                    
+                    # Update results in unique_coords
+                    chunk_mask = unique_coords['date'].isin(date_chunk)
+                    unique_coords.loc[chunk_mask, 'IMERG'] = imerg_chunk_values
+                
+                # Clean up chunk memory
+                del imerg_chunk, chunk_coords
+                gc.collect()
+                
+            except Exception as e:
+                print(f"  Error processing chunk {chunk_idx + 1}: {e}")
+                continue
+        
+        # Map results back to original dataframe
+        print("Mapping results back to original dataframe...")
+        pal_coords_with_imerg = pal_coords.merge(
+            unique_coords[['date', 'lat', 'lon', 'IMERG']], 
+            on=['date', 'lat', 'lon'], 
+            how='left'
+        )
+        
+        # Sort by original index to maintain order
+        pal_coords_with_imerg = pal_coords_with_imerg.sort_values('original_index')
+        
+        # Assign results
+        pal_imerg_df_rain['IMERG'] = pal_coords_with_imerg['IMERG'].values
+        
+        successful_matches = len([v for v in pal_coords_with_imerg['IMERG'].values if not np.isnan(v)])
+        print(f"✅ SUCCESS! Matched {successful_matches} out of {len(pal_imerg_df_rain)} points to IMERG data")
+        print(f"✅ Efficiency gain: {len(pal_coords)}/{len(unique_coords)} = {len(pal_coords)/len(unique_coords):.1f}x fewer lookups needed!")
+        print(f"✅ Memory efficiency: Processed {len(unique_dates)} dates in {len(date_chunks)} chunks")
+        
+    else:
+        print("No PAL data to process")
+        pal_imerg_df_rain['IMERG'] = np.nan
+    
+    return pal_imerg_df_rain
+
 
 def process_imerg_with_PAL_rainV2(pal_rain_df, imerg_ds_xr):
     """
