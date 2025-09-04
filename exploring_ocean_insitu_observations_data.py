@@ -91,6 +91,8 @@ for o in all_ocean_rain_files:
         for year in unique_years:
             files_by_year[year].append(o)
 
+files_by_year = dict(sorted(files_by_year.items()))
+
 gc.collect()
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
@@ -182,8 +184,6 @@ for bouy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'),
             # shift lon slightly for plotting
             lon = -178
 
-        # print(lon)
-        
         ax.scatter(lon, lat, color='black', s=100, marker=marker, label=f'{bouy_reg} Buoys', transform=ccrs.PlateCarree())
 
 # Define colors for each year
@@ -198,13 +198,14 @@ year_colors = {
     2017: 'red'
 }
 
+# Plot OceanRain data
 for yr, files in files_by_year.items():
     color = year_colors.get(yr, 'gray')  # Default to gray if year not in dictionary
     for f in files:
         ds = xr.open_dataset(f, drop_variables=[v for v in xr.open_dataset(f).data_vars if v not in ['latitude', 'longitude']])
         lat = ds['latitude'].values[::100]
         lon = ds['longitude'].values[::100]
-        ax.scatter(lon, lat, color=color, s=100, label=f'OceanRain {yr}', transform=ccrs.PlateCarree())
+        ax.scatter(lon, lat, color=color, s=15, label=f'OceanRain {yr}', transform=ccrs.PlateCarree())
         ds.close()
 
 # Add grid lines for major ticks
@@ -234,15 +235,19 @@ handles.extend([
     plt.Line2D([0], [0], color='black', marker='d', markersize=10, linestyle='None')
 ])
 labels.extend([
-    f"PACIFIC ({buoy_counts['PACIFIC']} buoys)",
-    f"INDIAN ({buoy_counts['INDIAN']} buoys)",
-    f"ATLANTIC ({buoy_counts['ATLANTIC']} buoys)"
+    f"PACIFIC ({buoy_counts['PACIFIC']} Buoys)",
+    f"INDIAN ({buoy_counts['INDIAN']} Buoys)",
+    f"ATLANTIC ({buoy_counts['ATLANTIC']} Buoys)"
 ])
 
+# Add OceanRain year markers to the legend
+handles.extend([plt.Line2D([0], [0], color=year_colors[yr], marker='o', markersize=10, linestyle='None') for yr in year_colors.keys()])
+labels.extend([f"OceanRain {yr}" for yr in year_colors.keys()])
+
 leg = plt.legend(
-    handles, labels,  loc="lower center", bbox_to_anchor=(0.5, -0.35), 
-    fontsize=14,ncol=3, frameon=False
-) # title="Regions and Buoys",  title_fontsize=14, 
+    handles, labels, loc="lower center", bbox_to_anchor=(0.5, -0.5), 
+    fontsize=12, ncol=4, frameon=False
+)
 # Set legend fontweight to bold
 for text in leg.get_texts():
     text.set_fontweight('bold')
@@ -262,22 +267,18 @@ ax.tick_params(labelsize=18)
 for label in ax.get_xticklabels() + ax.get_yticklabels():
     label.set_fontweight('bold')
 
-# Try to enforce Times New Roman, but fallback gracefully if not available
 mpl.rcParams['font.family'] = 'serif'
 mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
 ax.set_title("Spatial Distribution of In Situ Observations Over Ocean Regions", fontsize=20, 
              fontweight='bold', fontname='Times New Roman')
 
 plt.tight_layout()
-plt.subplots_adjust(bottom=0.3)  # Add extra space at the bottom for legend
+plt.subplots_adjust(bottom=0.4)  # Add extra space at the bottom for legend
 
 svname = os.path.join(path_to_put_plts, f'insitu_distribution_over_oceans_{cde_run_dte}.png')
 plt.savefig(svname, bbox_inches='tight', dpi=500)
-plt.show()
-gc.collect()  # Clean up memory
-
-
-
+# plt.show()
+gc.collect()
 #%%
 # NOW WE WILL COLLECT ALL INSTANCES AND DATA FOR WHERE PAL AND BUOY OCCUR IN THE SAME GPCP V3.3 PIXEL
 focus_regions = ['TNEP', 'TNWP']
