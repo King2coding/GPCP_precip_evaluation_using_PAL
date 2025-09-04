@@ -3,6 +3,16 @@
 # https://data.pmel.noaa.gov/generic/erddap/info/pmelTaoDyRain/index.html
 # buoy data download link: https://www.pmel.noaa.gov/tao/drupal/disdel/
 
+# OceanRain article: https://www.nature.com/articles/sdata2018122
+
+'''
+This script explores ocean in-situ observations data from varying sources including:
+moored buoys, Pacific Aquatic Listeners (PAL), and OceanRain products
+Here, we summarize the available data spatiotemporally to inform usage in 
+satellite product evaluation.
+
+'''
+
 #%%
 import importlib
 import sys
@@ -23,6 +33,7 @@ from matplotlib.ticker import FuncFormatter
 import pandas as pd
 from rasterio.transform import from_origin
 from rasterio.transform import rowcol
+from collections import defaultdict
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cartopy.mpl.ticker as cticker
@@ -67,6 +78,19 @@ pacific_buoy_files = sorted([os.path.join(pacific_buoy_dir, f) for f in os.listd
 indian_buoy_files = sorted([os.path.join(indian_buoy_dir, f) for f in os.listdir(indian_buoy_dir) if f.endswith('.cdf')])
 atlantic_buoy_files = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.listdir(atlantic_buoy_dir) if f.endswith('.cdf')])
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
+all_ocean_rain_files = sorted([os.path.join(path_to_ocean_rain, f) for f in os.listdir(path_to_ocean_rain) if f.endswith('.nc')])
+
+# group ocean rain files by year
+files_by_year = defaultdict(list)
+
+for o in all_ocean_rain_files:
+    with xr.open_dataset(o) as ds:
+        years = pd.to_datetime(ds['time'].values).year
+        unique_years = np.unique(years)
+        for year in unique_years:
+            files_by_year[year].append(o)
+
 gc.collect()
 #%% CLASSIFY AND GROUP PAL FILES
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, region_bounds)
@@ -107,6 +131,151 @@ print(f"Total Actual: {total_actual}")
 print(f"Difference: {total_actual - total_expected}")
 
 gc.collect()
+
+#%% VISUALIZING PAL, BUOY, AND OCEAN RAIN LOCATIONS
+# Set font to Times New Roman and bold for all texts
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+# Remove unavailable Times New Roman to avoid findfont warnings
+
+fig = plt.figure(figsize=(18, 10))
+ax = plt.axes(projection=ccrs.PlateCarree())
+ax.set_extent([-181, 180, -30, 60], crs=ccrs.PlateCarree())
+
+ax.add_feature(cfeature.LAND, facecolor='lightgray')
+ax.add_feature(cfeature.COASTLINE, linewidth=0.6)
+ax.add_feature(cfeature.BORDERS, linestyle=':')
+
+for region, files in pals_classed_by_region.items():
+    if region == "Unclassified" or len(files) == 0:
+        continue  # Skip unclassified and empty regions for plotting bounds
+    
+    color = region_colors[region]
+    for file in files:
+        # Load only lat and lon efficiently, downsample by slicing
+        ds = xr.open_dataset(file, drop_variables=[v for v in xr.open_dataset(file).data_vars if v not in ['lat', 'lon']])
+        lat = ds['lat'].values[::50]
+        lon = ds['lon'].values[::50]
+        ax.plot(lon, lat, transform=ccrs.PlateCarree(), color=color, linewidth=3)
+        ds.close()
+
+# Initialize buoy counts
+buoy_counts = {"PACIFIC": len(pacific_buoy_files), "INDIAN": len(indian_buoy_files), "ATLANTIC": len(atlantic_buoy_files)}
+
+for bouy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'), 
+                                     ("INDIAN", indian_buoy_files, 's'), 
+                                     ("ATLANTIC", atlantic_buoy_files, 'd')]:
+    for fl in buoy_files: 
+        xrfile = xr.open_dataset(fl)       
+        # Plot moored buoy data
+        lat = xrfile['lat'].values[0]
+        lon = xrfile['lon'].values[0]
+        # make lon between 180 and -180
+        lon = (lon + 180) % 360 - 180
+
+        if lon == -180:
+            # shift lon slightly for plotting
+            lon = -178
+
+        # print(lon)
+        
+        ax.scatter(lon, lat, color='black', s=100, marker=marker, label=f'{bouy_reg} Buoys', transform=ccrs.PlateCarree())
+
+# Define colors for each year
+year_colors = {
+    2010: 'black',
+    2011: 'magenta',
+    2012: 'green',
+    2013: 'lime',
+    2014: 'orange',
+    2015: 'cyan',
+    2016: 'blue',
+    2017: 'red'
+}
+
+for yr, files in files_by_year.items():
+    color = year_colors.get(yr, 'gray')  # Default to gray if year not in dictionary
+    for f in files:
+        ds = xr.open_dataset(f, drop_variables=[v for v in xr.open_dataset(f).data_vars if v not in ['latitude', 'longitude']])
+        lat = ds['latitude'].values[::100]
+        lon = ds['longitude'].values[::100]
+        ax.scatter(lon, lat, color=color, s=100, label=f'OceanRain {yr}', transform=ccrs.PlateCarree())
+        ds.close()
+
+# Add grid lines for major ticks
+ax.grid(True, which='major', linewidth=0.55, color='grey', alpha=0.7, linestyle='--')
+
+# Create legend with full region names and PAL counts
+legend_regions = [r for r in region_colors.keys() if r != "Unclassified"]
+handles = [plt.Line2D([0], [0], color=region_colors[r], lw=2) for r in legend_regions]
+
+# Full region names mapping
+full_region_names = {
+    "ETNP": "Extratropical North Pacific",
+    "TNEP": "Tropical Northeastern Pacific", 
+    "TSEP": "Tropical Southeastern Pacific",
+    "STNA": "Subtropical North Atlantic",
+    "TNIO": "Tropical North Indian Ocean",
+    "TNWP": "Tropical Northwestern Pacific"
+}
+
+# Add full names and PAL counts to legend labels
+labels = [f"{region}: ({full_region_names[region]} ({len(pals_classed_by_region.get(region, []))} PALs)" for region in legend_regions]
+
+# Add buoy markers and counts to the legend
+handles.extend([
+    plt.Line2D([0], [0], color='black', marker='*', markersize=10, linestyle='None'),
+    plt.Line2D([0], [0], color='black', marker='s', markersize=10, linestyle='None'),
+    plt.Line2D([0], [0], color='black', marker='d', markersize=10, linestyle='None')
+])
+labels.extend([
+    f"PACIFIC ({buoy_counts['PACIFIC']} buoys)",
+    f"INDIAN ({buoy_counts['INDIAN']} buoys)",
+    f"ATLANTIC ({buoy_counts['ATLANTIC']} buoys)"
+])
+
+leg = plt.legend(
+    handles, labels,  loc="lower center", bbox_to_anchor=(0.5, -0.35), 
+    fontsize=14,ncol=3, frameon=False
+) # title="Regions and Buoys",  title_fontsize=14, 
+# Set legend fontweight to bold
+for text in leg.get_texts():
+    text.set_fontweight('bold')
+if leg.get_title() is not None:
+    leg.get_title().set_fontweight('bold')
+
+# Set ticks and format them with degree symbols and N/S/E/W
+xticks = range(-180, 181, 60)
+yticks = range(-30, 61, 15)
+ax.set_xticks(xticks, crs=ccrs.PlateCarree())
+ax.set_yticks(yticks, crs=ccrs.PlateCarree())
+
+ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
+ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
+
+ax.tick_params(labelsize=18)
+for label in ax.get_xticklabels() + ax.get_yticklabels():
+    label.set_fontweight('bold')
+
+# Try to enforce Times New Roman, but fallback gracefully if not available
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
+ax.set_title("Spatial Distribution of In Situ Observations Over Ocean Regions", fontsize=20, 
+             fontweight='bold', fontname='Times New Roman')
+
+plt.tight_layout()
+plt.subplots_adjust(bottom=0.3)  # Add extra space at the bottom for legend
+
+svname = os.path.join(path_to_put_plts, f'insitu_distribution_over_oceans_{cde_run_dte}.png')
+plt.savefig(svname, bbox_inches='tight', dpi=500)
+plt.show()
+gc.collect()  # Clean up memory
+
 
 
 #%%
