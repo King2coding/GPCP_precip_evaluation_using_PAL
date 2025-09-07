@@ -1,17 +1,35 @@
 #%% IMPORT LIBRARIES
 import warnings
+import gc
 
 import matplotlib as mpl
 warnings.filterwarnings("ignore")
 import os
+from datetime import date
+
 import pandas as pd
 import numpy as np
-import xarray as xr
-import gc
+from datetime import datetime, date
+
 from evaluation_fucntions_algorithms import *
+
+from matplotlib.ticker import FuncFormatter
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+import matplotlib as mpl
+from matplotlib.legend import Legend
+import seaborn as sns
+
+import dask
 
 from rasterio.transform import from_origin
 from rasterio.transform import rowcol
+import xarray as xr
+
+from collections import defaultdict
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import cartopy.mpl.ticker as cticker
 
 # Optional GDAL imports - code will work without these
 try:
@@ -99,6 +117,17 @@ buoy_region_colors = {
     "ATL": "#b35959",      # brown/red
     
 }
+
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
+mpl.rcParams['font.weight'] = 'bold'
+mpl.rcParams['axes.labelweight'] = 'bold'
+mpl.rcParams['axes.titleweight'] = 'bold'
+mpl.rcParams['xtick.labelsize'] = 18
+mpl.rcParams['ytick.labelsize'] = 18
+
+lw = 2
+
 #%% DEFINE FUNCTIONS
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
 
@@ -117,6 +146,38 @@ def assign_to_gpcp_grid(lat,lon, resolution):
     transform = from_origin(west=-180.0, north=90.0, xsize=resolution, ysize=resolution)
 
     # Use rasterio to compute grid indices
+    row, col = rowcol(transform, lon, lat)
+
+    return row, col
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def find_grid_indices(lat, lon, resolution):
+    """
+    Compute the grid cell indices for a given latitude and longitude based on a specified resolution.
+
+    This function calculates the row and column indices of a grid cell in a GPCP-like grid 
+    using the rasterio library. The grid is assumed to have its origin at the top-left corner 
+    (-180° longitude, 90° latitude).
+
+    Parameters:
+    ----------
+    lat : float
+        Latitude of the point (in degrees).
+    lon : float
+        Longitude of the point (in degrees).
+    resolution : float
+        Resolution of the grid (e.g., 1.0 for 1° x 1° grid, 0.5 for 0.5° x 0.5° grid).
+
+    Returns:
+    -------
+    tuple
+        A tuple (row, col) representing the row and column indices of the grid cell 
+        that contains the given latitude and longitude.
+    """
+    # Define the affine transform for the grid
+    transform = from_origin(west=-180.0, north=90.0, xsize=resolution, ysize=resolution)
+
+    # Compute the row and column indices using rasterio
     row, col = rowcol(transform, lon, lat)
 
     return row, col
