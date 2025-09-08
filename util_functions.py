@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import matplotlib as mpl
 from matplotlib.legend import Legend
+from matplotlib.ticker import AutoMinorLocator
+
 import seaborn as sns
 
 import dask
@@ -117,6 +119,7 @@ buoy_region_colors = {
     "ATL": "#b35959",      # brown/red
     
 }
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 mpl.rcParams['font.family'] = 'serif'
 mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
@@ -125,9 +128,18 @@ mpl.rcParams['axes.labelweight'] = 'bold'
 mpl.rcParams['axes.titleweight'] = 'bold'
 mpl.rcParams['xtick.labelsize'] = 18
 mpl.rcParams['ytick.labelsize'] = 18
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-lw = 2
+lw = 5
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
+bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256] # 
+bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# Month labels for x-axis
+month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+month_positions = range(1, 13)
 #%% DEFINE FUNCTIONS
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
 
@@ -866,6 +878,7 @@ def compute_pdf_elements(data, colname, bins):
 # calculate multiyear monthly mean rainfall rate for PAL and Buoy data
 def calculate_multiyear_monthly_mean_rainfall_by_region(data_dict, tme_var):
     monthly_means_by_region = {}
+    yr_by_yr = {}
 
     for region, data in data_dict.items():
         # Ensure 'time' column is datetime
@@ -878,10 +891,15 @@ def calculate_multiyear_monthly_mean_rainfall_by_region(data_dict, tme_var):
         monthly_mean = data.groupby(['ID', 'year', 'month'])['rain_rate'].sum().reset_index()
         monthly_mean = monthly_mean.groupby('month')['rain_rate'].mean().reset_index()
 
+        year_by_year_mnth_mean = data.groupby([ 'year', 'month'])['rain_rate'].mean().reset_index()
+        year_by_year_mnth_mean['date'] = pd.to_datetime(year_by_year_mnth_mean[['year', 'month']].assign(day=1))
+
+
         # Store the result in the dictionary
         monthly_means_by_region[region] = monthly_mean
+        yr_by_yr[region] = year_by_year_mnth_mean
 
-    return monthly_means_by_region
+    return monthly_means_by_region, yr_by_yr
 
 
 # - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 

@@ -212,7 +212,7 @@ for region, files in pals_classed_by_region.items():
 # Initialize buoy counts
 buoy_counts = {"PACIFIC": len(pacific_buoy_files), "INDIAN": len(indian_buoy_files), "ATLANTIC": len(atlantic_buoy_files)}
 
-for bouy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'), 
+for buoy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'), 
                                      ("INDIAN", indian_buoy_files, 's'), 
                                      ("ATLANTIC", atlantic_buoy_files, 'd')]:
     for fl in buoy_files: 
@@ -227,7 +227,7 @@ for bouy_reg, buoy_files, marker in [("PACIFIC", pacific_buoy_files, '*'),
             # shift lon slightly for plotting
             lon = -178
 
-        ax.scatter(lon, lat, color='black', s=25, marker=marker, label=f'{bouy_reg} Buoys', transform=ccrs.PlateCarree())
+        ax.scatter(lon, lat, color='black', s=25, marker=marker, label=f'{buoy_reg} Buoys', transform=ccrs.PlateCarree())
 
 # Add grid lines for major ticks
 ax.grid(True, which='major', linewidth=0.55, color='grey', alpha=0.7, linestyle='--')
@@ -804,8 +804,7 @@ gc.collect()
 
 
 #%% PDFc PDFv CALCULATION AND PLOTTING
-bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256] # 
-bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
+
 # tnep_dfs = pd.concat(regional_pal_buoy_data['TNEP'])
 # tnep_pal_pdfc_pdfv = compute_pdf_elements(tnep_dfs,'pal_rain_rate', bin_values)
 # tnep_buoy_pdfc_pdfv = compute_pdf_elements(tnep_dfs,'buoy_rain_rate', bin_values)
@@ -894,17 +893,13 @@ plt.tight_layout()
 # calculate multiyear monthly mean rainfall rate for PAL and Buoy data
 
 # Call the function
-pal_monthly_means_by_region = calculate_multiyear_monthly_mean_rainfall_by_region(pal_dfs_by_region,'date')
-buoy_monthly_means_by_region = calculate_multiyear_monthly_mean_rainfall_by_region(buoy_dfs_by_region,'time')
+pal_monthly_means_by_region,pal_yr_by_yr = calculate_multiyear_monthly_mean_rainfall_by_region(pal_dfs_by_region,'date')
+buoy_monthly_means_by_region,buoy_yr_by_yr = calculate_multiyear_monthly_mean_rainfall_by_region(buoy_dfs_by_region,'time')
 
 
 # Plotting the multiyear monthly mean rainfall rate for PAL and Buoy data
 # Create a 2x1 plot for multiyear monthly mean rainfall rate comparison
-fig, axs = plt.subplots(2, 1, figsize=(16, 10), sharex=False, sharey=True, dpi=1000)
-
-# Month labels for x-axis
-month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-month_positions = range(1, 13)
+fig, axs = plt.subplots(2, 1, figsize=(16, 10), sharex=False, sharey=True, dpi=100)
 
 # Add grid lines and customize ticks
 for ax in axs.flat:
@@ -937,6 +932,116 @@ gc.collect()
 svnme = os.path.join(path_to_put_plts, f'multiyear_monthly_mean_comparison_{cde_run_dte}.png')
 plt.savefig(svnme, bbox_inches='tight')
 
+# - - - - --  - - - --  - - - --  - - - --  - - - --  - - - --  - - - --  - - - --  - - - --  - - - --  - - - --  - - - --  
+
+fig, axs = plt.subplots(2, 1, figsize=(16, 10), sharex=False, sharey=True, dpi=100)
+
+# Add grid lines and customize ticks
+for ax in axs.flat:
+    ax.grid(True, which='major', linestyle='--', alpha=0.7)
+    ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Plot TNEP data
+axs[0].plot(pal_yr_by_yr['TNEP']['date'], pal_yr_by_yr['TNEP']['rain_rate'], label='PAL', marker='o', lw=lw)
+axs[0].plot(buoy_yr_by_yr['TNEP']['date'], buoy_yr_by_yr['TNEP']['rain_rate'], label='Buoy', marker='x', lw=lw)
+axs[0].set_title('ENP', fontsize=18, fontweight='bold')
+axs[0].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[0].legend(fontsize=18, frameon=False)
+
+# X-axis ticks and labels for axs[0]
+# Fill missing data in the WNP dataframe with NaN for the gap between 2016 and 2020
+wnp_full_date_range = pd.date_range(start='2012-04-01', end='2021-08-31', freq='MS')  # Monthly start frequency
+wnp_df = pal_yr_by_yr['TNWP'].set_index('date').reindex(wnp_full_date_range).reset_index()[['index', 'rain_rate']]
+wnp_df.columns = ['date', 'rain_rate']  # Rename columns after reindexing
+
+# Plot TNEP data
+custom_ticks = pd.date_range(start=pal_yr_by_yr['TNEP']['date'].min(), 
+                             end=np.datetime64('2021-08-31'), 
+                             freq='YS')  # Year start frequency
+tick_labels = [f"{t.strftime('%b')}\n{t.strftime('%Y')}" for t in custom_ticks]
+
+axs[0].set_xticks(custom_ticks)
+axs[0].set_xticklabels(tick_labels, rotation=0, ha='center', fontsize=16, fontweight='bold', linespacing=1.5)
+
+# Add minor ticks on x-axis
+axs[0].xaxis.set_minor_locator(AutoMinorLocator(2))
+
+# X-axis limits for axs[0]
+start = pal_yr_by_yr['TNEP']['date'].min()
+end = np.datetime64('2021-08-31')
+axs[0].set_xlim(start, end)
+axs[0].set_ylim(0, 20)
+
+# Y-axis: reduce ticks and add minor ticks
+axs[0].set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
+axs[0].yaxis.set_minor_locator(AutoMinorLocator(4))  # 4 minor ticks between each major
+
+# Make major and minor ticks more visible
+axs[0].tick_params(axis='x', which='major', length=12, width=2)
+axs[0].tick_params(axis='x', which='minor', length=6, width=1)
+axs[0].tick_params(axis='y', which='major', length=12, width=2)
+axs[0].tick_params(axis='y', which='minor', length=6, width=1)
+
+# Title and labels
+axs[0].set_xlabel('Month, Year', fontsize=18, fontweight='bold', labelpad=10)
+
+# Y-tick label style
+for label in axs[0].get_yticklabels():
+    label.set_fontsize(15)
+    label.set_fontweight('bold')
+
+# Add legend
+axs[0].legend(fontsize=14, loc='upper right', frameon=False)
+
+# Plot TNWP data with the gap filled
+axs[1].plot(wnp_df['date'], wnp_df['rain_rate'], label='PAL', marker='o', lw=lw)
+axs[1].plot(buoy_yr_by_yr['TNWP']['date'], buoy_yr_by_yr['TNWP']['rain_rate'], label='Buoy', marker='x', lw=lw)
+axs[1].set_title('WNP', fontsize=18, fontweight='bold')
+axs[1].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
+
+# X-axis ticks and labels for axs[1]
+custom_ticks = pd.date_range(start=wnp_df['date'].min(), 
+                             end=wnp_df['date'].max(), 
+                             freq='YS')  # Year start frequency
+tick_labels = [f"{t.strftime('%b')}\n{t.strftime('%Y')}" for t in custom_ticks]
+
+axs[1].set_xticks(custom_ticks)
+axs[1].set_xticklabels(tick_labels, rotation=0, ha='center', fontsize=16, fontweight='bold', linespacing=1.5)
+
+# Add minor ticks on x-axis
+axs[1].xaxis.set_minor_locator(AutoMinorLocator(2))
+
+# X-axis limits for axs[1]
+start = wnp_df['date'].min()
+end = wnp_df['date'].max()
+axs[1].set_xlim(start, end)
+axs[1].set_ylim(0, 20)
+
+# Y-axis: reduce ticks and add minor ticks
+axs[1].set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
+axs[1].yaxis.set_minor_locator(AutoMinorLocator(4))  # 4 minor ticks between each major
+
+# Make major and minor ticks more visible
+axs[1].tick_params(axis='x', which='major', length=12, width=2)
+axs[1].tick_params(axis='x', which='minor', length=6, width=1)
+axs[1].tick_params(axis='y', which='major', length=12, width=2)
+axs[1].tick_params(axis='y', which='minor', length=6, width=1)
+
+# Title and labels
+axs[1].set_xlabel('Month, Year', fontsize=18, fontweight='bold', labelpad=10)
+
+# Y-tick label style
+for label in axs[1].get_yticklabels():
+    label.set_fontsize(15)
+    label.set_fontweight('bold')
+
+# Add legend
+axs[1].legend(fontsize=14, loc='upper right', frameon=False)
+
+# Adjust layout
+plt.tight_layout()
+gc.collect()
+
 
 #%%
 # scatterplot of PAL and Buoy data for TNEP and TNWP using the monthly means
@@ -948,14 +1053,7 @@ plt.savefig(svnme, bbox_inches='tight')
 #                                                 buoy_monthly_means_by_region['TNWP']['rain_rate'])
 # # plot scatter plot of PAL and Buoy data for TNEP and TNWP using the monthly means
 # fig, axs = plt.subplots(1, 2, figsize=(18, 10), sharex=False, sharey=False, dpi=1000)
-# # Update matplotlib parameters for consistent styling
-# mpl.rcParams['font.family'] = 'serif'
-# mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
-# mpl.rcParams['font.weight'] = 'bold'
-# mpl.rcParams['axes.labelweight'] = 'bold'
-# mpl.rcParams['axes.titleweight'] = 'bold'
-# mpl.rcParams['xtick.labelsize'] = 18
-# mpl.rcParams['ytick.labelsize'] = 18
+
 # # Removed 'Times New Roman' to avoid findfont warnings
 # mpl.rcParams['ytick.labelsize'] = 18    
 
@@ -1009,3 +1107,190 @@ plt.savefig(svnme, bbox_inches='tight')
 # # Save the figure
 # svnme = os.path.join(path_to_put_plts, f'multiyear_monthly_mean_scatter_{cde_run_dte}.png')
 # plt.savefig(svnme, bbox_inches='tight')
+
+# %% A DEDICTAED COMPARATIVE ANALYSIS OF BUOY AND OCEANRAIN DATA
+atl_buoy_dfs = []
+for bfle in atlantic_buoy_files:
+    buoy_ds = xr.open_dataset(bfle)
+    buoy_df = pd.DataFrame({
+        'time': pd.to_datetime(buoy_ds['time'].values),            
+        'rain_rate': buoy_ds['RN_485'].values.flatten(),
+        'quality_code': buoy_ds['QRN_5485'].values.flatten(),
+    })
+
+    # Filter out rows with negative rain_rate
+    buoy_df = buoy_df[buoy_df['rain_rate'] >= 0]
+    buoy_df = buoy_df.dropna(subset=['rain_rate'], axis=0, how='any')
+
+    # buoys cover longer time period than pal so select date time period covering pal datetime period range
+    ocR_yr_start_date = atl_ocRain['time_utc'].min()
+    ocR_yr_end_date = atl_ocRain['time_utc'].max()
+    buoy_df = buoy_df[(buoy_df['time'] >= ocR_yr_start_date) & (buoy_df['time'] <= ocR_yr_end_date)]
+
+    # To get probably valid data only, request QRN_5485>=1 and QRN_5485<=3.
+    buoy_df = buoy_df[(buoy_df['quality_code'] >= 1) & (buoy_df['quality_code'] <= 3)]
+
+    # daily rain rate
+    buoy_df['rain_rate'] *= 24
+    buoy_df['ID'] = os.path.basename(os.path.basename(bfle))  # Extract Buoy file ID from filename
+
+    atl_buoy_dfs.append(buoy_df)
+
+# - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - -
+# compute and plot monthly and year means
+atl_buoy_df = pd.concat(atl_buoy_dfs, ignore_index=True)
+atl_buoy_df['month'] = atl_buoy_df['time'].dt.month
+atl_buoy_df['year'] = atl_buoy_df['time'].dt.year
+atl_buoy_df_mnth_means_by_year = atl_buoy_df.groupby(['year','month'])['rain_rate'].mean().reset_index()
+atl_buoy_df_mnth_means_by_year['date'] = pd.to_datetime(atl_buoy_df_mnth_means_by_year[['year', 'month']].assign(day=1))
+# atl_buoy_monthly_sums = atl_buoy_df.groupby(['year', 'month'])['rain_rate'].mean().reset_index()
+atl_buoy_monthly_means = atl_buoy_df_mnth_means_by_year.groupby('month')['rain_rate'].mean().reset_index()
+
+# do similar computations for ocRain data
+atl_ocR_df = atl_ocRain.copy()
+atl_ocR_df.dropna(subset=['rate_dsd_mmph','rate_gag_mmph'], axis=0, how='any', inplace=True)
+atl_ocR_df['date'] = atl_ocR_df['time_utc'].dt.date  # Extract date from time
+atl_ocR_df_daily = atl_ocR_df.groupby(atl_ocR_df['date'])[['rate_dsd_mmph','rate_gag_mmph']].mean().reset_index()
+atl_ocR_df_daily['rate_dsd_mmph'] *= 24
+atl_ocR_df_daily['rate_gag_mmph'] *= 24
+atl_ocR_df_daily['date'] = pd.to_datetime(atl_ocR_df_daily['date'])
+atl_ocR_df_daily['month'] = atl_ocR_df_daily['date'].dt.month
+atl_ocR_df_daily['year'] = atl_ocR_df_daily['date'].dt.year
+atl_ocR_df_month_means_by_year = atl_ocR_df_daily.groupby(['year','month'])[['rate_dsd_mmph','rate_gag_mmph']].mean().reset_index()
+atl_ocR_df_month_means_by_year['date'] = pd.to_datetime(atl_ocR_df_month_means_by_year[['year', 'month']].assign(day=1))
+
+# replace annoying spikes in the data with NAN
+atl_ocR_df_month_means_by_year.loc[atl_ocR_df_month_means_by_year['rate_dsd_mmph'] > 10, 'rate_dsd_mmph'] = np.nan
+atl_ocR_df_month_means_by_year.loc[atl_ocR_df_month_means_by_year['rate_gag_mmph'] > 10, 'rate_gag_mmph'] = np.nan
+
+atl_ocR_monthly_means = atl_ocR_df_month_means_by_year.groupby('month')[['rate_dsd_mmph','rate_gag_mmph']].mean().reset_index()
+
+# plot the monthly means
+fig, ax = plt.subplots(figsize=(16, 6), dpi=100)
+
+# Plot monthly rainfall time series
+ax.plot(atl_buoy_df_mnth_means_by_year['date'], atl_buoy_df_mnth_means_by_year['rain_rate'], 
+    marker='x', lw=lw, color='k', label='Buoy')
+ax.plot(atl_ocR_df_month_means_by_year['date'], atl_ocR_df_month_means_by_year['rate_dsd_mmph'], 
+    marker='o', lw=lw, color='orange', label='OceanRain_dsd')
+ax.plot(atl_ocR_df_month_means_by_year['date'], atl_ocR_df_month_means_by_year['rate_gag_mmph'], 
+    marker='o', lw=lw, color='blue', label='OceanRain_gag')
+
+# X-axis: show Jan and Jun of each year, format as 'MMM' (month) above and 'YYYY' (year) below
+months = atl_buoy_df_mnth_means_by_year['date'].dt.month
+years = atl_buoy_df_mnth_means_by_year['date'].dt.year
+mask_jan_jun = (months == 1) | (months == 6)
+tick_times = atl_buoy_df_mnth_means_by_year['date'].values[mask_jan_jun]
+
+# Prepare two lines of tick labels: month above, year below
+month_labels_ = [pd.to_datetime(str(t)).strftime('%b') for t in tick_times]
+year_labels = [pd.to_datetime(str(t)).strftime('%Y') for t in tick_times]
+custom_ticks = [
+    (2010, 10), (2012, 7), (2014, 1), (2015, 7), (2016, 1),
+]
+tick_labels = [f"{m}\n{y}" for m, y in zip(month_labels_, year_labels)]
+
+ax.set_xticks(tick_times)
+ax.set_xticklabels(tick_labels, rotation=0, ha='center', fontsize=16, fontweight='bold', linespacing=1.5)
+
+# X-axis limits: 2010-Jan to 2024-Sep
+start = np.datetime64('2010-11-01')
+end = np.datetime64('2016-01-01')  # np.datetime64('2024-09')
+ax.set_xlim(start, end)
+ax.set_ylim(0, 8)
+
+# Y-axis: reduce ticks and add minor ticks
+ax.set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
+ax.yaxis.set_minor_locator(AutoMinorLocator(4))  # 4 minor ticks between each major
+
+# Make major and minor ticks more visible
+ax.tick_params(axis='x', which='major', length=12, width=2)
+ax.tick_params(axis='x', which='minor', length=6, width=1)
+ax.tick_params(axis='y', which='major', length=12, width=2)
+ax.tick_params(axis='y', which='minor', length=6, width=1)
+
+# Title and labels
+ax.set_xlabel('Month, Year', fontsize=18, fontweight='bold', labelpad=10)
+# ax.set_title("Mean Rainfall", fontsize=20, fontweight='bold', pad=15)
+
+# Grid
+ax.grid(True, which='major', axis='both', linestyle='--', alpha=0.7)
+ax.grid(True, which='minor', axis='y', linestyle=':', alpha=0.5)
+
+# Y-tick label style
+for label in ax.get_yticklabels():
+    label.set_fontsize(15)
+    label.set_fontweight('bold')
+
+# Add legend
+ax.legend(fontsize=14, loc='upper right', frameon=False)
+
+plt.tight_layout()
+# - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - -
+# plot the monthly mean as well
+
+fig, ax = plt.subplots(figsize=(16, 6), dpi=100)
+
+# Plot monthly rainfall time series
+ax.plot(month_positions, atl_buoy_monthly_means['rain_rate'].values, 
+    marker='x', lw=lw, color='k', label='Buoy')
+ax.plot(month_positions, atl_ocR_monthly_means['rate_dsd_mmph'].values, 
+    marker='o', lw=lw, color='orange', label='OceanRain_dsd')
+ax.plot(month_positions, atl_ocR_monthly_means['rate_gag_mmph'].values, 
+    marker='o', lw=lw, color='blue', label='OceanRain_gag')
+ax.set_xticks(month_positions)
+ax.set_xticklabels(month_labels)
+ax.legend(fontsize=18, frameon=False)
+
+ax.set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
+ax.set_xlabel('Month', fontsize=18, fontweight='bold', labelpad=10)
+ax.set_title("ATLANTIC Mean Monthly Rainfall", fontsize=20, fontweight='bold', pad=15)
+ax.grid(True, which='major', axis='both', linestyle='--', alpha=0.7)
+ax.yaxis.set_minor_locator(AutoMinorLocator(4))  # 4 minor ticks between each major
+ax.tick_params(axis='x', which='major', length=12, width=2)
+ax.tick_params(axis='x', which='minor', length=6, width=1)
+ax.tick_params(axis='y', which='major', length=12, width=2)
+ax.tick_params(axis='y', which='minor', length=6, width=1)
+for label in ax.get_yticklabels():
+    label.set_fontsize(20)
+    label.set_fontweight('bold')
+
+plt.tight_layout()
+# - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - -
+# compute and plot pdfc and pdfv for ocRain and Buoy data
+ind_ocR_pdfc_pdfv_dsd = compute_pdf_elements(atl_ocR_df_daily, 'rate_dsd_mmph', bin_values)
+ind_ocR_pdfc_pdfv_gg = compute_pdf_elements(atl_ocR_df_daily, 'rate_gag_mmph', bin_values)
+
+ind_buoy_pdfc_pdfv = compute_pdf_elements(atl_buoy_df, 'rain_rate', bin_values)
+
+fig, axs = plt.subplots(1, 2, figsize=(16, 10), 
+                        sharex=False, sharey=False, dpi=100)
+
+# Set common x-axis ticks and labels
+bin_positions = range(len(bin_labels))
+# Add grid lines and customize ticks
+for ax in axs.flat:
+    ax.grid(True, which='major', linestyle='--', alpha=0.7)
+    ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Line Plot TNEP PDFc
+axs[0].plot(bin_positions, ind_ocR_pdfc_pdfv_dsd['pdfc'], label='OceanRain_dsd', marker='o',markersize=8,lw=lw, c='orange')
+axs[0].plot(bin_positions, ind_ocR_pdfc_pdfv_gg['pdfc'], label='OceanRain_rg', marker='o',markersize=8,lw=lw, c='b')
+axs[0].plot(bin_positions, ind_buoy_pdfc_pdfv['pdfc'], label='Buoy', marker='x',markersize=8,lw=lw, c='k')
+axs[0].set_title('ATLANTIC', fontsize=18, fontweight='bold')
+axs[0].set_ylabel('PDFc (%)', fontsize=18, fontweight='bold')
+axs[0].set_xticks(bin_positions)
+axs[0].set_xticklabels(bin_labels)
+axs[0].legend(fontsize=18, frameon=False)
+
+# Line Plot TNEP PDFv
+axs[1].plot(bin_positions, ind_ocR_pdfc_pdfv_dsd['pdfv'], label='OceanRain_dsd', marker='o', lw=lw, c='orange')
+axs[1].plot(bin_positions, ind_ocR_pdfc_pdfv_gg['pdfv'], label='OceanRain_rg', marker='o', lw=lw, c='b')
+axs[1].plot(bin_positions, ind_buoy_pdfc_pdfv['pdfv'], label='Buoy', marker='x', lw=lw, c='k')
+axs[1].set_title('ATLANTIC', fontsize=18, fontweight='bold')
+axs[1].set_ylabel('PDFv (%)', fontsize=18, fontweight='bold')
+axs[1].set_xticks(bin_positions)
+axs[1].set_xticklabels(bin_labels)
+axs[1].legend(fontsize=18, frameon=False)
+# Adjust layout
+plt.tight_layout()
