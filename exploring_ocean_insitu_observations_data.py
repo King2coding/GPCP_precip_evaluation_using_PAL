@@ -909,7 +909,7 @@ for ax in axs.flat:
 # Plot TNEP data
 axs[0].plot(month_positions, pal_monthly_means_by_region['TNEP']['rain_rate'], label='PAL', marker='o', lw=lw)
 axs[0].plot(month_positions, buoy_monthly_means_by_region['TNEP']['rain_rate'], label='Buoy', marker='x', lw=lw)
-axs[0].set_title('TNEP', fontsize=18, fontweight='bold')
+axs[0].set_title('ENP', fontsize=18, fontweight='bold')
 axs[0].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
 axs[0].set_xticks(month_positions)
 axs[0].set_xticklabels(month_labels)
@@ -918,7 +918,7 @@ axs[0].legend(fontsize=18, frameon=False)
 # Plot TNWP data
 axs[1].plot(month_positions, pal_monthly_means_by_region['TNWP']['rain_rate'], label='PAL', marker='o', lw=lw)
 axs[1].plot(month_positions, buoy_monthly_means_by_region['TNWP']['rain_rate'], label='Buoy', marker='x', lw=lw)
-axs[1].set_title('TNWP', fontsize=18, fontweight='bold')
+axs[1].set_title('WNP', fontsize=18, fontweight='bold')
 axs[1].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
 axs[1].set_xticks(month_positions)
 axs[1].set_xticklabels(month_labels)
@@ -1040,6 +1040,9 @@ axs[1].legend(fontsize=14, loc='upper right', frameon=False)
 
 # Adjust layout
 plt.tight_layout()
+svnme = os.path.join(path_to_put_plts, f'multiyear_yr_by_yr_comparison_{cde_run_dte}.png')
+plt.savefig(svnme, bbox_inches='tight',dpi=500)
+plt.close()
 gc.collect()
 
 
@@ -1197,7 +1200,7 @@ ax.set_xticklabels(tick_labels, rotation=0, ha='center', fontsize=16, fontweight
 start = np.datetime64('2010-11-01')
 end = np.datetime64('2016-01-01')  # np.datetime64('2024-09')
 ax.set_xlim(start, end)
-ax.set_ylim(0, 8)
+ax.set_ylim(0, 10)
 
 # Y-axis: reduce ticks and add minor ticks
 ax.set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
