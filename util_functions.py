@@ -888,7 +888,7 @@ def calculate_multiyear_monthly_mean_rainfall_by_region(data_dict, tme_var):
         data['year'] = data[tme_var].dt.year
         # Extract month and group by month to calculate mean
         data['month'] = data[tme_var].dt.month
-        monthly_mean = data.groupby(['ID', 'year', 'month'])['rain_rate'].sum().reset_index()
+        monthly_mean = data.groupby(['ID', 'year', 'month'])['rain_rate'].mean().reset_index()
         monthly_mean = monthly_mean.groupby('month')['rain_rate'].mean().reset_index()
 
         year_by_year_mnth_mean = data.groupby([ 'year', 'month'])['rain_rate'].mean().reset_index()

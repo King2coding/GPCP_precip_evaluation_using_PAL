@@ -191,7 +191,7 @@ ax.add_feature(cfeature.BORDERS, linestyle=':')
 for yr in np.unique(ocRain_df['time_utc'].dt.year):
     color = year_colors.get(yr, 'gray')  # Default to gray if year not in dictionary
     yr_data = ocRain_df[ocRain_df['time_utc'].dt.year == yr]
-    ax.scatter(yr_data['lon'], yr_data['lat'], color=color, s=3, label=f'OceanRain {yr}', transform=ccrs.PlateCarree())
+    ax.scatter(yr_data['lon'], yr_data['lat'], color=color, s=1.5, label=f'OceanRain {yr}', transform=ccrs.PlateCarree())
         
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 for region, files in pals_classed_by_region.items():
@@ -297,7 +297,7 @@ plt.tight_layout()
 plt.subplots_adjust(bottom=0.4)  # Add extra space at the bottom for legend
 
 svname = os.path.join(path_to_put_plts, f'insitu_distribution_over_oceans_{cde_run_dte}.png')
-# plt.savefig(svname, bbox_inches='tight', dpi=500)
+plt.savefig(svname, bbox_inches='tight', dpi=500)
 # plt.show()
 gc.collect()
 
@@ -910,7 +910,7 @@ for ax in axs.flat:
 axs[0].plot(month_positions, pal_monthly_means_by_region['TNEP']['rain_rate'], label='PAL', marker='o', lw=lw)
 axs[0].plot(month_positions, buoy_monthly_means_by_region['TNEP']['rain_rate'], label='Buoy', marker='x', lw=lw)
 axs[0].set_title('ENP', fontsize=18, fontweight='bold')
-axs[0].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[0].set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
 axs[0].set_xticks(month_positions)
 axs[0].set_xticklabels(month_labels)
 axs[0].legend(fontsize=18, frameon=False)
@@ -919,7 +919,7 @@ axs[0].legend(fontsize=18, frameon=False)
 axs[1].plot(month_positions, pal_monthly_means_by_region['TNWP']['rain_rate'], label='PAL', marker='o', lw=lw)
 axs[1].plot(month_positions, buoy_monthly_means_by_region['TNWP']['rain_rate'], label='Buoy', marker='x', lw=lw)
 axs[1].set_title('WNP', fontsize=18, fontweight='bold')
-axs[1].set_ylabel('Rainfall [mm]', fontsize=18, fontweight='bold')
+axs[1].set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
 axs[1].set_xticks(month_positions)
 axs[1].set_xticklabels(month_labels)
 axs[1].legend(fontsize=18, frameon=False)
