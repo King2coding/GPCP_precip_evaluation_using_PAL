@@ -1153,10 +1153,12 @@ atl_buoy_monthly_means = atl_buoy_df_mnth_means_by_year.groupby('month')['rain_r
 atl_ocR_df = atl_ocRain.copy()
 atl_ocR_df.dropna(subset=['rate_dsd_mmph','rate_gag_mmph'], axis=0, how='any', inplace=True)
 atl_ocR_df['date'] = atl_ocR_df['time_utc'].dt.date  # Extract date from time
-atl_ocR_df_daily = atl_ocR_df.groupby(atl_ocR_df['date'])[['rate_dsd_mmph','rate_gag_mmph']].mean().reset_index()
+atl_ocR_df['year'] = atl_ocR_df['time_utc'].dt.year
+atl_ocR_df_daily = atl_ocR_df.groupby(['year', 'date'])[['rate_dsd_mmph', 'rate_gag_mmph']].mean().reset_index()
 atl_ocR_df_daily['rate_dsd_mmph'] *= 24
 atl_ocR_df_daily['rate_gag_mmph'] *= 24
 atl_ocR_df_daily['date'] = pd.to_datetime(atl_ocR_df_daily['date'])
+atl_ocR_df_daily_ = atl_ocR_df_daily.copy()
 atl_ocR_df_daily['month'] = atl_ocR_df_daily['date'].dt.month
 atl_ocR_df_daily['year'] = atl_ocR_df_daily['date'].dt.year
 atl_ocR_df_month_means_by_year = atl_ocR_df_daily.groupby(['year','month'])[['rate_dsd_mmph','rate_gag_mmph']].mean().reset_index()
@@ -1297,3 +1299,39 @@ axs[1].set_xticklabels(bin_labels)
 axs[1].legend(fontsize=18, frameon=False)
 # Adjust layout
 plt.tight_layout()
+
+# - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - -
+# make scatter plot comparison of OceanRain dsd and gauge data
+# Calculate metrics for OceanRain dsd and gauge data
+ocR_dsd_gg_rb, ocR_dsd_gg_rmse, ocR_dsd_gg_cc = calculate_metrics(
+    atl_ocR_df_daily_['rate_dsd_mmph'], 
+    atl_ocR_df_daily_['rate_gag_mmph']
+)
+
+# plot scatter plot of OceanRain dsd and gauge data
+fig, ax = plt.subplots(1, 1, figsize=(10, 10), sharex=False, sharey=False, dpi=1000)
+
+# Add grid lines and customize ticks
+ax.grid(True, which='major', linestyle='--', alpha=0.7)
+ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Scatter plot OceanRain dsd vs gauge
+ax.scatter(atl_ocR_df_daily_['rate_dsd_mmph'], atl_ocR_df_daily_['rate_gag_mmph'], 
+           label='DSD vs gauge', color='blue', alpha=0.7, edgecolors='w', s=100)
+ax.set_title('DSD vs Gauge Rainfall Observation Comparison: ATLANTIC', fontsize=18, fontweight='bold')
+ax.set_xlabel('DSD Rainfall [mm/day]', fontsize=18, fontweight='bold')
+ax.set_ylabel('Rain Gauge Rainfall [mm/day]', fontsize=18, fontweight='bold')
+# # Add 1:1 line
+dfmax = max(atl_ocR_df_daily_['rate_dsd_mmph'].max(), atl_ocR_df_daily_['rate_gag_mmph'].max()) + 1
+ax.set_xlim(-0.5, round(dfmax)) # round(dfmax)
+ax.set_ylim(-0.5, round(dfmax))
+ax.plot([0, round(dfmax)], [0, round(dfmax)], color='black', linestyle='--', linewidth=1.5, label='1:1 Line')
+# Add legend
+ax.legend(fontsize=18, frameon=False,  loc='best')
+
+# Add text with metrics
+ax.text(0.05, 0.95,
+    f'RB: {ocR_dsd_gg_rb:.2f}%\nRMSE: {ocR_dsd_gg_rmse:.2f} mm/day\nCC: {ocR_dsd_gg_cc:.2f}',
+    transform=ax.transAxes, fontsize=18, verticalalignment='top')
+plt.tight_layout()
+gc.collect()
