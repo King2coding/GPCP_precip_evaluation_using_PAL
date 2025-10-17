@@ -22,6 +22,19 @@ if 'util_functions' in sys.modules:
     importlib.reload(sys.modules['util_functions'])
 
 from util_functions import *
+from scipy.stats import gaussian_kde
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+from astropy.visualization import ImageNormalize, LogStretch
+import matplotlib
+import matplotlib.pyplot as plt
+import mpl_scatter_density # adds projection='scatter_density'
+from matplotlib.colors import BoundaryNorm, Normalize
+from matplotlib.colorbar import ColorbarBase
+from matplotlib.colors import LinearSegmentedColormap
+
+from matplotlib import pyplot as plt
+import numpy as np
 
 #%%
 # define the path to the data
@@ -34,6 +47,8 @@ path_to_ocean_rain = r'/ra1/pubdat/OceanRain/nc'
 path_to_put_plts = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/plots'
 #%%
 # define global variables
+
+
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
 
 all_pal_files = sorted([os.path.join(path_to_pal_data, f) for f in os.listdir(path_to_pal_data) if f.endswith('.nc')])
@@ -67,17 +82,18 @@ atlantic_buoy_files = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.lis
 all_ocean_rain_files = sorted([os.path.join(path_to_ocean_rain, f) for f in os.listdir(path_to_ocean_rain) if f.endswith('.nc')])
 
 # group ocean rain files by year
-files_by_year = defaultdict(list)
+# files_by_year = defaultdict(list)
 
-for o in all_ocean_rain_files:
-    print(os.path.basename(o))
-    with xr.open_dataset(o) as ds:
-        years = pd.to_datetime(ds['time'].values).year
-        unique_years = np.unique(years)
-        for year in unique_years:
-            files_by_year[year].append(o)
+# for o in all_ocean_rain_files:
+#     print(os.path.basename(o))
+#     with xr.open_dataset(o) as ds:
+#         years = pd.to_datetime(ds['time'].values).year
+#         unique_years = np.unique(years)
+#         for year in unique_years:
+#             files_by_year[year].append(o)
 
-files_by_year = dict(sorted(files_by_year.items()))
+# files_by_year = dict(sorted(files_by_year.items()))
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 # OceanRain data file
 # Load the .npz file using numpy
@@ -86,12 +102,65 @@ ocRain = np.load(r'/ra1/pubdat/OceanRain/output/OceanRAIN_MINUTE_coordinates_and
 # Access the keys in the .npz file
 keys = ocRain.files
 print("Keys in the .npz file:", keys)
-
 # Create a DataFrame from the .npz file
 ocRain_df = pd.DataFrame({key: ocRain[key] for key in keys})
 
-# Display the first few rows of the DataFrame
-# print(ocRain_df.head())
+# Find out how OceanRain's dsd and gauge rainfall correlate across all years and regions
+ocRain_daily_df = ocRain_df.copy()
+dsd_perc99 = np.nanquantile(ocRain_daily_df['rate_dsd_mmph'].values, 0.99)
+gag_perc99 = np.nanquantile(ocRain_daily_df['rate_gag_mmph'].values, 0.99)
+# round(99.9899978637695,5),round(99.9899978637695,5)
+# ocRain_daily_df.loc[(ocRain_daily_df['rate_dsd_mmph'] > dsd_perc99) | \
+#                      (ocRain_daily_df['rate_dsd_mmph'] < 0), 'rate_dsd_mmph'] = np.nan
+# ocRain_daily_df.loc[(ocRain_daily_df['rate_gag_mmph'] >= gag_perc99) | \
+#                     (ocRain_daily_df['rate_gag_mmph'] < 0.0), 'rate_gag_mmph'] = np.nan
+
+ocRain_daily_df.dropna(subset=['rate_dsd_mmph', 'rate_gag_mmph'], inplace=True)
+ocRain_daily_df['Date'] = pd.to_datetime(ocRain_daily_df['time_utc']).dt.date
+ocRain_daily_df['Year'] = pd.to_datetime(ocRain_daily_df['time_utc']).dt.year #['Year']
+# Group by date and calculate daily mean
+# ocRain_daily_df = ocRain_daily_df.groupby(['Year', 'Date'])[['rate_dsd_mmph', 'rate_gag_mmph']].mean().reset_index()
+ocRain_daily_df['Date'] = pd.to_datetime(ocRain_daily_df['Date'])
+# ocRain_daily_df['rate_dsd_mmph'] *= 24  # Convert to daily rate
+# ocRain_daily_df['rate_gag_mmph'] *= 24
+
+# make scatterplot comparison of 'rate_dsd_mmph', 'rate_gag_mmph'
+# compute metrics
+relB, rmSQe, corrC = calculate_metrics(ocRain_daily_df['rate_dsd_mmph'], 
+                                        ocRain_daily_df['rate_gag_mmph'])
+print(f"OceanRain DSD vs GAG - Relative Bias: {relB:.2f}, RMSE: {rmSQe:.2f}, Correlation: {corrC:.2f}")
+plt.figure(figsize=(8, 6))
+plt.scatter(ocRain_daily_df['rate_dsd_mmph'], ocRain_daily_df['rate_gag_mmph'], alpha=0.5)
+# Add 1:1 line
+min_val = 0 #min(ocRain_daily_df['rate_dsd_mmph'].min(), ocRain_daily_df['rate_gag_mmph'].min())
+max_val = 250#max(ocRain_daily_df['rate_dsd_mmph'].max(), ocRain_daily_df['rate_gag_mmph'].max())
+plt.plot([min_val, max_val], [min_val, max_val], color='red', linestyle='--')
+plt.xlim(min_val, max_val)
+plt.ylim(min_val, max_val)
+# add metrics
+plt.text(0.45, 0.95, f'Relative Bias: {relB:.2f}\nRMSE: {rmSQe:.2f}\nCorrelation: {corrC:.2f}\n N={ocRain_daily_df.shape[0]}',
+         transform=plt.gca().transAxes, fontsize=12, verticalalignment='top')
+plt.grid(True, alpha=0.3,ls='--', lw=1.2, which='major',c='grey')
+plt.minorticks_on()
+plt.xlabel('DSD Rainfall (mm/h)')
+plt.ylabel('GAG Rainfall (mm/h)')
+plt.title('DSD vs GAG Rainfall')
+plt.show()
+
+ocRain_daily_df[['rate_dsd_mmph', 'rate_gag_mmph']].describe().round(3)
+
+ocRain_daily_df[ocRain_daily_df[['rate_dsd_mmph', 'rate_gag_mmph']] > 0][['rate_dsd_mmph', 'rate_gag_mmph']].describe().round(3)
+
+# Count the number of NaN values in each column of the DataFrame
+nan_counts = ocRain_df[['rate_dsd_mmph', 'rate_gag_mmph']].isna().sum()
+total_counts = len(ocRain_df)
+nan_percentages = (nan_counts / total_counts) * 100
+
+print("NaN counts and percentages in each column:")
+for column in nan_counts.index:
+    print(f"{column}: {nan_counts[column]} NaNs ({nan_percentages[column]:.2f}%)")
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 # Subset ocRain_df to capture Atlantic Ocean data based on Buoy Atlantic Ocean data
 atlantic_ocean_bounds = {
     "lat_min": -30,
@@ -110,6 +179,164 @@ atl_ocRain = ocRain_df[
 atl_ocRain.sort_values(by=['time_utc'], inplace=True)
 
 print(f"Subset Atlantic Ocean data contains {atl_ocRain.shape[0]} records.")
+
+
+# do this analysis startifed by region
+oC_bbx1 = {
+    "lat_min": 30,
+    "lat_max": 60,
+    "lon_min": -180,
+    "lon_max": -140
+}
+
+oC_bbx2 = {
+    "lat_min": 30,
+    "lat_max": 60,
+    "lon_min": -60,
+    "lon_max": -15
+}
+
+oC_bbx3 = {
+    "lat_min": 30,
+    "lat_max": 60,
+    "lon_min": 120,
+    "lon_max": 180
+}
+
+oC_bbx4 = {
+    "lat_min": 30,
+    "lat_max": -30,
+    "lon_min": -180,
+    "lon_max": -60
+}
+
+oC_bbx5 = atlantic_ocean_bounds
+
+oC_bbx6 = {
+    "lat_min": 30,
+    "lat_max": -30,
+    "lon_min": 120,
+    "lon_max": 180
+}
+
+def retrieve_subset_daily_df(bbox):
+    # print min max latlon boxes
+    print(f'Subset data for bbox {bbox}')
+    OC_df = ocRain_df.copy()
+    
+    oC_bbx_df = OC_df[
+    (OC_df['lat'] >= bbox['lat_min']) &
+    (OC_df['lat'] <= bbox['lat_max']) &
+    (OC_df['lon'] >= bbox['lon_min']) &
+    (OC_df['lon'] <= bbox['lon_max'])
+    ].copy()
+
+    # pull out the datetime, rate_dsd_mmph, rate_gag_mmph columns
+    oC_bbx_df = oC_bbx_df[['time_utc', 'rate_dsd_mmph', 'rate_gag_mmph']].copy()
+    print(f"Total records in per min data: {oC_bbx_df.shape[0]}")
+
+    oC_bbx_df.sort_values(by=['time_utc'], inplace=True)  
+
+    print(f"minval: {oC_bbx_df['rate_dsd_mmph'].min()}, maxval: {oC_bbx_df['rate_dsd_mmph'].max()} in per min data DSD")
+    print(f"minval: {oC_bbx_df['rate_gag_mmph'].min()}, maxval: {oC_bbx_df['rate_gag_mmph'].max()} in per min data GAG")
+
+    if not oC_bbx_df.empty:
+        print(f"per min data stats: {oC_bbx_df[['rate_dsd_mmph', 'rate_gag_mmph']].describe()}")
+
+    # remove outliers in the data by setting them to nan for later removing them
+    # Ensure the DataFrame is not empty before calculating the 99th percentile
+    if oC_bbx_df.empty:
+        print("The subset DataFrame is empty. Skipping percentile calculation.")
+        return oC_bbx_df, pd.DataFrame()  # Return empty DataFrames
+
+    # cal the 99th percentile
+    dsd_perc99 = np.quantile(oC_bbx_df['rate_dsd_mmph'].values, 0.99) #oC_bbx_df['rate_dsd_mmph'].quantile(0.99)
+    gag_perc99 = np.quantile(oC_bbx_df['rate_gag_mmph'].values, 0.99)
+    print(f"99th percentile for is DSD: {dsd_perc99:.2f} mmph and Gauge: {gag_perc99:.2f} mmph")
+
+    # oC_bbx_df.loc[(oC_bbx_df['rate_dsd_mmph'] >= dsd_perc99) | (oC_bbx_df['rate_dsd_mmph'] < 0), 'rate_dsd_mmph'] = np.nan
+    # oC_bbx_df.loc[(oC_bbx_df['rate_gag_mmph'] >= gag_perc99) | (oC_bbx_df['rate_gag_mmph'] < 0.0), 'rate_gag_mmph'] = np.nan
+
+    # 99.9899978637695 seems to be a common outlier value in the data
+
+    oC_bbx_df.loc[(oC_bbx_df['rate_dsd_mmph'] >= round(99.9899978637695,5)) | (oC_bbx_df['rate_dsd_mmph'] < 0), 'rate_dsd_mmph'] = np.nan
+    oC_bbx_df.loc[(oC_bbx_df['rate_gag_mmph'] >= round(99.9899978637695,5)) | (oC_bbx_df['rate_gag_mmph'] < 0.0), 'rate_gag_mmph'] = np.nan
+
+    # count total nans in rate_dsd_mmph and rate_gag_mmph
+    total_nans_dsd = oC_bbx_df['rate_dsd_mmph'].isna().sum()
+    total_nans_gag = oC_bbx_df['rate_gag_mmph'].isna().sum()
+    print(f"Total NaNs dropped - DSD: {total_nans_dsd}, Gauge: {total_nans_gag}")
+
+
+    oC_bbx_df.dropna(subset=['rate_dsd_mmph', 'rate_gag_mmph'],axis=0, inplace=True)
+    # print min max dates
+    print(f"Date range in per min data: {oC_bbx_df['time_utc'].min()} to {oC_bbx_df['time_utc'].max()}")
+
+    print(f"Subset per min data contains {oC_bbx_df.shape[0]} records after dropping NaNs.")
+    oC_bbx_df['Date'] = pd.to_datetime(oC_bbx_df['time_utc']).dt.date
+    oC_bbx_df['Year'] = pd.to_datetime(oC_bbx_df['time_utc']).dt.year #['Year']
+    # Group by date and calculate daily mean
+    oC_bbx_df_daily = oC_bbx_df.groupby(['Year', 'Date'])[['rate_dsd_mmph', 'rate_gag_mmph']].mean().reset_index()
+    oC_bbx_df_daily['Date'] = pd.to_datetime(oC_bbx_df_daily['Date'])
+
+    oC_bbx_df_daily['rate_dsd_mmph'] *= 24  # Convert to daily rate
+    oC_bbx_df_daily['rate_gag_mmph'] *= 24  # Convert to daily rate
+
+    # get min max in data for plotting 1:1 line
+    min_val = min(oC_bbx_df_daily['rate_dsd_mmph'].min(), oC_bbx_df_daily['rate_gag_mmph'].min())
+    max_val = max(oC_bbx_df_daily['rate_dsd_mmph'].max(), oC_bbx_df_daily['rate_gag_mmph'].max())
+    print(f"min_val: {min_val:.2f}, max_val: {max_val:.2f} in daily data")
+    buffer = (max_val - min_val) * 0.05  # 5% buffer
+    min_val -= buffer
+    max_val += buffer   
+    
+
+    # validate cleaned data before computing metrics
+    if oC_bbx_df_daily['rate_dsd_mmph'].empty or oC_bbx_df_daily['rate_gag_mmph'].empty:
+        print(f"No valid data available for bbox {bbox} after cleaning.")
+        return oC_bbx_df, pd.DataFrame()  # Return an empty DataFrame instead of None
+
+    # compute metrics
+    relB, rmSQe, corrC = calculate_metrics(oC_bbx_df_daily['rate_dsd_mmph'], 
+                                            oC_bbx_df_daily['rate_gag_mmph'])
+
+    # scatterplot comparison of 'rate_dsd_mmph', 'rate_gag_mmph'
+    plt.figure(figsize=(8, 6))
+    plt.scatter(oC_bbx_df_daily['rate_dsd_mmph'], oC_bbx_df_daily['rate_gag_mmph'], alpha=0.5)
+    # Add 1:1 line
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--', label='1:1 Line')
+    plt.xlim(min_val, max_val)
+    plt.ylim(min_val, max_val)
+    # add metrics
+    plt.text(0.05, 0.95, f'Relative Bias: {relB:.2f}\nRMSE: {rmSQe:.2f}\nCorrelation: {corrC:.2f}\n N={oC_bbx_df_daily.shape[0]}',
+             transform=plt.gca().transAxes, fontsize=12, verticalalignment='top')
+    plt.xlabel('DSD Rate (mmph)')
+    plt.ylabel('Gauge Rate (mmph)')
+    plt.title(f'DSD vs Gauge Rate for \n bbox {bbox}')
+    plt.grid(True, alpha=0.3,ls='--', lw=1.5, which='major',c='grey')
+    plt.minorticks_on()
+    plt.show()
+    gc.collect()
+    
+    return oC_bbx_df, oC_bbx_df_daily
+
+oC_bbx1_df, oC_bbx1_df_daily = retrieve_subset_daily_df(oC_bbx1)
+gc.collect()
+
+oC_bbx2_df, oC_bbx2_df_daily = retrieve_subset_daily_df(oC_bbx2)
+gc.collect()
+
+oC_bbx3_df, oC_bbx3_df_daily = retrieve_subset_daily_df(oC_bbx3)
+gc.collect()
+
+oC_bbx4_df, oC_bbx4_df_daily = retrieve_subset_daily_df(oC_bbx4)
+gc.collect()
+
+oC_bbx5_df, oC_bbx5_df_daily = retrieve_subset_daily_df(oC_bbx5)
+gc.collect()
+
+oC_bbx6_df, oC_bbx6_df_daily = retrieve_subset_daily_df(oC_bbx6)
+gc.collect()
 
 gc.collect()
 #%% CLASSIFY AND GROUP PAL FILES
@@ -1335,3 +1562,157 @@ ax.text(0.05, 0.95,
     transform=ax.transAxes, fontsize=18, verticalalignment='top')
 plt.tight_layout()
 gc.collect()
+
+
+#%%
+# DO A FOCUSED SPACE-TIME COMPARISON OF BUOY AND OCEANRAIN DATA
+grid_resolution = 2.5
+atl_oc_Rain_df = atl_ocRain.copy()
+atl_oc_Rain_df.loc[(atl_oc_Rain_df['rate_gag_mmph'] > 99) | \
+                    (atl_oc_Rain_df['rate_gag_mmph'] < 0.0), 'rate_gag_mmph'] = np.nan
+atl_oc_Rain_df.loc[atl_oc_Rain_df['rate_dsd_mmph'] < 0.0, 'rate_dsd_mmph'] = np.nan
+
+atl_oc_Rain_df['lon'] = to180(atl_oc_Rain_df['lon'].values)# estimate row col from lat lon in 2.5 deg grid for atl_oc_Rain
+atl_oc_Rain_df['oc_row'] = np.floor((90 - atl_oc_Rain_df['lat']) / grid_resolution).astype(int)
+atl_oc_Rain_df['oc_col'] = np.floor((atl_oc_Rain_df['lon'] + 180) / grid_resolution).astype(int)
+
+atl_oc_Rain_df['month'] = atl_oc_Rain_df['time_utc'].dt.month
+atl_oc_Rain_df['year'] = atl_oc_Rain_df['time_utc'].dt.year
+atl_oc_Rain_df['date'] = atl_oc_Rain_df['time_utc'].dt.date  # Extract date from time
+atl_oc_Rain_df['date'] = pd.to_datetime(atl_oc_Rain_df['date'])
+
+# drop rows with NAN in rate_d
+atl_buoy_dfs = []
+for bfle in atlantic_buoy_files:
+    buoy_ds = xr.open_dataset(bfle)
+    buoy_df = pd.DataFrame({
+        'time': pd.to_datetime(buoy_ds['time'].values),            
+        'rain_rate': buoy_ds['RN_485'].values.flatten(),
+        'quality_code': buoy_ds['QRN_5485'].values.flatten(),
+        
+    })
+    buoy_df['lat'] = buoy_ds['lat'].values.flatten()[0]
+    buoy_df['lon'] = to180(buoy_ds['lon'].values.flatten()[0])
+
+    # Filter out rows with negative rain_rate
+    buoy_df = buoy_df[buoy_df['rain_rate'] >= 0]
+    buoy_df = buoy_df.dropna(subset=['rain_rate'], axis=0, how='any')
+
+    # buoys cover longer time period than pal so select date time period covering pal datetime period range
+    ocR_yr_start_date = atl_oc_Rain_df['time_utc'].min()
+    ocR_yr_end_date = atl_oc_Rain_df['time_utc'].max()
+    buoy_df = buoy_df[(buoy_df['time'] >= ocR_yr_start_date) & (buoy_df['time'] <= ocR_yr_end_date)]
+
+    # To get probably valid data only, request QRN_5485>=1 and QRN_5485<=3.
+    buoy_df = buoy_df[(buoy_df['quality_code'] >= 1) & (buoy_df['quality_code'] <= 3)]
+
+    # estimate row col from lat lon in 2.5 deg grid for atl_buoy
+    buoy_df['b_row'] = np.floor((90 - buoy_df['lat']) / grid_resolution).astype(int)
+    buoy_df['b_col'] = np.floor((buoy_df['lon'] + 180) / grid_resolution).astype(int)
+
+    # daily rain rate
+    # buoy_df['rain_rate'] *= 24
+    buoy_df['ID'] = os.path.basename(os.path.basename(bfle))  # Extract Buoy file ID from filename
+
+    atl_buoy_dfs.append(buoy_df)
+atl_buoy_dfs = pd.concat(atl_buoy_dfs, ignore_index=True)
+atl_buoy_dfs['month'] = atl_buoy_dfs['time'].dt.month
+atl_buoy_dfs['year'] = atl_buoy_dfs['time'].dt.year
+atl_buoy_dfs['date'] = atl_buoy_dfs['time'].dt.date  # Extract date from time
+atl_buoy_dfs['date'] = pd.to_datetime(atl_buoy_dfs['date'])
+
+# merge atl_oc_Rain_df and atl_buoy_dfs on date, row, col
+merged_df = pd.merge(
+    atl_oc_Rain_df, atl_buoy_dfs,
+    left_on=['date', 'oc_row', 'oc_col'],
+    right_on=['date', 'b_row', 'b_col'],
+    suffixes=('_ocR', '_buoy')
+)
+# select specific columns
+merged_df_sub = merged_df[['time_utc', 'date', 'oc_row', 'oc_col', 'b_row', 'b_col', 
+                       'rate_dsd_mmph', 'rate_gag_mmph', 'rain_rate']]
+
+merged_df_sub_grp = merged_df_sub.groupby(['date', 'oc_row', 'oc_col']).mean(['rate_dsd_mmph', 'rate_gag_mmph', 'rain_rate']).reset_index()
+
+# compute daily 
+merged_df_sub_grp['rate_dsd_mmph'] *= 24
+merged_df_sub_grp['rate_gag_mmph'] *= 24
+merged_df_sub_grp['rain_rate'] *= 24
+
+# - - --  -- - - -  --  -- - - -  --  -- - - -  --  -- - - -  --  -- - - -  --  -- - - - 
+# compute and plot pdfc and pdfv for ocRain and Buoy data
+ind_ocR_pdfc_pdfv_dsd = compute_pdf_elements(merged_df_sub_grp, 'rate_dsd_mmph', bin_values)
+ind_ocR_pdfc_pdfv_gg = compute_pdf_elements(merged_df_sub_grp, 'rate_gag_mmph', bin_values)
+
+ind_buoy_pdfc_pdfv = compute_pdf_elements(merged_df_sub_grp, 'rain_rate', bin_values)
+
+fig, axs = plt.subplots(1, 2, figsize=(16, 10), 
+                        sharex=False, sharey=False, dpi=100)
+
+# Set common x-axis ticks and labels
+bin_positions = range(len(bin_labels))
+# Add grid lines and customize ticks
+for ax in axs.flat:
+    ax.grid(True, which='major', linestyle='--', alpha=0.7)
+    ax.tick_params(axis='both', which='major', length=8, width=1.5)
+
+# Line Plot TNEP PDFc
+axs[0].plot(bin_positions, ind_ocR_pdfc_pdfv_dsd['pdfc'], label='OceanRain_dsd', marker='o',markersize=8,lw=lw, c='orange')
+axs[0].plot(bin_positions, ind_ocR_pdfc_pdfv_gg['pdfc'], label='OceanRain_rg', marker='o',markersize=8,lw=lw, c='b')
+axs[0].plot(bin_positions, ind_buoy_pdfc_pdfv['pdfc'], label='Buoy', marker='x',markersize=8,lw=lw, c='k')
+axs[0].set_title('ATLANTIC', fontsize=18, fontweight='bold')
+axs[0].set_ylabel('PDFc (%)', fontsize=18, fontweight='bold')
+axs[0].set_xticks(bin_positions)
+axs[0].set_xticklabels(bin_labels)
+axs[0].legend(fontsize=18, frameon=False)
+
+# Line Plot TNEP PDFv
+axs[1].plot(bin_positions, ind_ocR_pdfc_pdfv_dsd['pdfv'], label='OceanRain_dsd', marker='o', lw=lw, c='orange')
+axs[1].plot(bin_positions, ind_ocR_pdfc_pdfv_gg['pdfv'], label='OceanRain_rg', marker='o', lw=lw, c='b')
+axs[1].plot(bin_positions, ind_buoy_pdfc_pdfv['pdfv'], label='Buoy', marker='x', lw=lw, c='k')
+axs[1].set_title('ATLANTIC', fontsize=18, fontweight='bold')
+axs[1].set_ylabel('PDFv (%)', fontsize=18, fontweight='bold')
+axs[1].set_xticks(bin_positions)
+axs[1].set_xticklabels(bin_labels)
+axs[1].legend(fontsize=18, frameon=False)
+# Adjust layout
+plt.tight_layout()
+
+
+# - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - -
+# plot the monthly mean as well
+
+# calculate monthly means
+merged_df_sub_grp_monthly = merged_df_sub_grp.copy()
+merged_df_sub_grp_monthly['month'] = merged_df_sub_grp_monthly['date'].dt.month
+merged_df_sub_grp_monthly['year'] = merged_df_sub_grp_monthly['date'].dt.year
+merged_df_sub_grp_monthly = merged_df_sub_grp_monthly.groupby(['month'])[['rate_dsd_mmph', 'rate_gag_mmph', 'rain_rate']].mean().reset_index()
+
+
+fig, ax = plt.subplots(figsize=(16, 6), dpi=100)
+
+# Plot monthly rainfall time series
+ax.plot(merged_df_sub_grp_monthly['month'].values, merged_df_sub_grp_monthly['rain_rate'].values, 
+    marker='x', lw=lw, color='k', label='Buoy')
+ax.plot(merged_df_sub_grp_monthly['month'].values, merged_df_sub_grp_monthly['rate_dsd_mmph'].values, 
+    marker='o', lw=lw, color='orange', label='OceanRain_dsd')
+ax.plot(merged_df_sub_grp_monthly['month'].values, merged_df_sub_grp_monthly['rate_gag_mmph'].values, 
+    marker='o', lw=lw, color='blue', label='OceanRain_gag')
+ax.set_xticks(month_positions)
+ax.set_xticklabels(month_labels)
+ax.legend(fontsize=18, frameon=False)
+
+ax.set_ylabel('Rainfall [mm/day]', fontsize=18, fontweight='bold')
+ax.set_xlabel('Month', fontsize=18, fontweight='bold', labelpad=10)
+ax.set_title("ATLANTIC Mean Monthly Rainfall", fontsize=20, fontweight='bold', pad=15)
+ax.grid(True, which='major', axis='both', linestyle='--', alpha=0.7)
+ax.yaxis.set_minor_locator(AutoMinorLocator(4))  # 4 minor ticks between each major
+ax.tick_params(axis='x', which='major', length=12, width=2)
+ax.tick_params(axis='x', which='minor', length=6, width=1)
+ax.tick_params(axis='y', which='major', length=12, width=2)
+ax.tick_params(axis='y', which='minor', length=6, width=1)
+for label in ax.get_yticklabels():
+    label.set_fontsize(20)
+    label.set_fontweight('bold')
+
+plt.tight_layout()

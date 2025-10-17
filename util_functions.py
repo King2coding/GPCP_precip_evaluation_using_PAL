@@ -140,6 +140,13 @@ bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
 # Month labels for x-axis
 month_labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 month_positions = range(1, 13)
+
+BOXES = {
+    "box1": {"lat": ( 5, 15),  "lon": [(160, 175)]},                 # 5–15N, 160–175E
+    "box2": {"lat": (-15, -5), "lon": [(170, 180), (-180, -160)]},   # 5–15S, 170–200E (split)
+    "box3": {"lat": (-5,  5),  "lon": [(160, 180)]},                 # 5N–5S, 160–180E
+    "box4": {"lat": ( 5, 15),  "lon": [(135, 160)]},                 # 5–15N, 135–160E
+}
 #%% DEFINE FUNCTIONS
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
 
@@ -193,6 +200,58 @@ def find_grid_indices(lat, lon, resolution):
     row, col = rowcol(transform, lon, lat)
 
     return row, col
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def to180(lon):
+    # works for scalar or array
+    return ((lon + 180) % 360) - 180
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+# If needed: normalize longitudes to [-180, 180) and sort
+def to_180(ds, lon_name="lon"):
+    if (ds[lon_name].min() < -180) or (ds[lon_name].max() > 180):
+        ds = ds.assign_coords({lon_name: ((ds[lon_name] + 180) % 360) - 180})
+    # ensure ascending for slice ops
+    if not np.all(np.diff(ds[lon_name].values) > 0):
+        ds = ds.sortby(ds[lon_name])
+    return ds
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+# Generic subset using where-mask (handles split lon ranges)
+def subset_box(ds: xr.Dataset, box: str, 
+               lat='latitude', lon='longitude') -> xr.Dataset:
+    """Subset to a named box; handles union of lon segments (dateline split)."""
+    lat_min, lat_max = BOXES[box]["lat"]
+    segs = BOXES[box]["lon"]
+    parts = []
+    for lo, hi in segs:
+        # inclusive slice; small eps to keep 180/-180 in
+        eps = 1e-9
+        parts.append(ds.sel({lat: slice(lat_min, lat_max),
+                             lon: slice(lo - eps, hi + eps)}))
+    if len(parts) == 1:
+        sub = parts[0]
+    else:
+        sub = xr.concat(parts, dim=lon).sortby(lon)  # merge lon pieces for Box 2
+    return sub
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def lon_segments_0_360_to_180(l0, l1):
+    # input in 0–360, output list of (lo, hi) segments in −180…180, split if crossing 180E
+    if l1 <= 180 or l0 >= 180:
+        return [(to180(l0), to180(l1))]
+    else:
+        return [(to180(l0), 180.0), (-180.0, to180(l1))]
+    
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+def draw_box(ax, lat_min, lat_max, lon0, lon1, **style):
+    for lo, hi in lon_segments_0_360_to_180(lon0, lon1):
+        w = hi - lo
+        h = lat_max - lat_min
+        ax.add_patch(Rectangle((lo, lat_min), w, h, transform=ccrs.PlateCarree(),
+                               fill=False, **style))
+        print(f'')
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 def ds_swaplon(ds):
@@ -1259,6 +1318,13 @@ def extract_timeseries_memory_efficient(xr_dataset, lat, lon, var_name=None, chu
     - pandas DataFrame with time series data
     """
     import gc
+
+    # rename xr_dataset lat/lon if needed
+    coord_lst = list(xr_dataset.coords)
+    if 'latitude' in coord_lst:
+        xr_dataset = xr_dataset.rename({'latitude': 'lat'})
+    if 'longitude' in coord_lst:
+        xr_dataset = xr_dataset.rename({'longitude': 'lon'})
     
     # Select the nearest lat/lon point (this doesn't load data yet)
     if var_name:
