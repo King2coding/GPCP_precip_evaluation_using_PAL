@@ -994,29 +994,43 @@ def read_nc_imger_file_memory_efficient(file_path, product):
     - imerg_time_index: Pandas datetime index
     """
     try:
-        with xr.open_dataset(file_path) as imerg_precip_data:
-            if product == 'imerg_fn':
-                precip_aray = imerg_precip_data.precipitation.data 
-            elif product == 'imerg_mw':
-                precip_aray = imerg_precip_data.MWprecipitation.data 
-            else:
-                raise ValueError(f"Unknown product type: {product}")
-            
-            # Process the array and convert to float32 to save memory
-            precip_aray = np.flip(precip_aray[0,:,:].transpose(), axis=0).astype(np.float32)
-            imerg_time = imerg_precip_data.attrs['BeginDate']
+        if product == "imerg_fn":
+            with xr.open_dataset(
+                file_path,
+                engine="netcdf4",
+                chunks={"time": 120, "lat": 180, "lon": 360},
+                cache=False,
+            ) as ds:
+                precip_array = ds["precipitation"].data    # lazy dask array
+
+        elif product == "imerg_mw":
+            with xr.open_dataset(
+                file_path,
+                engine="netcdf4",
+                chunks={"time": 120, "lat": 180, "lon": 360},
+                cache=False,
+            ) as ds:
+                precip_array = ds["precipitation"].data    # lazy dask array
     
-        # Convert time to pandas datetime
-        imerg_time_index = pd.to_datetime(imerg_time, format='%Y-%m-%d')
-        
-        # Clean up
-        del imerg_time
-        
-        return precip_aray, imerg_time_index
-        
+        else:
+            raise ValueError(f"Unknown product type: {product}")
+
     except Exception as e:
-        print(f"Error reading file {file_path}: {e}")
-        return None, None
+        print(f"Error reading {file_path}: {e}")
+        precip_array = None
+            
+    # Process the array and convert to float32 to save memory
+    precip_array = np.flip(precip_array[0,:,:].transpose(), axis=0).astype(np.float32)
+    imerg_time = ds.attrs['BeginDate']
+    ds.close()
+
+    # Convert time to pandas datetime
+    imerg_time_index = pd.to_datetime(imerg_time, format='%Y-%m-%d')
+    
+    # Clean up
+    del imerg_time
+
+    return precip_array, imerg_time_index
 
 # - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - - - - - - 
 def process_imerg(files, product):

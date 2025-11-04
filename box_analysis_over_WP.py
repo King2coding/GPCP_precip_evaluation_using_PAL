@@ -14,6 +14,11 @@ from matplotlib.patches import Rectangle
 import matplotlib as mpl
 from matplotlib.legend import Legend
 import dask
+
+from multiprocessing import Pool
+from rasterio.warp import Resampling
+from pyproj import CRS
+
 import seaborn as sns
 from matplotlib.ticker import FuncFormatter
 import cartopy.crs as ccrs
@@ -51,11 +56,15 @@ moored_bouys_paf = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys'
 
 path_to_gpcp_v1pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v1_pnt_3_2010_2020'
 
-path_to_gpcp_v3pt2 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_2_2010_2020'
+path_to_gpcp_v3pt2 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_2_2000_2020'
 
-path_to_gpcp_v3pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_3_2010_2020'
+path_to_gpcp_v3pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_3_1998_2024'
 
 path_to_imerg = r'/ra1/pubdat/AVHRR_CloudSat_proj/IMERG/IMERGV7/Data_V7_daily_1998-2025'
+
+path_to_era5_tp = r'/ra1/pubdat/ECMWF/ERA5/daily'
+
+path_to_merra2 = r'/ra1/pubdat/MERRA/Daily'
 
 path_to_put_plts = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/plots'
 
@@ -73,15 +82,19 @@ all_gpcp_v1pt3_files = sorted([os.path.join(path_to_gpcp_v1pt3, f) for f in os.l
 all_gpcp_v3pt2_files = sorted([os.path.join(path_to_gpcp_v3pt2, f) for f in os.listdir(path_to_gpcp_v3pt2) if f.endswith('.nc4')])
 
 all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.listdir(path_to_gpcp_v3pt3) if f.endswith('.nc4')])
-all_gpcp_v3pt3_files_2010_2020 = [
-                                  f for f in all_gpcp_v3pt3_files 
-                                  if 2010 <= int(os.path.basename(f).split('_')[2][:4]) <= 2020]
+# all_gpcp_v3pt3_files_2010_2020 = [
+#                                   f for f in all_gpcp_v3pt3_files 
+#                                   if 2010 <= int(os.path.basename(f).split('_')[2][:4]) <= 2020]
 
 all_imerg_files = sorted([os.path.join(path_to_imerg, f) for f in os.listdir(path_to_imerg) if f.endswith('.nc4')])
-all_imerg_files_2010_2020 = [
-    f for f in all_imerg_files 
-    if 2010 <= int(os.path.basename(f).split('.')[4][:4]) <= 2020
-]
+# all_imerg_files_2010_2020 = [
+#     f for f in all_imerg_files 
+#     if 2010 <= int(os.path.basename(f).split('.')[4][:4]) <= 2020
+# ]
+all_era5_tp_files = sorted([os.path.join(path_to_era5_tp, f) for f in os.listdir(path_to_era5_tp) if f'era5_tp_' in f and f.endswith('.nc')])
+
+all_merra2_files = sorted([os.path.join(path_to_merra2, f) for f in os.listdir(path_to_merra2) if f.endswith('.nc4')])
+
 
 # read buoys data
 # Define directories for each region
@@ -284,7 +297,7 @@ LINEWIDTH_BOX    = 2.2
 STAR_SIZE        = 70
 
 # ------------------- map window -------------------
-LON_MIN, LON_MAX = 130, 210
+LON_MIN, LON_MAX = 125, 210
 LAT_MIN, LAT_MAX = -20, 20
 
 # ------------------- helpers -------------------
@@ -328,13 +341,18 @@ def lat_label_ns(y, pos=None):
     return f"{int(round(abs(y)))}°{hemi}"
 
 # ------------------- boxes (0…360°) -------------------
+# boxes = [
+#     dict(name="Box 1", lat_min=  5, lat_max= 15, lon_min=160, lon_max=175, color="k",          ls="--"),
+#     dict(name="Box 2", lat_min=-15, lat_max= -5, lon_min=170, lon_max=200, color="tab:green",  ls="--"),
+#     dict(name="Box 3", lat_min= -5, lat_max=  5, lon_min=160, lon_max=180, color="royalblue",  ls="--"),
+#     dict(name="Box 4", lat_min=  5, lat_max= 15, lon_min=135, lon_max=160, color="orange",     ls="--"),
+# ]
 boxes = [
-    dict(name="Box 1", lat_min=  5, lat_max= 15, lon_min=160, lon_max=175, color="k",          ls="--"),
-    dict(name="Box 2", lat_min=-15, lat_max= -5, lon_min=170, lon_max=200, color="tab:green",  ls="--"),
-    dict(name="Box 3", lat_min= -5, lat_max=  5, lon_min=160, lon_max=180, color="royalblue",  ls="--"),
-    dict(name="Box 4", lat_min=  5, lat_max= 15, lon_min=135, lon_max=160, color="orange",     ls="--"),
+    dict(name="Box 1", lat_min=  4, lat_max= 16, lon_min=159, lon_max=180, color="k",          ls="--"),
+    dict(name="Box 2", lat_min=-16, lat_max= -7, lon_min=170, lon_max=200, color="tab:green",  ls="--"),
+    dict(name="Box 3", lat_min= -7, lat_max=  4, lon_min=159, lon_max=180, color="royalblue",  ls="--"),
+    dict(name="Box 4", lat_min=  0.5, lat_max= 16, lon_min=125, lon_max=159, color="orange",     ls="--"),
 ]
-
 # which PAL regions to include
 include_tnep = True
 regions      = ["TNWP"] + (["TNEP"] if include_tnep else [])
@@ -374,10 +392,10 @@ for b in boxes:
                      fill=False, ec=b["color"], ls=b["ls"], lw=LINEWIDTH_BOX,
                      transform=ccrs.PlateCarree(), zorder=3)
     ax.add_patch(rect)
-    ax.text(b["lon_min"]+0.8, b["lat_max"]-1.2, b["name"],
-            transform=ccrs.PlateCarree(), fontsize=BOX_LABEL_SIZE, weight="bold",
-            color=b["color"], bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
-            zorder=5)
+    # ax.text(b["lon_min"]+0.8, b["lat_max"]-1.2, b["name"],
+    #         transform=ccrs.PlateCarree(), fontsize=BOX_LABEL_SIZE, weight="bold",
+    #         color=b["color"], bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+    #         zorder=5)
 
 # ------------------- PALs (only in-box segments) -------------------
 def plot_pals_segmented(pals_classed_by_region):
@@ -412,10 +430,10 @@ plot_pacific_buoys(pacific_buoy_files)
 
 # ------------------- legend -------------------
 handles = [
-    plt.Line2D([0],[0], color="k",         ls="--", lw=LINEWIDTH_BOX, label="Box 1 (5–15°N, 160–175°E)"),
-    plt.Line2D([0],[0], color="tab:green", ls="--", lw=LINEWIDTH_BOX, label="Box 2 (5–15°S, 170–200°E)"),
-    plt.Line2D([0],[0], color="royalblue", ls="--", lw=LINEWIDTH_BOX, label="Box 3 (5°N–5°S, 160–180°E)"),
-    plt.Line2D([0],[0], color="orange",    ls="--", lw=LINEWIDTH_BOX, label="Box 4 (5–15°N, 135–160°E)"),
+    plt.Line2D([0],[0], color="k",         ls="--", lw=LINEWIDTH_BOX, label="Box 1 (4–16°N, 159–180°E)"),
+    plt.Line2D([0],[0], color="tab:green", ls="--", lw=LINEWIDTH_BOX, label="Box 2 (7–16°S, 170–200°E)"),
+    plt.Line2D([0],[0], color="royalblue", ls="--", lw=LINEWIDTH_BOX, label="Box 3 (4°N–7°S, 159–180°E)"),
+    plt.Line2D([0],[0], color="orange",    ls="--", lw=LINEWIDTH_BOX, label="Box 4 (0.5–16°N, 125–159°E)"),
     plt.Line2D([0],[0], color=pal_colors["TNWP"], lw=LINEWIDTH_PAL, label="TNWP PALs (in-box segments)")
 ]
 if include_tnep:
@@ -444,84 +462,37 @@ dask.config.set({
     'num_workers': 2              # Limit workers to be server-friendly
 })
 
-# Use moderate batch size
-batch_size = 30
-
-# Process GPCP v1.3 files in smaller batches with better error handling
-print(f"Processing GPCP v1.3 files in batches of {batch_size}...")
-gpcp_v1pt3_batches = [all_gpcp_v1pt3_files[i:i + batch_size] for i in range(0, len(all_gpcp_v1pt3_files), batch_size)]
-gpcp_ds_v1pt3_xr_list = []
-
-for i, batch in enumerate(gpcp_v1pt3_batches):
-    if i % 30 == 0:
-        # Print progress every 30 batches
-        print(f"Processing GPCP v1.3 batch {i+1}/{len(gpcp_v1pt3_batches)}")
-    
-    processed_batch = simple_process_gpcp_batch(batch, "v1.3")
-    if processed_batch is not None:
-        gpcp_ds_v1pt3_xr_list.append(processed_batch)
-    
-    # Simple garbage collection
-    gc.collect()
-
-# Combine all processed batches into a single xarray dataset - simple version
-if gpcp_ds_v1pt3_xr_list:
-    gpcp_ds_v1pt3_xr = xr.concat(gpcp_ds_v1pt3_xr_list, dim="time")
-    print("GPCP v1.3 loading complete")
-else:
-    print("Warning: No GPCP v1.3 data was successfully loaded")
-    gpcp_ds_v1pt3_xr = None
-#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
-
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 # Process GPCP v3.2 files in smaller batches with better error handling
-print(f"Processing GPCP v3.2 files in batches of {batch_size}...")
-gpcp_v3pt2_batches = [all_gpcp_v3pt2_files[i:i + batch_size] for i in range(0, len(all_gpcp_v3pt2_files), batch_size)]
-gpcp_ds_v3pt2_xr_list = []
+print(f"Processing GPCP v3.2 files in total number of {len(all_gpcp_v3pt2_files)}...")
+gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcp_v3pt2_files,
+                                    combine="nested",              # files are time-sequenced
+                                    concat_dim="time",             # concatenate along time
+                                    data_vars="precip",           # don't unnecessarily align data_vars
+                                    coords="minimal",
+                                    compat="override",
+                                    parallel=True,
+                                    engine="netcdf4",
+                                    chunks={"time": 120, "lat": 180, "lon": 360},  # <<< important
+                                    cache=False
+                                    )
 
-for i, batch in enumerate(gpcp_v3pt2_batches):
-    if i % 30 == 0:
-        print(f"Processing GPCP v3.2 batch {i+1}/{len(gpcp_v3pt2_batches)}")
-    
-    processed_batch = simple_process_gpcp_batch(batch, "v3.2")
-    if processed_batch is not None:
-        gpcp_ds_v3pt2_xr_list.append(processed_batch)
-    
-    # Simple garbage collection
-    gc.collect()
-
-# Combine all processed batches into a single xarray dataset - simple version
-if gpcp_ds_v3pt2_xr_list:
-    gpcp_ds_v3pt2_xr = xr.concat(gpcp_ds_v3pt2_xr_list, dim="time")
-    print("GPCP v3.2 loading complete")
-else:
-    print("Warning: No GPCP v3.2 data was successfully loaded")
-    gpcp_ds_v3pt2_xr = None
+gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 # Process GPCP v3.3 files in smaller batches with better error handling
-print(f"Processing GPCP v3.3 files in batches of {batch_size}...")
-gpcp_v3pt3_batches = [all_gpcp_v3pt3_files_2010_2020[i:i + batch_size] for i \
-                      in range(0, len(all_gpcp_v3pt3_files_2010_2020), batch_size)]
-gpcp_ds_v3pt3_xr_list = []
-
-for i, batch in enumerate(gpcp_v3pt3_batches):
-    if i % 30 == 0:
-        print(f"Processing GPCP v3.3 batch {i+1}/{len(gpcp_v3pt3_batches)}")
-
-    processed_batch = simple_process_gpcp_batch(batch, "v3.3")
-    if processed_batch is not None:
-        gpcp_ds_v3pt3_xr_list.append(processed_batch)
-    
-    # Simple garbage collection
-    gc.collect()
-
-# Combine all processed batches into a single xarray dataset - simple version
-if gpcp_ds_v3pt3_xr_list:
-    gpcp_ds_v3pt3_xr = xr.concat(gpcp_ds_v3pt3_xr_list, dim="time")
-    print("GPCP v3.3 loading complete")
-else:
-    print("Warning: No GPCP v3.3 data was successfully loaded")
-    gpcp_ds_v3pt3_xr = None
+print(f"Processing GPCP v3.3 files in total number of {len(all_gpcp_v3pt3_files)}...")
+gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files,
+                                    combine="nested",              # files are time-sequenced
+                                    concat_dim="time",             # concatenate along time
+                                    data_vars="precip",           # don't unnecessarily align data_vars
+                                    coords="minimal",
+                                    compat="override",
+                                    parallel=True,
+                                    engine="netcdf4",
+                                    chunks={"time": 120, "lat": 180, "lon": 360},  # <<< important
+                                    cache=False
+                                    )
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 
@@ -530,7 +501,7 @@ else:
 # imerg_batches = [all_imerg_files_2010_2020[i:i + batch_size] for i \
 #                   in range(0, len(all_imerg_files_2010_2020), batch_size)]
 imerg_ds_xr_list = []
-
+# precipitation
 # Use smaller batch size for IMERG to reduce memory pressure
 imerg_batch_size = 15 #min(batch_size, 100)  # Limit IMERG batch size
 print(f"Using IMERG batch size: {imerg_batch_size}")
@@ -589,6 +560,79 @@ else:
 
 gc.collect()  # Clean up memory
 print("Data loading phase complete!")
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
+def process_era5_file(file_info):
+    idx, file_path = file_info
+    if idx % 5 == 0:
+        print(f"Processing ERA5 file {idx+1}/{len(all_era5_tp_files)}")
+    era5_xr = xr.open_dataset(file_path, engine='netcdf4')
+    era5_xr = ds_swaplon(era5_xr)
+    # data units are in m per day, convert to mm/day using 1000 factor
+    era5_xr['tp'] = era5_xr['tp'] * 1000  # mm/h
+    era5_xr['tp'] = era5_xr['tp'] * 24  # mm/day
+    # resample to 0.5 degree resolution
+    cc = CRS.from_authority(code=4326, auth_name='EPSG')
+    era5_xr.rio.write_crs(cc.to_string(), inplace=True)
+    era5_xr = era5_xr.rio.reproject(
+        era5_xr.rio.crs,
+        shape=(360, 720),#gpcp_ds_v3pt2_xr['precip'].shape[1:], # # set the shape as the GPCP data
+        resampling=Resampling.bilinear,
+    )
+    return era5_xr
+
+era5_xr = xr.open_dataset(all_era5_tp_files[3], engine='netcdf4')
+era5_xr = ds_swaplon(era5_xr)
+
+# Use multiprocessing to process files in parallel
+era5_ds_xr_list = []
+with Pool(processes=15) as pool:  # Adjust the number of processes as needed
+    era5_ds_xr_list = pool.map(process_era5_file, enumerate(all_era5_tp_files))
+# Combine all processed batches into a single xarray dataset - simple version
+if era5_ds_xr_list:
+    era5_ds_xr = xr.concat(era5_ds_xr_list, dim="valid_time")
+    print("ERA5 loading complete")
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
+# Merra2 processingg using multiprocessing
+def process_merra2_file(file_info):
+    idx, file_path = file_info
+    try:
+        if idx % 1000 == 0:
+            print(f"Processing MERRA2 file {idx+1}/{len(all_merra2_files)}")
+        mer2_xr = xr.open_dataset(file_path, engine='netcdf4')
+        # convert units in kg m-2 s-1 to mm/day by a factor of 3600*24
+        mer2_xr = mer2_xr['PRECTOTCORR'] * 3600
+        mer2_xr = mer2_xr.mean(dim='time')
+        mer2_xr = mer2_xr * 24  # convert to mm/day
+        # Add a time dimension based on the file name or metadata
+        time = pd.to_datetime(os.path.basename(file_path).split('.')[5], format='%Y%m%d')
+        mer2_xr = mer2_xr.expand_dims(time=[time])
+        # resample to 0.5 degree resolution
+        cc = CRS.from_authority(code=4326, auth_name='EPSG')
+        mer2_xr.rio.write_crs(cc.to_string(), inplace=True)
+        # Set spatial dimensions explicitly
+        mer2_xr = mer2_xr.rio.set_spatial_dims(x_dim="lon", y_dim="lat", inplace=True)
+        mer2_xr = mer2_xr.rio.reproject(
+            mer2_xr.rio.crs,
+            shape=(360, 720),#gpcp_ds_v3pt2_xr['precip'].shape[1:],  # (360, 720), set the shape as the GPCP data
+            resampling=Resampling.bilinear,
+        )
+        return mer2_xr
+    except Exception as e:
+        print(f"Error processing file: {os.path.basename(file_path)}")
+        print(f"Error details: {e}")
+        return None
+
+# Use multiprocessing to process files in parallel
+mer2_ds_xr_list = []
+with Pool(processes=18) as pool:  # Adjust the number of processes as needed
+    mer2_ds_xr_list = pool.map(process_merra2_file, enumerate(all_merra2_files))
+# Combine all processed batches into a single xarray dataset - simple version
+if mer2_ds_xr_list:
+    mer2_ds_xr_list = [ds for ds in mer2_ds_xr_list if ds is not None]  # Filter out None values
+    mer2_ds_xr = xr.concat(mer2_ds_xr_list, dim="time")
+    print("MERRA2 loading complete")
 
 
 #%%
