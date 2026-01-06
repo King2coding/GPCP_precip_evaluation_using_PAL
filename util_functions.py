@@ -26,6 +26,8 @@ import dask
 
 from rasterio.transform import from_origin
 from rasterio.transform import rowcol
+from rasterio.enums import Resampling
+
 import xarray as xr
 
 from collections import defaultdict
@@ -2119,3 +2121,74 @@ def process_imerg_with_PAL_rainV3_memory_efficient(pal_rain_df, imerg_file_index
         
         pal_imerg_df_rain['IMERG'] = np.nan
         return pal_imerg_df_rain
+
+
+#----------------------------------------------------------------
+
+def _standardize_latlon_names(da):
+    """Rename common lat/lon variants to x/y for rioxarray."""
+    rename_map = {}
+
+    if "lat" in da.dims:
+        rename_map["lat"] = "y"
+    if "latitude" in da.dims:
+        rename_map["latitude"] = "y"
+
+    if "lon" in da.dims:
+        rename_map["lon"] = "x"
+    if "longitude" in da.dims:
+        rename_map["longitude"] = "x"
+
+    if rename_map:
+        da = da.rename(rename_map)
+
+    return da
+
+
+def _ensure_crs(da, crs="EPSG:4326"):
+    """Ensure CRS exists."""
+    if not da.rio.crs:
+        da = da.rio.write_crs(crs, inplace=False)
+    return da
+
+
+def _ensure_monotonic_coords(da):
+    """Ensure lat decreases north→south and lon increases west→east."""
+    if da.y[0] < da.y[-1]:
+        da = da.sortby("y", ascending=False)
+    if da.x[0] > da.x[-1]:
+        da = da.sortby("x", ascending=True)
+    return da
+
+
+def harmonize_to_target(
+    source_da: xr.DataArray,
+    target_da: xr.DataArray,
+    method="average",   # average is correct for precipitation
+):
+    """
+    Harmonize a source DataArray (e.g. IMERG) onto a target grid.
+    """
+
+    # --- Standardize dimension names
+    src = _standardize_latlon_names(source_da)
+    tgt = _standardize_latlon_names(target_da)
+
+    # --- CRS
+    src = _ensure_crs(src)
+    tgt = _ensure_crs(tgt)
+
+    # --- Coordinate sanity
+    src = _ensure_monotonic_coords(src)
+    tgt = _ensure_monotonic_coords(tgt)
+
+    # --- Match grid (NO reprojection needed)
+    src_on_target_grid = src.rio.reproject_match(
+        tgt,
+        resampling=Resampling.average if method == "average" else Resampling.bilinear,
+    )
+
+    # --- Restore conventional names
+    src_on_target_grid = src_on_target_grid.rename({"y": "lat", "x": "lon"})
+
+    return src_on_target_grid

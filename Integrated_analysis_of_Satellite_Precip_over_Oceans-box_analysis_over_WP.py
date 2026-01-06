@@ -451,6 +451,8 @@ imerg_ds_xr_list = []
 
 imerg_xr_data = process_imerg(all_imerg_files_2010_2021, product="imerg_fn")
 
+imerg_xr_data = harmonize_to_target(imerg_xr_data, gpcp_ds_v3pt2_xr)
+
 gc.collect()  # Clean up memory
 print("Data loading phase complete!")
 
@@ -491,6 +493,7 @@ with Pool(processes=6) as pool:  # Adjust the number of processes as needed
 # Combine all processed batches into a single xarray dataset - simple version
 if era5_ds_xr_list:
     era5_ds_xr = xr.concat(era5_ds_xr_list, dim="time")
+    era5_ds_xr = harmonize_to_target(era5_ds_xr, gpcp_ds_v3pt2_xr)
     print("ERA5 loading complete")
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
@@ -537,6 +540,7 @@ with Pool(processes=6) as pool:  # Adjust the number of processes as needed
 if mer2_ds_xr_list:
     mer2_ds_xr_list = [ds for ds in mer2_ds_xr_list if ds is not None]  # Filter out None values
     mer2_ds_xr = xr.concat(mer2_ds_xr_list, dim="time")
+    mer2_ds_xr = harmonize_to_target(mer2_ds_xr, gpcp_ds_v3pt2_xr)
     print("MERRA2 loading complete")
 
 #%% Match PALS and Buoys to Satellite grid boxes
