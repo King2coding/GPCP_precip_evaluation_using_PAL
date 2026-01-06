@@ -218,52 +218,6 @@ print(f"Difference: {total_actual - total_expected}")
 
 gc.collect() 
 
-# - - -  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
-
-# ---- Define boxes in their original 0–360 form (as in your figure) ----
-EPS = 1e-6
-
-# Boxes already in −180…180
-BOXES_ = [
-    dict(name='Box 1', lat=( 5, 15), lon_segments=[(160, 175)],                  style=dict(ls='--', lw=2, color='k')),
-    dict(name='Box 2', lat=(-15, -5), lon_segments=[(170, 180-EPS), (-180+EPS, -160)], style=dict(ls='--', lw=2, color='g')),
-    dict(name='Box 3', lat=(-5,  5), lon_segments=[(160, 180-EPS)],              style=dict(ls='--', lw=2, color='b')),
-    dict(name='Box 4', lat=( 5, 15), lon_segments=[(135, 160)],                  style=dict(ls='--', lw=2, color='orange')),
-]
-
-def draw_boxes(ax):
-    for b in BOXES_:
-        print(f"Drawing {b['name']}")
-        (lat0, lat1) = b['lat']
-        for lo, hi in b['lon_segments']:
-            ax.add_patch(Rectangle((lo, lat0), hi-lo, lat1-lat0,
-                                   transform=ccrs.PlateCarree(), fill=False, **b['style']))
-
-# --- A) World frame (−180…180)
-fig = plt.figure(figsize=(10, 2.8), dpi=150)
-ax = plt.axes(projection=ccrs.PlateCarree())
-ax.set_extent([130, 210, -20, 20], crs=ccrs.PlateCarree())  # same window as your original plot
-ax.coastlines('110m', linewidth=0.7)
-ax.add_feature(cfeature.LAND, facecolor='0.9', edgecolor='none')
-ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.5, linestyle='--')
-draw_boxes(ax)
-plt.title("Boxes in −180…180° (dateline handled)", pad=6)
-plt.tight_layout(); plt.show()
-
-# --- B) Pacific-centred (no wrap headaches)
-fig = plt.figure(figsize=(10, 2.8), dpi=150)
-ax = plt.axes(projection=ccrs.PlateCarree(central_longitude=180))
-ax.set_extent([-50, 30, -20, 20], crs=ccrs.PlateCarree())   # 130–210E in this frame
-ax.coastlines('110m', linewidth=0.7)
-ax.add_feature(cfeature.LAND, facecolor='0.9', edgecolor='none')
-ax.gridlines(draw_labels=True, linewidth=0.4, color='gray', alpha=0.5, linestyle='--')
-draw_boxes(ax)
-plt.title("Boxes with central_longitude=180", pad=6)
-plt.tight_layout(); plt.show()
-
-
-# --- imports ---
-# === TNWP/TNEP PALs + PACIFIC buoys inside GPCP boxes (0…360°) ===
 # %%
 # === TNWP/TNEP PALs + PACIFIC buoys inside GPCP boxes (0..360°) ===
 # with correct E/W tick labels for central_longitude=180 and coastal context
@@ -278,17 +232,8 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from matplotlib.patches import Rectangle
 
-# ------------------- styling -------------------
-FONT = "DejaVu Serif"  # use "Times New Roman" if you have it
-mpl.rcParams.update({
-    "font.family": "serif",
-    "font.serif": [FONT, "Times", "serif"],
-    "font.weight": "bold",
-    "axes.labelweight": "bold",
-    "axes.titleweight": "bold",
-    "xtick.labelsize": 11,
-    "ytick.labelsize": 11,
-})
+# ------------------- font sizes -------------------
+TITLE_FONTSIZE  = 13
 BOX_LABEL_SIZE   = 11
 LEGEND_FONTSIZE  = 11
 LINEWIDTH_PAL    = 2.6
@@ -448,26 +393,15 @@ plt.tight_layout()
 plt.subplots_adjust(bottom=0.35)
 plt.show()
 gc.collect()
-#%%# read all GPCP into a single xr data
-# Limit the number of simultaneously open files to avoid kernel crash
+#%%# Read and process satellite precipitation data into xr datasets
 
-# Simple data loading without CPU-intensive optimizations (server-friendly)
-print("Starting data loading...")
-
-# Simple dask configuration - minimal CPU usage
-dask.config.set({
-    'array.chunk-size': '128MB',  # Reasonable chunk size
-    'scheduler': 'threads',       # Use threads instead of processes
-    'num_workers': 2              # Limit workers to be server-friendly
-})
-
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
-# Process GPCP v3.2 files in smaller batches with better error handling
-print(f"Processing GPCP v3.2 files in total number of {len(all_gpcp_v3pt2_files)}...")
+# 1) Process GPCP v3.2 - Memory efficient version
 all_gpcpv3pt2_files_2010_2021 = [
     f for f in all_gpcp_v3pt2_files 
     if 2010 <= int(os.path.basename(f).split('_')[2][:4]) <= 2021
 ]
+print(f"Processing GPCP v3.2 files in total number of {len(all_gpcpv3pt2_files_2010_2021)}...")
+
 gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcpv3pt2_files_2010_2021,
                                     combine="nested",              # files are time-sequenced
                                     concat_dim="time",             # concatenate along time                                               
@@ -480,14 +414,18 @@ gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcpv3pt2_files_2010_2021,
                                     )
 
 gpcp_ds_v3pt2_xr = ds_swaplon(gpcp_ds_v3pt2_xr)
+
+print("GPCP v3.2 loading complete!")
+
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
-# Process GPCP v3.3 files in smaller batches with better error handling
-print(f"Processing GPCP v3.3 files in total number of {len(all_gpcp_v3pt3_files)}...")
+# 2) Process GPCP v3.3 - Memory efficient version
 all_gpcpv3pt3_files_2010_2021 = [
     f for f in all_gpcp_v3pt3_files 
     if 2010 <= int(os.path.basename(f).split('_')[2][:4]) <= 2021
 ]
+print(f"Processing GPCP v3.3 files in total number of {len(all_gpcpv3pt3_files_2010_2021)}...")
+
 gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcpv3pt3_files_2010_2021,
                                     combine="nested",              # files are time-sequenced
                                     concat_dim="time",             # concatenate along time                                    
@@ -498,15 +436,17 @@ gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcpv3pt3_files_2010_2021,
                                     chunks={"time": 120, "lat": 180, "lon": 360},  # <<< important
                                     cache=False
                                     )
+print("GPCP v3.3 loading complete!")
+
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
-
-# Process IMERG files - memory-efficient version
-# print(f"Processing IMERG files in batches of {batch_size}...")
+# 3) Process IMERG files - Memory efficient version
 all_imerg_files_2010_2021 = [
     f for f in all_imerg_files 
     if 2010 <= int(os.path.basename(f).split('.')[4][:4]) <= 2021
 ]
+print(f"Processing IMERG files in total number of {len(all_imerg_files_2010_2021)}...")
+
 imerg_ds_xr_list = []
 
 imerg_xr_data = process_imerg(all_imerg_files_2010_2021, product="imerg_fn")
@@ -515,10 +455,12 @@ gc.collect()  # Clean up memory
 print("Data loading phase complete!")
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
+# 4) Process ERA5 files - Multiprocessing version
 all_era5_tp_files_2010_2021 = [
     f for f in all_era5_tp_files 
     if 2010 <= int(os.path.basename(f).split('_')[2]) <= 2021
 ]
+print(f"Processing ERA5 files in total number of {len(all_era5_tp_files_2010_2021)}...")
 def process_era5_file(file_info):
     import rioxarray 
     idx, file_path = file_info
@@ -541,9 +483,6 @@ def process_era5_file(file_info):
     # )
     return era5_xr
 
-# era5_xr = xr.open_dataset(all_era5_tp_files_2010_2021[0], 
-#                           engine='netcdf4')
-# era5_xr = ds_swaplon(era5_xr)
 
 # Use multiprocessing to process files in parallel
 era5_ds_xr_list = []
@@ -560,6 +499,7 @@ all_merra2_files_2010_2021 = [
     f for f in all_merra2_files 
     if 2010 <= int(os.path.basename(f).split('.')[5][:4]) <= 2021
 ]
+print(f"Processing MERRA2 files in total number of {len(all_merra2_files_2010_2021)}...")
 def process_merra2_file(file_info):
     idx, file_path = file_info
     try:
@@ -599,8 +539,9 @@ if mer2_ds_xr_list:
     mer2_ds_xr = xr.concat(mer2_ds_xr_list, dim="time")
     print("MERRA2 loading complete")
 
+#%% Match PALS and Buoys to Satellite grid boxes
 
-#%%
+# 1) Define analysis box boundaries for WP boxes
 
 pals_classed_by_wp_bx = classify_and_group_files_bounding_box(pals_classed_by_region['TNWP'], box_ana_bnds_WP)
 pals_classed_by_ep_bx = classify_and_group_files_bounding_box(pals_classed_by_region['TNEP'], box_ana_bnds_WP)
@@ -613,6 +554,156 @@ pals_classed_by_bx = {
 }
 
 buoy_classed_by_wp_bx = classify_and_group_files_bounding_box(buoy_files_by_region['WNP'], box_ana_bnds_WP)
+
+#---------------------------------------------------------------------------------
+# 2) Begin extraction of satellite data for PALs and Buoys in boxes
+
+for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
+    
+    print(f"\nProcessing region: {bx} with {len(pal_files)} PAL files")      
+
+    # store PAL and GPCP dataframes
+    bx_pal_sate_dfs = []     
+
+    # LOAD PAL DATA
+    for i,pal_file in enumerate(pal_files):
+        
+        pal_ds = xr.open_dataset(pal_file)
+        
+        pal_rain_df = grab_PAL_rain_and_wind_df(pal_ds) 
+
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+        pal_rain_gpcpv3pt2_df = pal_rain_df.copy()           
+        
+        pal_gpcpv3pt2_df_rain = process_gpcp_with_PAL_rain_and_wind(
+                                        pal_rain_gpcpv3pt2_df,
+                                        gpcp_ds_v3pt2_xr, 'GPCP_v3pt2') 
+
+        pal_gpcpv3pt2_df_rain.index = pd.to_datetime(pal_gpcpv3pt2_df_rain['time'])  # Ensure index is datetime
+
+        # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+        pal_rain_gpcpv3pt3_df = pal_rain_df.copy()          
+        
+        pal_gpcpv3pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
+                                        pal_rain_gpcpv3pt3_df,
+                                        gpcp_ds_v3pt3_xr, 'GPCP_v3pt3')  # , pal_wind_gpcpv3pt3_df
+
+        pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])    
+
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+        # Process ERA5 data with PAL 
+        pal_rain_era5_df = pal_rain_df.copy()         
+        pal_era5_df_rain = process_era5_with_PAL_rain_and_wind_v1(pal_rain_era5_df, era5_ds_xr)   
+        pal_era5_df_rain.index = pd.to_datetime(pal_era5_df_rain['time'])
+
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+        # Process IMERG data with PAL
+        pal_rain_imerg_df = pal_rain_df.copy()
+        pal_imerg_df_rain = process_imerg_with_PAL_rain_simple(pal_rain_imerg_df, imerg_xr_data)
+        pal_imerg_df_rain.index = pd.to_datetime(pal_imerg_df_rain['time'])
+
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+        # Process MERRA2 data with PAL
+        pal_rain_merra2_df = pal_rain_df.copy()
+        pal_merra2_df_rain = process_merra2_with_PAL_rain_simple(pal_rain_merra2_df, mer2_ds_xr)
+        pal_merra2_df_rain.index = pd.to_datetime(pal_merra2_df_rain['time'])
+
+        # Combine all data into a single dataframe
+        pal_df_combined_rain = pal_gpcpv3pt2_df_rain.copy()
+        pal_df_combined_rain = pal_df_combined_rain[['time','date','rain_rate', 
+                                                     'GPCP_v3pt2','PLP_GPCP_v3pt2']].copy()
+        
+        pal_gpcpv3pt3_daily = pal_gpcpv3pt3_df_rain.copy()        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_gpcpv3pt3_df_rain[['date','GPCP_v3pt3']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
+        )
+
+        # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['GPCP_v3pt3_v3pt3', 'date_v3pt3']], 
+                                                inplace=True)
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+        # ERA5 merge
+        pal_era5_daily = pal_era5_df_rain.copy()
+        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_era5_df_rain[['date','ERA5']], 
+            on='date', how='left', suffixes=('', '_ERA5')
+        )
+        
+        # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['ERA5_ERA5', 'date_ERA5']], 
+                                                inplace=True)
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # IMERG merge
+        pal_imerg_daily = pal_imerg_df_rain.copy()
+        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_imerg_df_rain[['date','IMERG']], 
+            on='date', how='left', suffixes=('', '_IMERG')
+        )
+        # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['IMERG_IMERG', 'date_IMERG']], 
+                                                inplace=True)
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # MERRA2 merge
+        pal_merra2_daily = pal_merra2_df_rain.copy()
+        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_merra2_df_rain[['date','MERRA2']], 
+            on='date', how='left', suffixes=('', '_MERRA2')
+        )
+        # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['MERRA2_MERRA2', 'date_MERRA2']], 
+                                                inplace=True)
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+        # groupby date and get mean of rain_rate and GPCP data 'GPCP_v1pt3',
+        grp = pal_df_combined_rain.groupby('date')
+        daily_avg_rain = grp.mean([['rain_rate', 
+                                    'GPCP_v3pt2', 'GPCP_v3pt3', 
+                                    'ERA5', 'IMERG', 'MERRA2']]) \
+        .join(pal_df_combined_rain.groupby('time')['rain_rate'] \
+        .count() \
+        .to_frame('n_min')
+        ).reset_index()
+
+        daily_avg_rain['cov_hr'] = daily_avg_rain['n_min'] / 60.0
+        daily_avg_rain = daily_avg_rain[daily_avg_rain['cov_hr'] >= 12] 
+
+        daily_avg_rain['rain_rate'] *= 24
+        daily_avg_rain['Box'] = bx  # Add box for clarity
+        daily_avg_rain['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+
+        # region_pal_sate_dfs.append(daily_avg_rain)
+        bx_pal_sate_dfs.append(daily_avg_rain)
+
+        pal_ds.close()
+    
+    # Combine all PAL-satellite dataframes in a box into a single dataframe
+    box_pal_sate_df = pd.concat(bx_pal_sate_dfs)        
+    
+    # calculate daily mean per track_PAL_id
+    bx_pal_sate_df_daily_mean = box_pal_sate_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v3pt2', 
+                                                                                  'GPCP_v3pt3','ERA5']].mean().reset_index()
+    box_pal_sate_df_daily_mean['Box'] = bx  # Add box for clarity
+    box_PAL_sate_dfs_daily_mean[bx] = box_pal_sate_df_daily_mean
+        
+
+    
+
+ 
+
+
 
 # ---- Box definitions (reuse anywhere) ----
 BOXES_180 = {

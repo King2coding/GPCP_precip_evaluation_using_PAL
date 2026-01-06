@@ -89,6 +89,13 @@ region_bounds = {
     "TNWP": {"lon_min": 120,  "lon_max": 180,  "lat_min": -5, "lat_max": 30},  # Tropical Northwestern Pacific
 }
 
+box_ana_bnds_WP = {
+    "Box 1": {'lon_min': 159, 'lon_max': 180, 'lat_min': 4, 'lat_max': 16, }, # Box 1
+    "Box 2": {'lon_min': 170, 'lon_max': 200, 'lat_min': -16, 'lat_max': -7, }, # Box 2
+    "Box 3": {'lon_min': 159, 'lon_max': 180, 'lat_min': -7, 'lat_max': 4, }, # Box 3
+    "Box 4": {'lon_min': 125, 'lon_max': 159, 'lat_min': 0.5, 'lat_max': 16, }, # Box 4
+}
+
 buoy_region_bounds = {
     "ENP": {"lon_min": -180, "lon_max": -60, "lat_min": -30, "lat_max": 15},  # Eastern Pacific
     "WNP": {"lon_min": 120, "lon_max": 180, "lat_min": -15, "lat_max": 15},    # Western Pacific
@@ -441,6 +448,90 @@ def process_gpcp_with_PAL_rain_and_wind(df, gpcp_ds_xr, gpcp_version):
     #     pal_df_wind[f'PLP_{gpcp_version}'] = gpcp_plp
 
     return df#pal_df_rain, pal_df_wind
+
+#-----------------------------------------------------------------------------------------
+def process_era5_with_PAL_rain_and_wind_v1(df, era5_ds):
+    # pal_df_rain, pal_df_wind
+
+    # DO PAL RAIN ERA5 MATCHING    
+
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values
+
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    # if 'y' in era5_ds.dims or 'x' in era5_ds.dims:
+    #     era5_ds = era5_ds.rename({'y': 'lat', 'x': 'lon'})
+
+    era5_tp = era5_ds['tp'].interp(
+        time=("points", pal_dates_rain), latitude=("points", pal_lats_rain), 
+        longitude=("points", pal_lons_rain), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    era5_tp = era5_tp.where(era5_tp >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df['ERA5'] = era5_tp    
+
+    return df
+
+#-----------------------------------------------------------------------------------------
+# Simple processing of IMERG data with PAL
+def process_imerg_with_PAL_rain_simple(df, imerg_ds_xr):
+    """
+    Simple processing of IMERG data with PAL rain data.
+    Parameters:
+    - df: DataFrame containing PAL rain data.
+    - imerg_ds_xr: xarray dataset containing IMERG data.
+    Returns:
+    - df: DataFrame with IMERG rain data added.
+    """
+
+    # Extract relevant columns from the DataFrame
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values    
+    
+    imerg_precip = imerg_ds_xr.interp(
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain),
+        lon=("points", pal_lons_rain), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    imerg_precip = imerg_precip.where(imerg_precip >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df['IMERG'] = imerg_precip
+
+    return df 
+
+#-----------------------------------------------------------------------------------------
+# Simple process MERRA2 with PAL rain
+def process_merra2_with_PAL_rain_simple(df, merra2_ds_xr):
+    """
+    Simple processing of MERRA2 data with PAL rain data.
+    Parameters:
+    - df: DataFrame containing PAL rain data.
+    - merra2_ds_xr: xarray dataset containing MERRA2 data.
+    Returns:
+    - df: DataFrame with MERRA2 rain data added.
+    """
+
+    # Extract relevant columns from the DataFrame
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values    
+    
+    merra2_precip = merra2_ds_xr.interp(
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain),
+        lon=("points", pal_lons_rain), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    merra2_precip = merra2_precip.where(merra2_precip >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df['MERRA2'] = merra2_precip
+
+    return df 
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def process_imerg_with_PAL_rain(df, imerg_ds_xr, chunk_size=10000, n_jobs=20):
