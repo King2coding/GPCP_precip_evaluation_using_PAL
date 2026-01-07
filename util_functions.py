@@ -466,8 +466,8 @@ def process_era5_with_PAL_rain_and_wind_v1(df, era5_ds):
     #     era5_ds = era5_ds.rename({'y': 'lat', 'x': 'lon'})
 
     era5_tp = era5_ds['tp'].interp(
-        time=("points", pal_dates_rain), latitude=("points", pal_lats_rain), 
-        longitude=("points", pal_lons_rain), method="nearest"
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+        lon=("points", pal_lons_rain), method="nearest"
     )
     # Set places where the values are less than 0 to NaN
     era5_tp = era5_tp.where(era5_tp >= 0, np.nan)

@@ -577,6 +577,12 @@ if mer2_ds_xr_list:
     
     print("MERRA2 loading complete")
 
+mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
+gpcp_v3pt3_ds = gpcp_ds_v3pt3_xr.sel(time=slice(mindate, maxdate))
+era5_ds = era5_ds_xr.sel(time=slice(mindate, maxdate))
+imerg_ds = imerg_ds_xr.sel(time=slice(mindate, maxdate))
+merra2_ds = mer2_ds_xr.sel(time=slice(mindate, maxdate))
+
 #%% Match PALS and Buoys to Satellite grid boxes
 
 # 1) Define analysis box boundaries for WP boxes
@@ -624,26 +630,26 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
         
         pal_gpcpv3pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
                                         pal_rain_gpcpv3pt3_df,
-                                        gpcp_ds_v3pt3_xr, 'GPCP_v3pt3')  # , pal_wind_gpcpv3pt3_df
+                                        gpcp_v3pt3_ds, 'GPCP_v3pt3')  # , pal_wind_gpcpv3pt3_df
 
         pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])    
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
         # Process ERA5 data with PAL 
         pal_rain_era5_df = pal_rain_df.copy()         
-        pal_era5_df_rain = process_era5_with_PAL_rain_and_wind_v1(pal_rain_era5_df, era5_ds_xr)   
+        pal_era5_df_rain = process_era5_with_PAL_rain_and_wind_v1(pal_rain_era5_df, era5_ds)   
         pal_era5_df_rain.index = pd.to_datetime(pal_era5_df_rain['time'])
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
         # Process IMERG data with PAL
         pal_rain_imerg_df = pal_rain_df.copy()
-        pal_imerg_df_rain = process_imerg_with_PAL_rain_simple(pal_rain_imerg_df, imerg_xr_data)
+        pal_imerg_df_rain = process_imerg_with_PAL_rain_simple(pal_rain_imerg_df, imerg_ds)
         pal_imerg_df_rain.index = pd.to_datetime(pal_imerg_df_rain['time'])
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
         # Process MERRA2 data with PAL
         pal_rain_merra2_df = pal_rain_df.copy()
-        pal_merra2_df_rain = process_merra2_with_PAL_rain_simple(pal_rain_merra2_df, mer2_ds_xr)
+        pal_merra2_df_rain = process_merra2_with_PAL_rain_simple(pal_rain_merra2_df, merra2_ds)
         pal_merra2_df_rain.index = pd.to_datetime(pal_merra2_df_rain['time'])
 
         # Combine all data into a single dataframe
@@ -704,6 +710,8 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
                                                 inplace=True)
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+        pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP_v3pt2'] == 100]
 
         # groupby date and get mean of rain_rate and GPCP data 'GPCP_v1pt3',
         grp = pal_df_combined_rain.groupby('date')
