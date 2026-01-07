@@ -459,7 +459,7 @@ for i, batch in enumerate(imerg_files_batches):
         img = read_nc_imger_file(fle, 'imerg_fn')
         time_index = pd.to_datetime(img[1])
 
-        if ii % 300 == 0:
+        if ii % 500 == 0:
             print(f"Processing IMERG file {ii} at time {time_index}")
     
         # Create an xarray DataArray from the list of 2D precipitation arrays
@@ -597,12 +597,24 @@ pals_classed_by_bx = {
     'Box 4': pals_classed_by_wp_bx['Box 4'] + pals_classed_by_ep_bx['Box 4']
 }
 
+pals_classed_by_bx = {
+    bx: files
+    for bx, files in pals_classed_by_bx.items()
+    if files  # empty list evaluates to False
+}
+
 buoy_classed_by_wp_bx = classify_and_group_files_bounding_box(buoy_files_by_region['WNP'], box_ana_bnds_WP)
+buoy_classed_by_wp_bx = {
+    bx: files
+    for bx, files in buoy_classed_by_wp_bx.items()
+    if files  # empty list evaluates to False
+}
 
 #---------------------------------------------------------------------------------
 # 2) Begin extraction of satellite data for PALs and Buoys in boxes
-
-for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
+box_PAL_sate_dfs_daily_mean = {}
+box_PAL_sate_daily_dfs_list = {}
+for bx, pal_files in list(pals_classed_by_bx.items()):
     
     print(f"\nProcessing region: {bx} with {len(pal_files)} PAL files")      
 
@@ -657,7 +669,6 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
         pal_df_combined_rain = pal_df_combined_rain[['time','date','rain_rate', 
                                                      'GPCP_v3pt2','PLP_GPCP_v3pt2']].copy()
         
-        pal_gpcpv3pt3_daily = pal_gpcpv3pt3_df_rain.copy()        
         pal_df_combined_rain = pal_df_combined_rain.merge(
             pal_gpcpv3pt3_df_rain[['date','GPCP_v3pt3']], 
             left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
@@ -670,12 +681,10 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-        # ERA5 merge
-        pal_era5_daily = pal_era5_df_rain.copy()
-        
+        # ERA5 merge        
         pal_df_combined_rain = pal_df_combined_rain.merge(
             pal_era5_df_rain[['date','ERA5']], 
-            on='date', how='left', suffixes=('', '_ERA5')
+            left_index=True, right_index=True, how='left', suffixes=('', '_ERA5')
         )
         
         # Remove any duplicate columns from previous merges
@@ -684,12 +693,10 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
                                                 inplace=True)
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        # IMERG merge
-        pal_imerg_daily = pal_imerg_df_rain.copy()
-        
+        # IMERG merge        
         pal_df_combined_rain = pal_df_combined_rain.merge(
             pal_imerg_df_rain[['date','IMERG']], 
-            on='date', how='left', suffixes=('', '_IMERG')
+            left_index=True, right_index=True, how='left', suffixes=('', '_IMERG')
         )
         # Remove any duplicate columns from previous merges
         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
@@ -697,12 +704,10 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
                                                 inplace=True)
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        # MERRA2 merge
-        pal_merra2_daily = pal_merra2_df_rain.copy()
-        
+        # MERRA2 merge        
         pal_df_combined_rain = pal_df_combined_rain.merge(
             pal_merra2_df_rain[['date','MERRA2']], 
-            on='date', how='left', suffixes=('', '_MERRA2')
+            left_index=True, right_index=True, how='left', suffixes=('', '_MERRA2')
         )
         # Remove any duplicate columns from previous merges
         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
@@ -713,15 +718,20 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
 
         pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP_v3pt2'] == 100]
 
+        pal_df_combined_rain = pal_df_combined_rain.drop(columns='time')
+
         # groupby date and get mean of rain_rate and GPCP data 'GPCP_v1pt3',
         grp = pal_df_combined_rain.groupby('date')
-        daily_avg_rain = grp.mean([['rain_rate', 
-                                    'GPCP_v3pt2', 'GPCP_v3pt3', 
-                                    'ERA5', 'IMERG', 'MERRA2']]) \
-        .join(pal_df_combined_rain.groupby('time')['rain_rate'] \
-        .count() \
-        .to_frame('n_min')
-        ).reset_index()
+
+        daily_avg_rain = (
+            grp[['rain_rate', 'GPCP_v3pt2', 'GPCP_v3pt3',
+                'ERA5', 'IMERG', 'MERRA2']]
+            .mean()
+            .join(
+                grp['rain_rate'].count().to_frame('n_min')
+            )
+            .reset_index()
+        )
 
         daily_avg_rain['cov_hr'] = daily_avg_rain['n_min'] / 60.0
         daily_avg_rain = daily_avg_rain[daily_avg_rain['cov_hr'] >= 12] 
@@ -736,13 +746,22 @@ for bx, pal_files in list(pals_classed_by_bx.items())[:-1]:
         pal_ds.close()
     
     # Combine all PAL-satellite dataframes in a box into a single dataframe
-    box_pal_sate_df = pd.concat(bx_pal_sate_dfs)        
+    box_pal_sate_df = pd.concat(bx_pal_sate_dfs)  
+    box_pal_sate_df = box_pal_sate_df.drop(columns=['n_min', 'cov_hr'])
+
     
     # calculate daily mean per track_PAL_id
     bx_pal_sate_df_daily_mean = box_pal_sate_df.groupby(['track_PAL_id'])[['rain_rate', 'GPCP_v3pt2', 
                                                                                   'GPCP_v3pt3','ERA5']].mean().reset_index()
-    box_pal_sate_df_daily_mean['Box'] = bx  # Add box for clarity
-    box_PAL_sate_dfs_daily_mean[bx] = box_pal_sate_df_daily_mean
+    bx_pal_sate_df_daily_mean['Box'] = bx  # Add box for clarity
+    box_PAL_sate_dfs_daily_mean[bx] = bx_pal_sate_df_daily_mean
+
+    box_PAL_sate_daily_dfs_list[bx] = box_pal_sate_df
+
+
+#---------------------------------------------------------------------------------
+
+
         
 
     
