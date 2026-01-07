@@ -396,10 +396,10 @@ gc.collect()
 #%%# Read and process satellite precipitation data into xr datasets
 
 # 1) Process GPCP v3.2 - Memory efficient version
-all_gpcpv3pt2_files_2010_2021 = [
+all_gpcpv3pt2_files_2010_2021 = sorted([
     f for f in all_gpcp_v3pt2_files 
     if 2010 <= int(os.path.basename(f).split('_')[2][:4]) <= 2021
-]
+])
 print(f"Processing GPCP v3.2 files in total number of {len(all_gpcpv3pt2_files_2010_2021)}...")
 
 gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcpv3pt2_files_2010_2021,
@@ -420,10 +420,10 @@ print("GPCP v3.2 loading complete!")
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 # 2) Process GPCP v3.3 - Memory efficient version
-all_gpcpv3pt3_files_2010_2021 = [
+all_gpcpv3pt3_files_2010_2021 = sorted([
     f for f in all_gpcp_v3pt3_files 
     if 2010 <= int(os.path.basename(f).split('_')[2][:4]) <= 2021
-]
+])
 print(f"Processing GPCP v3.3 files in total number of {len(all_gpcpv3pt3_files_2010_2021)}...")
 
 gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcpv3pt3_files_2010_2021,
@@ -441,20 +441,52 @@ print("GPCP v3.3 loading complete!")
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 
 # 3) Process IMERG files - Memory efficient version
-all_imerg_files_2010_2021 = [
+all_imerg_files_2010_2021 = sorted([
     f for f in all_imerg_files 
     if 2010 <= int(os.path.basename(f).split('.')[4][:4]) <= 2021
-]
+])
 print(f"Processing IMERG files in total number of {len(all_imerg_files_2010_2021)}...")
 
+imerg_files_batches = [all_imerg_files_2010_2021[i:i + 250] for i in range(0, len(all_imerg_files_2010_2021), 250)]
 imerg_ds_xr_list = []
+img_lon, img_lat = return_imerg_cords(all_imerg_files_2010_2021[0])
+for i, batch in enumerate(imerg_files_batches):
+    if i % 5 == 0:
+        print(f"Processing IMERG batch {i+1}/{len(imerg_files_batches)}")
 
-imerg_xr_data = process_imerg(all_imerg_files_2010_2021, product="imerg_fn")
+    # imerg_xr_data = process_imerg(all_imerg_files_2010_2021, product="imerg_fn")
+    for ii,fle in enumerate(batch):        
+        img = read_nc_imger_file(fle, 'imerg_fn')
+        time_index = pd.to_datetime(img[1])
 
-imerg_xr_data = harmonize_to_target(imerg_xr_data, gpcp_ds_v3pt2_xr)
+        if ii % 300 == 0:
+            print(f"Processing IMERG file {ii} at time {time_index}")
+    
+        # Create an xarray DataArray from the list of 2D precipitation arrays
+        img_xr = xr.DataArray(
+        data=img[0][np.newaxis, :, :],   # add time dimension
+        dims=["time", "lat", "lon"],
+        coords={
+            "time": [time_index],             # wrap timestamp
+            "lat": img_lat,
+            "lon": img_lon,
+            }
+            )
+        img_xr = harmonize_to_target(img_xr, gpcp_ds_v3pt2_xr)
+        if img_xr is not None:
+            imerg_ds_xr_list.append(img_xr)    
+        # Simple garbage collection
+        gc.collect()
 
+# Combine all processed batches into a single xarray dataset - simple version
+if imerg_ds_xr_list:
+    imerg_ds_xr = xr.concat(imerg_ds_xr_list, dim="time")
+    print("IMERG loading complete")
+else:
+    print("Warning: No IMERG data was successfully loaded")
+    imerg_ds_xr = None
 gc.collect()  # Clean up memory
-print("Data loading phase complete!")
+print("IMERG Data loading phase complete!")
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
 # 4) Process ERA5 files - Multiprocessing version
@@ -478,6 +510,7 @@ def process_era5_file(file_info):
     # resample to 0.5 degree resolution
     cc = CRS.from_authority(code=4326, auth_name='EPSG')
     era5_xr.rio.write_crs(cc.to_string(), inplace=True)
+    era5_xr = harmonize_to_target(era5_xr, gpcp_ds_v3pt2_xr)
     # era5_xr = era5_xr.rio.reproject(
     #     era5_xr.rio.crs,
     #     shape=(360, 720),#gpcp_ds_v3pt2_xr['precip'].shape[1:], # # set the shape as the GPCP data
@@ -493,7 +526,7 @@ with Pool(processes=6) as pool:  # Adjust the number of processes as needed
 # Combine all processed batches into a single xarray dataset - simple version
 if era5_ds_xr_list:
     era5_ds_xr = xr.concat(era5_ds_xr_list, dim="time")
-    era5_ds_xr = harmonize_to_target(era5_ds_xr, gpcp_ds_v3pt2_xr)
+    
     print("ERA5 loading complete")
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - - - - - - - - - - - - - - - - - - - 
@@ -521,6 +554,7 @@ def process_merra2_file(file_info):
         mer2_xr.rio.write_crs(cc.to_string(), inplace=True)
         # Set spatial dimensions explicitly
         mer2_xr = mer2_xr.rio.set_spatial_dims(x_dim="lon", y_dim="lat", inplace=True)
+        mer2_xr = harmonize_to_target(mer2_xr, gpcp_ds_v3pt2_xr)
         # mer2_xr = mer2_xr.rio.reproject(
         #     mer2_xr.rio.crs,
         #     shape=(360, 720),#gpcp_ds_v3pt2_xr['precip'].shape[1:],  # (360, 720), set the shape as the GPCP data
@@ -540,7 +574,7 @@ with Pool(processes=6) as pool:  # Adjust the number of processes as needed
 if mer2_ds_xr_list:
     mer2_ds_xr_list = [ds for ds in mer2_ds_xr_list if ds is not None]  # Filter out None values
     mer2_ds_xr = xr.concat(mer2_ds_xr_list, dim="time")
-    mer2_ds_xr = harmonize_to_target(mer2_ds_xr, gpcp_ds_v3pt2_xr)
+    
     print("MERRA2 loading complete")
 
 #%% Match PALS and Buoys to Satellite grid boxes
