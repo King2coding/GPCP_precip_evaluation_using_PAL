@@ -761,14 +761,265 @@ for bx, pal_files in list(pals_classed_by_bx.items()):
 
 #---------------------------------------------------------------------------------
 
+# begin monthly/seasonal cycle analysis
+seas_cyc = {}
+for b in ['Box 4', 'Box 1', 'Box 3']:#box_PAL_sate_daily_dfs_list.keys():
+    df = box_PAL_sate_daily_dfs_list[b].copy()
+    df['month'] = pd.to_datetime(df['date']).dt.month
 
+    monthly = (
+    df.groupby('month')[[
+        'rain_rate',
+        'GPCP_v3pt2', 'GPCP_v3pt3',
+        'ERA5', 'IMERG', 'MERRA2'
+    ]]
+    .mean()
+    )
+
+    seas_cyc[b] = monthly
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def format_lat(lat):
+    return f"{abs(lat)}°{'N' if lat >= 0 else 'S'}"
+
+def format_lon(lon):
+    return f"{lon}°E" if lon <= 180 else f"{360-lon}°W"
+
+box_label_map = {}
+for b in boxes:
+    label = (
+        f"({format_lat(b['lat_min'])}–{format_lat(b['lat_max'])}, "
+        f"{format_lon(b['lon_min'])}–{format_lon(b['lon_max'])})"
+    )
+    box_label_map[b['name']] = label
+
+import matplotlib.pyplot as plt
+from matplotlib.ticker import AutoMinorLocator
+
+# ---- plotting styles ----
+products = {
+    'rain_rate': dict(color='k', lw=3, label='PAL'),
+    'GPCP_v3pt2': dict(color='b', lw=3, label='GPCP v3.2'),
+    'GPCP_v3pt3': dict(color='r', lw=3, label='GPCP v3.3'),
+    'ERA5': dict(color='k', ls='--', lw=3, label='ERA5'),
+    'IMERG': dict(color='c', lw=3, label='IMERG'),
+    'MERRA2': dict(color='k', ls=':', lw=3, label='MERRA-2'),
+}
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# -----------------------------
+# Figure & axes
+# -----------------------------
+fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+axes = axes.flatten()
+
+months = np.arange(1, 13)
+
+# -----------------------------
+# Explicit y-axis config per box
+# (KEY FIX: no reliance on index order)
+# -----------------------------
+yaxis_cfg = {
+    'Box 4': dict(ticks=[3, 6, 9, 12, 15], ylim=(1.8, 16.2)),     # (0.5°N–16°N, 125°E–159°E)
+    'Box 1': dict(ticks=[0, 2, 4, 6, 8],   ylim=(0, 8.6)),   # (4°N–16°N, 159°E–180°E)
+    'Box 3': dict(ticks=[0, 3, 6, 9, 12],  ylim=(0, 12)),    # (7°S–4°N, 159°E–180°E)
+}
+
+# -----------------------------
+# Plot panels
+# -----------------------------
+for ax, (bx, df) in zip(axes, seas_cyc.items()):
+
+    # plot each product
+    for var, sty in products.items():
+        ax.plot(months, df[var].values, **sty)
+
+    # title (lat–lon label)
+    ax.set_title(box_label_map[bx], fontsize=15)
+
+    # axis labels
+    ax.set_xlabel('Month', fontsize=15)
+    ax.set_ylabel('(mm day$^{-1}$)', fontsize=15)
+
+    # x-axis ticks
+    ax.set_xticks(months)
+
+    # -----------------------------
+    # Apply correct y-axis scaling
+    # -----------------------------
+    cfg = yaxis_cfg.get(bx)
+    if cfg is not None:
+        ax.set_yticks(cfg['ticks'])
+        ax.set_ylim(cfg['ylim'])
+        ax.set_yticklabels([str(int(y)) for y in cfg['ticks']])
+
+    # grid + minor ticks
+    ax.minorticks_on()
+    ax.grid(True, which='major', alpha=0.35)
+    ax.grid(True, which='minor', alpha=0.15)
+
+# -----------------------------
+# Remove unused axes
+# -----------------------------
+for ax in axes[len(seas_cyc):]:
+    fig.delaxes(ax)
+
+# -----------------------------
+# Legend (single, bottom)
+# -----------------------------
+handles, labels = axes[0].get_legend_handles_labels()
+fig.legend(
+    handles, labels,
+    loc='lower center',
+    ncol=6,
+    frameon=False,
+    bbox_to_anchor=(0.5, -0.03),
+    fontsize=15
+)
+
+# -----------------------------
+# Layout
+# -----------------------------
+plt.tight_layout(rect=[0, 0.06, 1, 0.97])
+plt.show()
+
+from collections import OrderedDict
+import matplotlib.dates as mdates
+
+anom_monthly = {}
+anom_rm13 = {}
+
+for b in ['Box 4', 'Box 1', 'Box 3']:
+
+    df = box_PAL_sate_daily_dfs_list[b].copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.set_index('date').sort_index()
+
+    monthly = (
+        df[['rain_rate', 'GPCP_v3pt2', 'GPCP_v3pt3',
+            'ERA5', 'IMERG', 'MERRA2']]
+        .resample('MS')
+        .mean()
+    )
+
+    clim = monthly.groupby(monthly.index.month).mean()
+
+    anoms = monthly.copy()
+    for col in monthly.columns:
+        anoms[col] = monthly[col] - clim.loc[monthly.index.month, col].values
+
+    anom_monthly[b] = anoms
+    anom_rm13[b] = anoms.rolling(13, center=True).mean()
+
+products = OrderedDict({
+    'rain_rate': dict(color='k', lw=2.2, label='PAL'),
+    'GPCP_v3pt3': dict(color='red', lw=1.6, label='GPCP v3.3'),
+    'GPCP_v3pt2': dict(color='blue', lw=1.6, label='GPCP v3.2'),
+    'IMERG': dict(color='c', lw=1.6, label='IMERG'),
+    'ERA5': dict(color='k', lw=1.3, ls='--', label='ERA5'),
+    'MERRA2': dict(color='k', lw=1.3, ls=':', label='MERRA-2')
+})
+
+box_label_map = {
+    'Box 4': '(0.5°N–16°N, 125°E–159°E)',
+    'Box 1': '(4°N–16°N, 159°E–180°E)',
+    'Box 3': '(7°S–4°N, 159°E–180°E)'
+}
+
+fig, axes = plt.subplots(2, 2, figsize=(14, 7))
+axes = axes.flatten()
+
+for i, b in enumerate(['Box 4', 'Box 1', 'Box 3']):
+
+    ax = axes[i]
+
+    # ---- monthly anomalies (thin) ----
+    for var, sty in products.items():
+        ax.plot(
+            anom_monthly[b].index,
+            anom_monthly[b][var],
+            alpha=0.35,
+            **{k: v for k, v in sty.items() if k != 'label'}
+        )
+
+        # ---- X-axis formatting (THIS IS THE FIX) ----
+        if i == 1:
+            ax.xaxis.set_major_locator(mdates.YearLocator(2))
+
+        else:
+            ax.xaxis.set_major_locator(mdates.YearLocator(1))
         
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+        ax.xaxis.set_minor_locator(mdates.YearLocator())
 
-    
+    # # ---- 13-month running mean (bold) ----
+    # for var, sty in products.items():
+    #     ax.plot(
+    #         anom_rm13[b].index,
+    #         anom_rm13[b][var],
+    #         **sty
+    #     )
 
- 
+    ax.axhline(0, color='gray', lw=1, ls='--')   
 
+    ax.axhline(0, color='gray', lw=1, ls='--')
 
+    # ---- titles & labels ----
+    ax.set_title(box_label_map[b], fontsize=15)
+    ax.set_ylabel('Anomaly (mm day$^{-1}$)', fontsize=15)
+    ax.set_xlabel('Year', fontsize=15)
+
+    # ---- minor ticks ----
+    ax.minorticks_on()
+    ax.tick_params(which='minor', length=3)
+
+    # ---- grid ----
+    ax.grid(True, which='major', alpha=0.3)
+    ax.grid(True, which='minor', alpha=0.15)
+
+# ---- remove unused axis ----
+fig.delaxes(axes[3])
+
+from matplotlib.lines import Line2D
+
+# ---- build legend proxies ----
+legend_lines = []
+legend_labels = []
+
+for var, sty in products.items():
+    legend_lines.append(
+        Line2D(
+            [0], [0],
+            color=sty.get('color', 'k'),
+            lw=sty.get('lw', 1.8),
+            ls=sty.get('ls', '-')
+        )
+    )
+    legend_labels.append(sty['label'])
+
+# ---- bottom legend ----
+leg = fig.legend(
+    legend_lines,
+    legend_labels,
+    loc='lower center',
+    ncol=6,
+    frameon=False,
+    bbox_to_anchor=(0.5, -0.03),
+    fontsize=15
+)
+
+# ---- color legend text to match lines ----
+for text, line in zip(leg.get_texts(), legend_lines):
+    text.set_color(line.get_color())
+
+plt.tight_layout(rect=[0, 0.06, 1, 1])
+plt.show()
+
+#------------------------------------------------------------------------------
 
 # ---- Box definitions (reuse anywhere) ----
 BOXES_180 = {
