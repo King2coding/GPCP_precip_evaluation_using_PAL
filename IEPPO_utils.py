@@ -386,3 +386,154 @@ def process_imerg_with_PAL_rain_and_wind_v1(df, imerg_ds, imerg_version):
     gc.collect()
 
     return df
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def extract_timeseries_memory_efficient(xr_dataset, lat, lon, var_name=None, chunk_size=100):
+    """
+    Memory-efficient extraction of time series data from large xarray datasets.
+    Processes data in chunks to avoid loading entire dataset into memory.
+    
+    Parameters:
+    - xr_dataset: xarray DataArray or Dataset
+    - lat: latitude of the point
+    - lon: longitude of the point  
+    - var_name: variable name if working with Dataset (None for DataArray)
+    - chunk_size: number of time steps to process at once
+    
+    Returns:
+    - pandas DataFrame with time series data
+    """
+    import gc
+
+    # rename xr_dataset lat/lon if needed
+    coord_lst = list(xr_dataset.coords)
+    if 'latitude' in coord_lst:
+        xr_dataset = xr_dataset.rename({'latitude': 'lat'})
+    if 'longitude' in coord_lst:
+        xr_dataset = xr_dataset.rename({'longitude': 'lon'})
+    
+    # Select the nearest lat/lon point (this doesn't load data yet)
+    if var_name:
+        selected_data = xr_dataset[var_name].sel(lat=lat, lon=lon, method='nearest')
+    else:
+        selected_data = xr_dataset.sel(lat=lat, lon=lon, method='nearest')
+    
+    # Get time dimension
+    times = selected_data.time.values
+    total_times = len(times)
+    
+    print(f"Extracting time series for lat={lat:.2f}, lon={lon:.2f}")
+    print(f"Total time steps: {total_times}, processing in chunks of {chunk_size}")
+    
+    # Initialize list to store chunks
+    data_chunks = []
+    
+    # Process in chunks
+    for i in range(0, total_times, chunk_size):
+        end_idx = min(i + chunk_size, total_times)
+        
+        if i % (chunk_size * 10) == 0:  # Progress every 10 chunks
+            print(f"  Processing chunk {i//chunk_size + 1}/{(total_times-1)//chunk_size + 1}")
+        
+        try:
+            # Select time slice and compute (this loads only the chunk)
+            chunk_data = selected_data.isel(time=slice(i, end_idx)).compute()
+            
+            # Ensure the DataArray has a name for DataFrame conversion
+            if chunk_data.name is None:
+                if var_name:
+                    chunk_data.name = var_name
+                else:
+                    # For IMERG data, assign a default name
+                    chunk_data.name = 'precipitation'
+            
+            # Convert to dataframe
+            chunk_df = chunk_data.to_dataframe().reset_index()
+            data_chunks.append(chunk_df)
+            
+            # Clean up
+            del chunk_data
+            gc.collect()
+            
+        except Exception as e:
+            print(f"Error processing chunk {i//chunk_size + 1}: {e}")
+            continue
+    
+    if not data_chunks:
+        print("Warning: No data chunks were successfully processed")
+        return None
+    
+    # Combine all chunks
+    print("Combining chunks...")
+    result_df = pd.concat(data_chunks, ignore_index=True)
+    
+    # Clean up
+    del data_chunks
+    gc.collect()
+    
+    print(f"Extraction complete: {len(result_df)} records")
+    return result_df
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def extract_buoy_satellite_data_memory_efficient(ds_xr, 
+                                                 b_lat, b_lon, 
+                                                 product, var_name,
+                                                 chunk_size=100):
+    """
+    Memory-efficient extraction of satellite data at buoy locations.
+    
+    Parameters:
+    - product: satellite product xarray Dataset
+    - b_lat: buoy latitude
+    - b_lon: buoy longitude    
+    - chunk_size: number of time steps to process at once
+    
+    Returns:
+    - pandas DataFrame with satellite product time series
+    """
+    try:
+        # Extract precipitation data using memory-efficient method
+        precip_df = extract_timeseries_memory_efficient(
+            ds_xr, b_lat, b_lon, var_name=var_name, chunk_size=chunk_size
+        )
+        
+        if precip_df is None:
+            return None
+        
+        # For GPCP v3.2 and v3.3, also extract probability_liquid_phase
+        if product  == 'GPCP v3.2':
+            try:
+                print(f"  Also extracting probability_liquid_phase for {product}")
+                plp_df = extract_timeseries_memory_efficient(
+                    ds_xr, b_lat, b_lon, var_name='probability_liquid_phase', chunk_size=chunk_size
+                )
+                
+                if plp_df is not None:
+                    # Merge probability_liquid_phase data with precipitation data
+                    precip_df = precip_df.merge(
+                        plp_df[['time', 'probability_liquid_phase']], 
+                        on='time', how='left'
+                    )
+                    print(f"  ✅ Successfully merged probability_liquid_phase data")
+                else:
+                    print(f"  ⚠️ Warning: Failed to extract probability_liquid_phase for {product}")
+                    
+            except Exception as e:
+                print(f"  ⚠️ Warning: Could not extract probability_liquid_phase for {product}: {e}")
+        
+        # Add date column and rename columns
+        precip_df['date'] = pd.to_datetime(precip_df['time']).dt.date
+        precip_df.rename(columns={'precip': product}, inplace=True)
+        
+        # Rename probability_liquid_phase if it exists
+        if 'probability_liquid_phase' in precip_df.columns:
+            precip_df.rename(
+                columns={'probability_liquid_phase': f'PLP_{product}'}, 
+                inplace=True
+            )
+        
+        return precip_df
+        
+    except Exception as e:
+        print(f"Error extracting GPCP {product} data: {e}")
+        return None
