@@ -140,7 +140,8 @@ gc.collect()
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # CLASSIFY PAL FILES BY REGION
-pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, PAL_region_bounds)
+pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, 
+                                                               PAL_region_bounds)
 
 # CLASSIFICATION SUMMARY
 # Print classification summary
@@ -229,18 +230,173 @@ gc.collect()
 print("Data files listed and datasets loaded.")
 
 
-#%%
+#%% MATCHING GROUND TRUTH DATA AND GRIDDED PRECIPITATION PRODUCTS
+# THE PAL MATCHING
+print("\nStarting spatiotemporal matching of PAL and GPCP data...")
+resolution = 0.5  # 0.5 degree resolution
 
-era5_xr = xr.open_dataset(r'/ra1/pubdat/ECMWF/ERA5/daily/era5_tp_2007_daily.nc', engine='netcdf4')
-era5_xr = ds_swaplon(era5_xr)
-# data units are in m per day, convert to mm/day using 1000 factor
-era5_xr['tp'] = era5_xr['tp'] * 1000  # mm/h
-era5_xr['tp'] = era5_xr['tp'] * 24  # mm/day
-# resample to 0.5 degree resolution
-cc = CRS.from_authority(code=4326, auth_name='EPSG')
-era5_xr.rio.write_crs(cc.to_string(), inplace=True)
-era5_xr = era5_xr.rio.reproject(
-    era5_xr.rio.crs,
-    shape=(360, 720),#gpcp_ds_v3pt2_xr['precip'].shape[1:], # # set the shape as the GPCP data
-    resampling=Resampling.average,
-)
+# regional_PAL_sate_dfs_daily_mean = {}
+regional_PAL_GPCP_dfs_daily_mean = {}
+# regional_PAL_sate_dfs_daily_lst = []
+regional_PAL_GPCP_dfs_daily_lst = []
+for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
+  
+    print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")      
+
+    # store PAL and GPCP dataframes
+    region_pal_gpcp_dfs = []     
+
+    # LOAD PAL DATA
+    for i,pal_file in enumerate(pal_files):
+        pal_ds = xr.open_dataset(pal_file)
+
+        if i % 5 == 0:
+
+            print(f"Processing PAL file: {os.path.basename(pal_file)}")
+
+        pal_rain_df = grab_PAL_rain_and_wind_df(pal_ds)     
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+        pal_rain_gpcpv3pt2_df = pal_rain_df.copy()           
+        
+        pal_gpcpv3pt2_df_rain = process_gpcp_with_PAL_rain_and_wind(
+                                        pal_rain_gpcpv3pt2_df,
+                                        gpcp_ds_v3pt2_xr, 'GPCP v3.2') 
+
+        pal_gpcpv3pt2_df_rain.index = pd.to_datetime(pal_gpcpv3pt2_df_rain['time'])  # Ensure index is datetime
+
+        # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+        pal_rain_gpcpv3pt3_df = pal_rain_df.copy()          
+        
+        pal_gpcpv3pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
+                                        pal_rain_gpcpv3pt3_df,
+                                        gpcp_ds_v3pt3_xr, 'GPCP v3.3')  # , pal_wind_gpcpv3pt3_df
+
+        pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
+
+        # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+        # # Process ERA5 data with PAL - Ultra memory-efficient approach
+        pal_rain_era5_df = pal_rain_df.copy() 
+        
+        pal_era5_df_rain = process_era5_with_PAL_rain_and_wind_v1(pal_rain_era5_df, era5_ds_xr)        
+
+        pal_era5_df_rain.index = pd.to_datetime(pal_era5_df_rain['time'])
+
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+        pal_rain_imerg_df = pal_rain_df.copy() 
+        pal_imerg_v06_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v06_ds_xr, 'v06')
+        pal_imerg_v06_df_rain.index = pd.to_datetime(pal_imerg_v06_df_rain['time'])
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+        pal_rain_imerg_df = pal_rain_df.copy() 
+        pal_imerg_v07_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v07_ds_xr, 'v07')
+        pal_imerg_v07_df_rain.index = pd.to_datetime(pal_imerg_v07_df_rain['time'])
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+
+        # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data         
+
+        # merge GPCP v3.2 data  
+        pal_df_combined_rain = pal_gpcpv3pt2_df_rain.copy()
+        pal_df_combined_rain = pal_df_combined_rain[['time','date','rain_rate', 
+                                                     'GPCP v3.2','PLP_GPCP v3.2']].copy()       
+
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+        # merge GPCP v3.3 data
+        # bring the lquid precip data into gpcp v3.3 df
+        pal_gpcpv3pt3_daily = pal_gpcpv3pt3_df_rain.copy()        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_gpcpv3pt3_df_rain[['date','GPCP v3.3']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_v3.3')
+        )
+
+        # # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['GPCP v3.3_v3.3', 'date_v3.3']], 
+                                                inplace=True)
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+        # ERA5 merge
+        pal_era5_daily = pal_era5_df_rain.copy()
+        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_era5_df_rain[['date','ERA5']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_ERA5')
+        )
+        # # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['ERA5_ERA5', 'date_ERA5']], 
+                                                inplace=True)
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
+        # IMERG v06 merge
+        pal_imerg_v06_daily = pal_imerg_v06_df_rain.copy()
+        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_imerg_v06_df_rain[['date','IMERG v06']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_IMERG v06')
+        )
+        # # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['IMERG v06_IMERG v06', 'date_IMERG v06']], 
+                                                inplace=True)
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # IMERG v07 merge
+        pal_imerg_v07_daily = pal_imerg_v07_df_rain.copy()
+        
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_imerg_v07_df_rain[['date','IMERG v07']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_IMERG v07')  
+        )
+        # # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['IMERG v07_IMERG v07', 'date_IMERG v07']], 
+                                                inplace=True)       
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -        
+        pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP_v3pt2'] == 100]        
+
+        # groupby date and get mean of rain_rate and GPCP data 'GPCP_v1pt3',
+        grp = pal_df_combined_rain.groupby('date')
+        daily_avg_rain = grp.mean([['rain_rate', 
+                                    'GPCP v3.2', 
+                                    'GPCP v3.3', 
+                                    'IMERG v06',
+                                    'IMERG v07',
+                                    'ERA5']]) \
+        .join(pal_df_combined_rain.groupby('date')['time'] \
+        .count() \
+        .to_frame('n_min')
+        ).reset_index()
+
+        daily_avg_rain['cov_hr'] = daily_avg_rain['n_min'] / 60.0
+        daily_avg_rain = daily_avg_rain[daily_avg_rain['cov_hr'] >= 12] 
+        
+        # # multiply PAL rain rate by 24 to get daily average
+        daily_avg_rain['rain_rate'] *= 24
+        # # add region name and track_PAL_id to the dataframe
+        daily_avg_rain['region'] = region_name  # Add region name for clarity
+        daily_avg_rain['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+
+        # region_pal_sate_dfs.append(daily_avg_rain)
+        region_pal_gpcp_dfs.append(daily_avg_rain)
+
+        pal_ds.close()
+
+    # Combine all region PAL-GPCP dataframes into a single dataframe
+    region_pal_gpcp_df = pd.concat(region_pal_gpcp_dfs)        
+    
+    # calculate daily mean per track_PAL_id
+    region_pal_gpcp_df_daily_mean = region_pal_gpcp_df.groupby(['track_PAL_id'])[
+                                                               ['rain_rate', 
+                                                                'GPCP v3.2', 
+                                                                'GPCP v3.3',
+                                                                'IMERG v06',
+                                                                'IMERG v07',
+                                                                'ERA5']].mean().reset_index()
+    region_pal_gpcp_df_daily_mean['region'] = region_name  # Add region name for clarity
+    regional_PAL_GPCP_dfs_daily_mean[region_name] = region_pal_gpcp_df_daily_mean
+
+    # Append to the list for later processing
+    regional_PAL_GPCP_dfs_daily_lst.append(region_pal_gpcp_df)
+gc.collect()  # Clean up memory

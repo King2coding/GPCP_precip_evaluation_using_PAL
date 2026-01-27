@@ -267,3 +267,122 @@ def process_imerg_file(args):
     imerg_xr = imerg_xr.rename({'y': 'lat', 'x': 'lon'})
     del(imerg_precip_data,imerg_time, precip_aray,lon,lat)  
     return imerg_xr
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def grab_PAL_rain_and_wind_df(pal_xr_ds):
+    """
+    Grab rain and wind data from a PAL xarray dataset.
+    Parameters:
+    - pal_xr_ds: xarray dataset containing PAL data.
+    Returns:
+    - df_rain: DataFrame containing rain data.
+    - df_wind: DataFrame containing wind data.
+    """    
+
+    df = pd.DataFrame({
+        'time': pd.to_datetime(pal_xr_ds['time'].values),
+        'lat': pal_xr_ds['lat'].values,
+        'lon': pal_xr_ds['lon'].values,
+        'rain_rate': pal_xr_ds['rain_rate'].values,
+        'wind_speed': pal_xr_ds['wind_speed'].values,                
+    })   
+
+    df['date'] = df['time'].dt.date  # Extract date from time
+
+    df = df.dropna(axis=0, how='any')  # Drop rows with any NaN values
+
+    # Normalize longitude to [-180, 180]
+    df['lon'] = (df['lon'] + 360) % 360
+    df['lon'][df['lon'] > 180] -= 360
+
+    return  df  
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def process_gpcp_with_PAL_rain_and_wind(df, gpcp_ds_xr, gpcp_version):
+    # pal_df_rain, pal_df_wind
+
+    # DO PAL RAIN GPCP MATCHING    
+
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values
+
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'latitude' in gpcp_ds_xr.dims or 'longitude' in gpcp_ds_xr.dims:
+        gpcp_ds_xr = gpcp_ds_xr.rename({'latitude': 'lat', 'longitude': 'lon'})
+
+    gpcp_precip = gpcp_ds_xr['precip'].interp(
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+        lon=("points", pal_lons_rain), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    gpcp_precip = gpcp_precip.where(gpcp_precip >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df[gpcp_version] = gpcp_precip
+
+    # do same for probability of liquid phase if it exsists in dataset
+    if gpcp_version == 'GPCP v3.2':
+        gpcp_plp = gpcp_ds_xr['probability_liquid_phase'].interp(
+            time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+            lon=("points", pal_lons_rain), method="nearest")
+        
+        # Set places where the values are less than 0 to NaN
+        gpcp_plp = gpcp_plp.where(gpcp_plp >= 0, np.nan)
+        
+        # Store matched values in the DataFrame
+        df[f'PLP_{gpcp_version}'] = gpcp_plp   
+
+    gc.collect()
+
+    return df#pal_df_rain, pal_df_wind
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+def process_era5_with_PAL_rain_and_wind_v1(df, era5_ds):    
+    # DO PAL RAIN ERA5 MATCHING 
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values
+
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'y' in era5_ds.dims or 'x' in era5_ds.dims:
+        era5_ds = era5_ds.rename({'y': 'lat', 'x': 'lon'})
+
+    era5_tp = era5_ds['tp'].interp(
+        valid_time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+        lon=("points", pal_lons_rain), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    era5_tp = era5_tp.where(era5_tp >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df['ERA5'] = era5_tp    
+
+    gc.collect()
+
+    return df
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+def process_imerg_with_PAL_rain_and_wind_v1(df, imerg_ds, imerg_version):    
+    # DO PAL RAIN IMERG MATCHING 
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values
+
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'y' in imerg_ds.dims or 'x' in imerg_ds.dims:
+        imerg_ds = imerg_ds.rename({'y': 'lat', 'x': 'lon'})
+
+    imerg_pr = imerg_ds['tp'].interp(
+        valid_time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+        lon=("points", pal_lons_rain), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    imerg_pr = imerg_pr.where(imerg_pr >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df[imerg_version] = imerg_pr    
+
+    gc.collect()
+
+    return df
