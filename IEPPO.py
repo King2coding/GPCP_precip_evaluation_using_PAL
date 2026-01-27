@@ -423,99 +423,76 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
     # LOAD Buoy DATA
     for b_file in buoy_files:
-        b_ds = xr.open_dataset(b_file)
-        b_lat = b_ds['lat'].values[0]
-        b_lon = b_ds['lon'].values[0]
-        b_lon = (b_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180]
-
-        b_df = b_ds[['time', 'RN_485', 'QRN_5485']].to_dataframe().reset_index()
-        b_df.rename(columns={'RN_485': 'rain_rate', 'QRN_5485': 'quality_flag'}, inplace=True)
-        b_df['date'] = pd.to_datetime(b_df['time']).dt.date  # Extract date from time
-        # Filter out rows with negative rain_rate
-        b_df = b_df[b_df['rain_rate'] >= 0]
-
+        b_df, b_lat, b_lon = grab_Buoy_data_df(b_file)
         print(f"Processing Buoy file: {os.path.basename(b_file)}")
-       
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-        # Process GPCP data with Buoy
-        # GPCP v1.3 - Memory efficient version (Note: this appears to use v3.2 dataset)
-        # print(f"Extracting GPCP v1.3 data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
-        # b_rain_gpcpv1pt3_df = extract_buoy_gpcp_data_memory_efficient(
-        #     gpcp_ds_v3pt2_xr, b_lat, b_lon, version="v1pt3", chunk_size=200
-        # )
         
-        # if b_rain_gpcpv1pt3_df is None:
-        #     print("Warning: Failed to extract GPCP v1.3 data, creating empty dataframe")
-        #     b_rain_gpcpv1pt3_df = pd.DataFrame(columns=['date', 'GPCP_v1pt3'])
-            
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
 
         # Process GPCP v3.2 - Memory efficient version
-        # print(f"Extracting GPCP v3.2 data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
-        # b_rain_gpcpv3pt2_df = extract_buoy_gpcp_data_memory_efficient(
-        #     gpcp_ds_v3pt2_xr, b_lat, b_lon, version="v3pt2", chunk_size=200
-        # )
+        gpcpv3pt2_df = extract_buoy_satellite_data_memory_efficient(
+            gpcp_ds_v3pt2_xr, b_lat, b_lon, 'GPCP v3.2', 'precip',chunk_size=300
+        )
         
-        # if b_rain_gpcpv3pt2_df is None:
-        #     print("Warning: Failed to extract GPCP v3.2 data, creating empty dataframe")
-        #     b_rain_gpcpv3pt2_df = pd.DataFrame(columns=['date', 'GPCP_v3pt2'])
+        if gpcpv3pt2_df is None:
+            print("Warning: Failed to extract GPCP v3.2 data, creating empty dataframe")
+            b_rain_gpcpv3pt2_df = pd.DataFrame(columns=['date', 'GPCP v3.2'])
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
         # Process GPCP v3.3 - Memory efficient version
-        print(f"Extracting GPCP v3.3 data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
-        b_rain_gpcpv3pt3_df = extract_buoy_satellite_data_memory_efficient(
-            gpcp_ds_v3pt3_xr, b_lat, b_lon, version="v3pt3", chunk_size=200
+        gpcpv3pt3_df = extract_buoy_satellite_data_memory_efficient(
+            gpcp_ds_v3pt3_xr, b_lat, b_lon, 'GPCP v3.3', 'precip', chunk_size=300
         )
         
-        if b_rain_gpcpv3pt3_df is None:
+        if gpcpv3pt3_df is None:
             print("Warning: Failed to extract GPCP v3.3 data, creating empty dataframe")
-            b_rain_gpcpv3pt3_df = pd.DataFrame(columns=['date', 'GPCP_v3pt3'])
+            gpcpv3pt3_df = pd.DataFrame(columns=['date', 'GPCP v3.3'])
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
         
-        # Process IMERG data with Buoy - Memory efficient version (optimized for 0.1° resolution)
-        print(f"Extracting IMERG data for buoy at lat={b_lat:.2f}, lon={b_lon:.2f}")
-        # Use smaller chunk size for IMERG due to high spatial resolution (0.1° vs 0.5°/1° for GPCP)
-        b_rain_imerg_df = extract_buoy_imerg_data_memory_efficient(
-            imerg_ds_xr, b_lat, b_lon, chunk_size=50  # Reduced from 100 to 50 for IMERG
+        # Process ERA5 data with Buoy - Memory efficient version 
+        era5_df = extract_buoy_satellite_data_memory_efficient(
+            era5_ds_xr, b_lat, b_lon, 'ERA5', 'tp', chunk_size=300
         )
         
-        if b_rain_imerg_df is None:
+        if era5_df is None:
+            print("Warning: Failed to extract ERA5 data, creating empty dataframe")
+            era5_df = pd.DataFrame(columns=['date', 'ERA5'])
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+        
+        # Process IMERG data with Buoy - Memory efficient version
+        imerg_v07_df = extract_buoy_satellite_data_memory_efficient(
+            imerg_v07_ds_xr, b_lat, b_lon, 'IMERG v07', None, chunk_size=300  # Reduced from 100 to 50 for IMERG
+        )
+        
+        if imerg_v07_df is None:
             print("Warning: Failed to extract IMERG data, creating empty dataframe")
-            b_rain_imerg_df = pd.DataFrame(columns=['date', 'IMERG'])
+            imerg_v07_df = pd.DataFrame(columns=['date', 'IMERG v07'])
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
 
-        # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data        
         # COMBINE BY RAINFALL RATE
-        b_df_combined_rain = b_df[['date', 'rain_rate', 'quality_flag']].copy()
+        b_df_combined_rain = b_df[['date', 'rain_rate', 'quality_flag']].copy()        
         
-        # merge GPCP v3.1 data            
-        # b_df_combined_rain = b_df_combined_rain.merge(
-        #     b_rain_gpcpv1pt3_df[['date','GPCP_v3pt1']], 
-        #     on='date', how='left', suffixes=('', '_v3pt1')
-        # )
          # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
         # merge GPCP v3.2 data
-        # b_df_combined_rain = b_df_combined_rain.merge(
-        #     b_rain_gpcpv3pt2_df[['date','GPCP_v3pt2', 'PLP_GPCP_v3pt2']], 
-        #     on='date', how='left', suffixes=('', '_v3pt2')
-        # )
-
+        b_df_combined_rain = b_df_combined_rain.merge(
+            gpcpv3pt2_df[['date','GPCP v3.2', 'PLP_GPCP v3.2']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_v3pt2')
+        )
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
         # merge GPCP v3.3 data
         b_df_combined_rain = b_df_combined_rain.merge(
-            b_rain_gpcpv3pt3_df[['date','GPCP_v3pt3', 'PLP_GPCP_v3pt3']], 
-            on='date', how='left', suffixes=('', '_v3pt3')
+            gpcpv3pt3_df[['date','GPCP v3.3']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
         )
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
         # merge IMERG data - merge on 'date' column instead of index
         b_df_combined_rain = b_df_combined_rain.merge(
-            b_rain_imerg_df[['date', 'IMERG']], 
-            on='date', how='left', suffixes=('', '_IMERG')
+            imerg_v07_df[['date', 'IMERG v07']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_IMERG')
         )
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -523,12 +500,13 @@ for region_name, buoy_files in buoy_files_by_region.items():
         # retain only columns where PLP_GPCP_v3pt2 is == 100
         # b_df_combined_rain = b_df_combined_rain[b_df_combined_rain['PLP_GPCP_v3pt2'] == 100]
         # retain only columns where PLP_GPCP_v3pt3 is == 100
-        b_df_combined_rain = b_df_combined_rain[b_df_combined_rain['PLP_GPCP_v3pt3'] == 100]
+        b_df_combined_rain = b_df_combined_rain[b_df_combined_rain['PLP_GPCP v3.3'] == 100]
 
 
         # To get probably valid data only, request QRN_5485>=1 and QRN_5485<=3.
         b_df_combined_rain = b_df_combined_rain[(b_df_combined_rain['quality_flag'] >= 1) & \
-                                                    (b_df_combined_rain['quality_flag'] <= 3)]
+                                                                                                    
+                                                (b_df_combined_rain['quality_flag'] <= 3)]
 
 
     
@@ -538,9 +516,11 @@ for region_name, buoy_files in buoy_files_by_region.items():
         b_df_combined_rain['region'] = region_name  # Add region name for clarity
         b_df_combined_rain['ID'] = os.path.basename(b_file).split('.')[0]
 
-        region_buoy_sate_dfs.append(b_df_combined_rain)
+        b_df_combined_rain.drop(columns=['quality_flag',
+                                     'PLP_GPCP v3.2',], 
+                                     inplace=True)
 
-        b_ds.close()
+        region_buoy_sate_dfs.append(b_df_combined_rain)       
 
     # Combine all region PAL-GPCP dataframes into a single dataframe
     region_buoy_sate_df = pd.concat(region_buoy_sate_dfs)
@@ -548,9 +528,11 @@ for region_name, buoy_files in buoy_files_by_region.items():
     # calculate daily mean per track_PAL_id
     region_buoy_sate_df_daily_mean = region_buoy_sate_df.groupby(['ID'])[['rain_rate', 
                                                                         # 'GPCP_v1pt3', 
-                                                                        # 'GPCP_v3pt2', 
+                                                                        'GPCP_v3pt2', 
                                                                         'GPCP_v3pt3', 
-                                                                        'IMERG']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
+                                                                        # 'IMERG_v06',
+                                                                        'IMERG v07',
+                                                                        'ERA5']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
     region_buoy_sate_df_daily_mean['region'] = region_name  # Add region name for clarity
     regional_buoy_sate_dfs_daily_mean[region_name] = region_buoy_sate_df_daily_mean
 

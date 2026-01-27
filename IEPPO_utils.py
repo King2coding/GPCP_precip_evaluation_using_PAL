@@ -388,6 +388,38 @@ def process_imerg_with_PAL_rain_and_wind_v1(df, imerg_ds, imerg_version):
     return df
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def grab_Buoy_data_df(buoy_xr_ds):
+    """
+    Grab Buoy data from a given Buoy NetCDF file and process it into a Pandas DataFrame.
+
+    Parameters
+    ----------
+    buoy_xr_ds : xr.Dataset
+        The Buoy NetCDF file to process.
+
+    Returns
+    -------
+    b_df : pd.DataFrame
+        The processed Buoy data in a Pandas DataFrame format.
+    b_lat : float
+        The latitude of the buoy.
+    b_lon : float
+        The longitude of the buoy.
+    """
+    
+    b_ds = xr.open_dataset(buoy_xr_ds)
+    b_lat = b_ds['lat'].values[0]
+    b_lon = b_ds['lon'].values[0]
+    b_lon = (b_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180]
+
+    b_df = b_ds[['time', 'RN_485', 'QRN_5485']].to_dataframe().reset_index()
+    b_df.rename(columns={'RN_485': 'rain_rate', 'QRN_5485': 'quality_flag'}, inplace=True)
+    b_df['date'] = pd.to_datetime(b_df['time']).dt.date  # Extract date from time
+    # Filter out rows with negative rain_rate
+    b_df = b_df[b_df['rain_rate'] >= 0]
+    del(b_ds)
+    return b_df, b_lat, b_lon
+#-
 def extract_timeseries_memory_efficient(xr_dataset, lat, lon, var_name=None, chunk_size=100):
     """
     Memory-efficient extraction of time series data from large xarray datasets.
