@@ -51,6 +51,7 @@ from joblib import Parallel, delayed
 import dask
 #%% GLOBAL VARIABLES
 
+
 def format_lon(x, pos=None):
     if x == 0:
         return "0°"
@@ -157,6 +158,19 @@ BOXES = {
     "box4": {"lat": ( 5, 15),  "lon": [(135, 160)]},                 # 5–15N, 135–160E
 }
 #%% DEFINE FUNCTIONS
+def np_describe(x):
+    x = np.asarray(x)
+    x = x[~np.isnan(x)]
+    return {
+        "count": x.size,
+        "mean": x.mean(),
+        "std": x.std(ddof=1),
+        "min": x.min(),
+        "25%": np.percentile(x, 25),
+        "50%": np.percentile(x, 50),
+        "75%": np.percentile(x, 75),
+        "max": x.max(),
+    }
 # FUNCTION TO CLASSIFY AND GROUP PAL FILES BASED ON REGIONS
 
 def assign_to_gpcp_grid(lat,lon, resolution):
