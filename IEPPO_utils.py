@@ -230,11 +230,11 @@ def process_imerg_file(args):
 
     if version == 'v06':
         precip_aray = imerg_precip_data.precipitationCal.data    
-        imerg_time = imerg_precip_data.attrs['BeginDate']
+        imerg_time = pd.to_datetime(imerg_precip_data.attrs['BeginDate'], format='%Y-%m-%d')
         
     elif version == 'v07':
         precip_aray = imerg_precip_data.precipitation.data    
-        imerg_time = imerg_precip_data['time'].values[0] 
+        imerg_time = pd.to_datetime(imerg_precip_data['time'].values[0],format='%Y-%m-%d') 
 
     precip_aray = np.flip(precip_aray[0,:,:].transpose(), axis=0)
     precip_aray = precip_aray[np.newaxis, :, :]
@@ -373,8 +373,8 @@ def process_imerg_with_PAL_rain_and_wind_v1(df, imerg_ds, imerg_version):
     if 'y' in imerg_ds.dims or 'x' in imerg_ds.dims:
         imerg_ds = imerg_ds.rename({'y': 'lat', 'x': 'lon'})
 
-    imerg_pr = imerg_ds['tp'].interp(
-        valid_time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+    imerg_pr = imerg_ds.interp(
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
         lon=("points", pal_lons_rain), method="nearest"
     )
     # Set places where the values are less than 0 to NaN

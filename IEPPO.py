@@ -77,7 +77,7 @@ gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files,
                                     )
 gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 
-print("GPCP loading complete!...")
+print("✅ GPCP loading complete!...")
 print("-" * 30 + "\n")
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
@@ -88,7 +88,7 @@ with Pool(processes=18) as pool:  # Adjust the number of processes as needed
 # Combine all processed batches into a single xarray dataset - simple version
 if era5_ds_xr_list:
     era5_ds_xr = xr.concat(era5_ds_xr_list, dim="valid_time")
-    print("ERA5 loading complete")
+    print("✅ ERA5 loading complete")
 print("-" * 30 + "\n")
 del(era5_ds_xr_list)
 gc.collect() 
@@ -103,7 +103,7 @@ with Pool(processes=18) as pool:  # Adjust the number of processes as needed
 if mer2_ds_xr_list:
     mer2_ds_xr_list = [ds for ds in mer2_ds_xr_list if ds is not None]  # Filter out None values
     mer2_ds_xr = xr.concat(mer2_ds_xr_list, dim="time")
-    print("MERRA2 loading complete")
+    print("✅ MERRA2 loading complete")
 print("-" * 30 + "\n")
 del(mer2_ds_xr_list)
 gc.collect() 
@@ -177,7 +177,7 @@ for region in expected_counts:
 print(f"\nTotal Expected: {total_expected}")
 print(f"Total Actual: {total_actual}")
 print(f"Difference: {total_actual - total_expected}")
-print('PAL data loading and classification complete!')
+print('✅ PAL data loading and classification complete!')
 print("-" * 30 + "\n")
 gc.collect() 
 
@@ -224,7 +224,7 @@ for buoy_file in pacific_buoy_files:
 # add the india and atlantic buoys
 buoy_files_by_region['IND'] = sorted([os.path.join(indian_buoy_dir, f) for f in os.listdir(indian_buoy_dir) if f.endswith('.cdf')])
 buoy_files_by_region['ATL'] = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.listdir(atlantic_buoy_dir) if f.endswith('.cdf')])
-print("BUOY CLASSIFICATION SUMMARY COMPLETED")
+print("✅ BUOY CLASSIFICATION SUMMARY COMPLETED")
 print("\n" + "="*50)
 gc.collect()
 print("Data files listed and datasets loaded.")
