@@ -456,6 +456,31 @@ def process_imerg_with_PAL_rain_and_wind_v1(df, imerg_ds, imerg_version):
     return df
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def process_merra2_with_PAL_rain_and_wind_v1(df, merra2_ds,):    
+    # DO PAL RAIN ERA5 MATCHING 
+    pal_dates_rain = pd.to_datetime(df['date'])
+    pal_lats_rain = df['lat'].values
+    pal_lons_rain = df['lon'].values
+
+    # Rename latitude/longitude dims to 'lat' and 'lon' if needed
+    if 'y' in merra2_ds.dims or 'x' in merra2_ds.dims:
+        merra2_ds = merra2_ds.rename({'y': 'lat', 'x': 'lon'})
+
+    merra2_pr = merra2_ds.interp(
+        time=("points", pal_dates_rain), lat=("points", pal_lats_rain), 
+        lon=("points", pal_lons_rain), method="nearest"
+    )
+    # Set places where the values are less than 0 to NaN
+    merra2_pr = merra2_pr.where(merra2_pr >= 0, np.nan)
+
+    # Store matched values in the DataFrame
+    df['MERRA2'] = merra2_pr    
+
+    gc.collect()   
+
+    return df
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 def grab_Buoy_data_df(buoy_xr_ds):
     """
     Grab Buoy data from a given Buoy NetCDF file and process it into a Pandas DataFrame.

@@ -278,7 +278,7 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
         pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
 
         # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
-        # # Process ERA5 data with PAL - Ultra memory-efficient approach
+        # Process ERA5 data with PAL 
         pal_rain_era5_df = pal_rain_df.copy() 
         
         pal_era5_df_rain = process_era5_with_PAL_rain_and_wind_v1(pal_rain_era5_df, era5_ds_xr)        
@@ -286,6 +286,7 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
         pal_era5_df_rain.index = pd.to_datetime(pal_era5_df_rain['time'])
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+        # Process IMERG data with PAL 
         # pal_rain_imerg_df = pal_rain_df.copy() 
         # pal_imerg_v06_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v06_ds_xr, 'v06')
         # pal_imerg_v06_df_rain.index = pd.to_datetime(pal_imerg_v06_df_rain['time'])
@@ -293,6 +294,12 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
         pal_rain_imerg_df = pal_rain_df.copy() 
         pal_imerg_v07_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v07_ds_xr, 'v07')
         pal_imerg_v07_df_rain.index = pd.to_datetime(pal_imerg_v07_df_rain['time'])
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+        
+        # Process MERRA2 data with PAL
+        pal_rain_merra2_df = pal_rain_df.copy()
+        pal_merra2_df_rain = process_merra2_with_PAL_rain_and_wind_v1(pal_rain_merra2_df, mer2_ds_xr)
+        pal_merra2_df_rain.index = pd.to_datetime(pal_merra2_df_rain['time'])
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
 
         # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data         
@@ -311,7 +318,7 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
             left_index=True, right_index=True, how='left', suffixes=('', '_v3.3')
         )
 
-        # # Remove any duplicate columns from previous merges
+        # Remove any duplicate columns from previous merges
         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
                                                 ['GPCP v3.3_v3.3', 'date_v3.3']], 
                                                 inplace=True)
@@ -353,6 +360,17 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
                                                 ['v07_v07', 'date_v07']], 
                                                 inplace=True)       
         
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
+        # MERRA2 merge
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_merra2_df_rain[['date','MERRA2']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_MERRA2')
+        )
+        # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['MERRA2_MERRA2', 'date_MERRA2']], 
+                                                inplace=True)
+        # 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -        
         pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP v3.2'] == 100]        
 
@@ -363,7 +381,8 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
                                     'GPCP v3.3', 
                                     # 'IMERG v06',
                                     'IMERG v07',
-                                    'ERA5']]) \
+                                    'ERA5',
+                                    'MERRA2']]) \
         .join(pal_df_combined_rain.groupby('date')['time'] \
         .count() \
         .to_frame('n_min')
@@ -400,7 +419,8 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
                                                                 'GPCP v3.3',
                                                                 # 'IMERG v06',
                                                                 'IMERG v07',
-                                                                'ERA5']] \
+                                                                'ERA5',
+                                                                'MERRA2']] \
                                                      .mean() \
                                                      .reset_index()
     region_pal_sate_df_daily_mean['region'] = region_name  # Add region name for clarity
@@ -410,6 +430,20 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
     regional_PAL_sate_dfs_daily_lst.append(region_pal_sate_df)
 gc.collect()  # Clean up memory
 
+# save dfs to disk
+print("✅ PAL-GPCP matching complete!")
+print("Saving PAL-GPCP matched dataframes to disk...")
+pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP v3.2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+pal_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP v3.3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+pal_era5_cmp = pd.concat([df[['rain_rate', 'ERA5']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+pal_imergv07_cmp = pd.concat([df[['rain_rate', 'IMERG v07']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+pal_merra2_cmp = pd.concat([df[['rain_rate', 'MERRA2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# save these files for later use
+pal_gpcv3_2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+pal_gpcv3_3_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_3_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+pal_era5_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_era5_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+pal_imergv07_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_imergv07_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+pal_merra2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_merra2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 # THE BUOY MATCHING
@@ -453,6 +487,8 @@ for region_name, buoy_files in buoy_files_by_region.items():
         era5_df = extract_buoy_satellite_data_memory_efficient(
             era5_ds_xr, b_lat, b_lon, 'ERA5', 'tp', chunk_size=300
         )
+        era5_df.drop(columns=['number','spatial_ref'], inplace=True)  # drop redundant column
+        era5_df.rename(columns={'tp': 'ERA5'}, inplace=True)
         
         if era5_df is None:
             print("Warning: Failed to extract ERA5 data, creating empty dataframe")
@@ -463,12 +499,27 @@ for region_name, buoy_files in buoy_files_by_region.items():
         imerg_v07_df = extract_buoy_satellite_data_memory_efficient(
             imerg_v07_ds_xr, b_lat, b_lon, 'IMERG v07', None, chunk_size=300  # Reduced from 100 to 50 for IMERG
         )
+
+        imerg_v07_df.drop(columns=['spatial_ref'], inplace=True)  # drop redundant column
+        imerg_v07_df.rename(columns={'precipitation': 'IMERG v07'}, inplace=True)
         
         if imerg_v07_df is None:
             print("Warning: Failed to extract IMERG data, creating empty dataframe")
             imerg_v07_df = pd.DataFrame(columns=['date', 'IMERG v07'])
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
+
+        # Process MERRA2 data with Buoy - Memory efficient version
+        merra2_df = extract_buoy_satellite_data_memory_efficient(
+            mer2_ds_xr, b_lat, b_lon, 'MERRA2', None, chunk_size=300
+        )
+        
+        merra2_df.drop(columns=['spatial_ref'], inplace=True)
+        merra2_df.rename(columns={'PRECTOTCORR':'MERRA2'}, inplace=True)
+        
+        if merra2_df is None:
+            print("Warning: Failed to extract MERRA2 data, creating empty dataframe")
+            merra2_df = pd.DataFrame(columns=['date', 'MERRA2'])
 
         # COMBINE BY RAINFALL RATE
         b_df_combined_rain = b_df[['date', 'rain_rate', 'quality_flag']].copy()        
@@ -477,9 +528,13 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
         # merge GPCP v3.2 data
         b_df_combined_rain = b_df_combined_rain.merge(
-            gpcpv3pt2_df[['date','GPCP v3.2']], 
+            gpcpv3pt2_df[['date','GPCP v3.2', 'PLP_GPCP v3.2']], 
             left_index=True, right_index=True, how='left', suffixes=('', '_v3pt2')
         )
+        # Remove any duplicate columns from previous merges
+        b_df_combined_rain.drop(columns=[i for i in b_df_combined_rain.columns if i in \
+                                                ['GPCP v3.2_v3.2', 'date_v3pt2']], 
+                                                inplace=True)
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
         # merge GPCP v3.3 data
@@ -487,43 +542,60 @@ for region_name, buoy_files in buoy_files_by_region.items():
             gpcpv3pt3_df[['date','GPCP v3.3']], 
             left_index=True, right_index=True, how='left', suffixes=('', '_v3pt3')
         )
+        # Remove any duplicate columns from previous merges
+        b_df_combined_rain.drop(columns=[i for i in b_df_combined_rain.columns if i in \
+                                                ['GPCP v3.3_v3.3', 'date_v3pt3']], 
+                                                inplace=True)
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         # merge ERA5 data
         b_df_combined_rain = b_df_combined_rain.merge(
-            era5_df[['date','tp']], 
+            era5_df[['date','ERA5']], 
             left_index=True, right_index=True, how='left', suffixes=('', '_ERA5')
         )
+        # Remove any duplicate columns from previous merges
+        b_df_combined_rain.drop(columns=[i for i in b_df_combined_rain.columns if i in \
+                                                ['ERA5_ERA5', 'date_ERA5']], 
+                                                inplace=True)
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
         # merge IMERG data - merge on 'date' column instead of index
         b_df_combined_rain = b_df_combined_rain.merge(
-            imerg_v07_df[['date', 'precipitation']], 
-            left_index=True, right_index=True, how='left', suffixes=('', '_precipitation')
+            imerg_v07_df[['date', 'IMERG v07']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_IMERG v07')
         )
+        # Remove any duplicate columns from previous merges
+        b_df_combined_rain.drop(columns=[i for i in b_df_combined_rain.columns if i in \
+                                                ['IMERG v07_IMERG v07', 'date_IMERG v07']], 
+                                                inplace=True)
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        # merge MERRA2 data
+        b_df_combined_rain = b_df_combined_rain.merge(
+            merra2_df[['date','MERRA2']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_MERRA2')
+        )
+        # Remove any duplicate columns from previous merges
+        b_df_combined_rain.drop(columns=[i for i in b_df_combined_rain.columns if i in \
+                                                ['MERRA2_MERRA2', 'date_MERRA2']], 
+                                                inplace=True)
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-        # To get probably valid data only, request QRN_5485>=1 and QRN_5485<=3.
+        # To get probably valid data only, request QRN_5485>=1 and QRN_5485<=3. and PLP_GPCP v3.2 == 100
         b_df_combined_rain = b_df_combined_rain[(b_df_combined_rain['quality_flag'] >= 1) & \
                                                                                                     
                                                 (b_df_combined_rain['quality_flag'] <= 3)]
+        
+        b_df_combined_rain = b_df_combined_rain[b_df_combined_rain['PLP_GPCP v3.2'] == 100]
 
-
-    
         # multiply PAL rain rate by 24 to get daily average
         b_df_combined_rain['rain_rate'] *= 24
-        b_df_combined_rain.rename(columns={'tp':'ERA5',
-                                         'precipitation':'IMERG v07'}, 
-                                         inplace=True)
+        
         # add region name and track_PAL_id to the dataframe
         b_df_combined_rain['region'] = region_name  # Add region name for clarity
         b_df_combined_rain['ID'] = os.path.basename(b_file).split('.')[0]
 
-        b_df_combined_rain.drop(columns=['quality_flag',
-                                     'date_v3pt2', 'date_v3pt3',
-                                     'date_ERA5', 'date_precipitation'], 
-                                     inplace=True)
+        b_df_combined_rain.drop(columns=['quality_flag', 'PLP_GPCP v3.2'], inplace=True)
 
         region_buoy_sate_dfs.append(b_df_combined_rain)       
 
@@ -531,10 +603,9 @@ for region_name, buoy_files in buoy_files_by_region.items():
     region_buoy_sate_df = pd.concat(region_buoy_sate_dfs)
 
     # calculate daily mean per track_PAL_id
-    region_buoy_sate_df_daily_mean = region_buoy_sate_df.groupby(['ID'])[['rain_rate', 
-                                                                        # 'GPCP_v1pt3', 
-                                                                        'GPCP_v3pt2', 
-                                                                        'GPCP_v3pt3', 
+    region_buoy_sate_df_daily_mean = region_buoy_sate_df.groupby(['ID'])[['rain_rate',                                                                          
+                                                                        'GPCP v3.2', 
+                                                                        'GPCP v3.3', 
                                                                         # 'IMERG_v06',
                                                                         'IMERG v07',
                                                                         'ERA5']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
@@ -551,18 +622,6 @@ gc.collect()  # Clean up memory
 #%% SCATTER PLOT
 # PAL BASED ASSESSMENT
 
-# pal_gpcv1_3_cmp = pd.concat([df[['rain_rate', 'GPCP_v1pt3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP v3.2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP v3.3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_era5_cmp = pd.concat([df[['rain_rate', 'ERA5']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_imergv07_cmp = pd.concat([df[['rain_rate', 'IMERG v07']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_merra2_cmp = pd.concat([df[['rain_rate', 'MERRA2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-# save these files for later use
-pal_gpcv3_2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_gpcv3_3_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_3_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_era5_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_era5_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_imergv07_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_imergv07_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_merra2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_merra2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
 # calcute metrics for all regions combined
 # rb_v1pt3, rmse_v1pt3, cc_v1pt3 = calculate_metrics(pal_gpcv1_3_cmp['rain_rate'], pal_gpcv1_3_cmp['GPCP_v1pt3'])
 rb_v3pt2, rmse_v3pt2, cc_v3pt2 = calculate_metrics(pal_gpcv3_2_cmp,'rain_rate', 'GPCP v3.2')
