@@ -11,9 +11,11 @@ import os
 from datetime import date
 import numpy as np
 import pandas as pd
-
+import math
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+
+import HydroErr as he
 
 import xarray as xr
 
@@ -59,8 +61,74 @@ Buoy_region_bounds = {
     "ATL": {"lon_min": -70, "lon_max": 20, "lat_min": -30, "lat_max": 30},     # Atlantic Ocean
 }
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+# Define global constants
+region_colors = {
+    "TNEP": "#3366ff",      # blue
+    "TSEP": "#66ccff",      # light blue
+    "TNWP": "#33cc33",      # green
+    "ETNP": "#888888",      # gray
+    "TNIO": "#ffcc33",      # yellow/orange
+    "STNA": "#b35959",      # brown/red
+    "Unclassified": "black",
+}
+
+product_colors = {
+    "GPCP v3.2": "#4c4c4c",   # dark gray
+    "GPCP v3.3": "#1f77b4",   # blue
+    "ERA5": "#d62728",       # red
+    "IMERG v07": "#2ca02c",  # green
+}
+
+region_markers = {
+    "ETNP": "*",
+    "TNEP": "o",
+    "TSEP": "s",
+    "TNWP": "^",
+    "TNIO": "D",
+    "STNA": "P",
+}
 
 #%% DEFINE CUSTOM FUNCTIONS
+def p_corr(obs,model):
+    return he.pearson_r(model,obs)
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+# relative bias
+def relative_bias(obs,model):
+    mu_residuals = np.nanmean(model - obs)
+    mu_obs = np.nanmean(obs)
+
+    return mu_residuals/mu_obs
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+# rmse
+# Range 0 RMSE < inf, smaller is better.
+# Notes: The standard deviation of the residuals. A lower spread indicates that the points are better concentrated
+# around the line of best fit (linear). Random errors do not cancel. This metric will highlights larger errors.
+
+def rmsqe(obs,model):
+    return he.rmse(model,obs)
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+def calculate_metrics(df, xcol, ycol):
+    df = df.dropna(axis=0, how='any', subset=[xcol, ycol])  # Drop rows with NaN in specified columns
+    xdf = df[xcol].values
+    ydf = df[ycol].values
+    
+    
+    # if len(xdf) == 0 or len(ydf) == 0:
+    #     return np.nan, np.nan, np.nan
+    
+    # Calculate metrics
+    rb = round(relative_bias(xdf, ydf) * 100,1)  # Relative Bias in %
+    rmse = round(rmsqe(xdf, ydf), 2)  # Root Mean Square Error
+    cc = round(p_corr(xdf, ydf), 2)   # Pearson Correlation Coefficient    
+
+    return rb, rmse, cc
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
 def ds_swaplon(ds):
     """
     Swap longitude coordinates from [0, 360] to [-180, 180] and sort.
@@ -419,7 +487,26 @@ def grab_Buoy_data_df(buoy_xr_ds):
     b_df = b_df[b_df['rain_rate'] >= 0]
     del(b_ds)
     return b_df, b_lat, b_lon
-#-
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def _standardize_latlon_names(da):
+    """
+    Rename common latitude/longitude variants to lat/lon.
+    Handles case-insensitive matches and avoids double-renaming.
+    """
+    rename_map = {}
+
+    for dim in da.dims:
+        d = dim.lower()
+        if d in ("lat", "latitude", "y") and dim != "lat":
+            rename_map[dim] = "lat"
+        elif d in ("lon", "longitude", "x") and dim != "lon":
+            rename_map[dim] = "lon"
+
+    if rename_map:
+        da = da.rename(rename_map)
+
+    return da
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 def extract_timeseries_memory_efficient(xr_dataset, lat, lon, var_name=None, chunk_size=100):
     """
     Memory-efficient extraction of time series data from large xarray datasets.
@@ -438,19 +525,24 @@ def extract_timeseries_memory_efficient(xr_dataset, lat, lon, var_name=None, chu
     import gc
 
     # rename xr_dataset lat/lon if needed
-    coord_lst = list(xr_dataset.coords)
-    if 'latitude' in coord_lst:
-        xr_dataset = xr_dataset.rename({'latitude': 'lat'})
-    if 'longitude' in coord_lst:
-        xr_dataset = xr_dataset.rename({'longitude': 'lon'})
+    # coord_lst = list(xr_dataset.coords)
+    # if 'latitude' in coord_lst:
+    #     xr_dataset = xr_dataset.rename({'latitude': 'lat'})
+    
+    # if 'longitude' in coord_lst:
+    #     xr_dataset = xr_dataset.rename({'longitude': 'lon'})
+    xr_dataset = _standardize_latlon_names(xr_dataset)
+
+    # Get time dimension
+    if 'valid_time' in xr_dataset.dims:        
+        xr_dataset = xr_dataset.rename({'valid_time': 'time'})
     
     # Select the nearest lat/lon point (this doesn't load data yet)
     if var_name:
         selected_data = xr_dataset[var_name].sel(lat=lat, lon=lon, method='nearest')
     else:
-        selected_data = xr_dataset.sel(lat=lat, lon=lon, method='nearest')
-    
-    # Get time dimension
+        selected_data = xr_dataset.sel(lat=lat, lon=lon, method='nearest')  
+        
     times = selected_data.time.values
     total_times = len(times)
     
@@ -567,5 +659,307 @@ def extract_buoy_satellite_data_memory_efficient(ds_xr,
         return precip_df
         
     except Exception as e:
-        print(f"Error extracting GPCP {product} data: {e}")
+        print(f"Error extracting satellite {product} data: {e}")
         return None
+    
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def categorical_stats(forecast, observation, threshold):
+    """
+    Compute categorical verification statistics following WMO/JWGNE definitions.
+    """
+
+    forecast = np.asarray(forecast)
+    observation = np.asarray(observation)
+
+    # Binary events
+    f_event = forecast >= threshold
+    o_event = observation >= threshold
+
+    # Contingency table
+    H = np.sum(f_event & o_event)        # Hits
+    M = np.sum(~f_event & o_event)       # Misses
+    F = np.sum(f_event & ~o_event)       # False alarms
+    C = np.sum(~f_event & ~o_event)      # Correct negatives
+
+    # Basic metrics
+    POD = H / (H + M) if (H + M) > 0 else np.nan
+    FAR = F / (H + F) if (H + F) > 0 else np.nan
+    CSI = H / (H + M + F) if (H + M + F) > 0 else np.nan
+    Bias = (H + F) / (H + M) if (H + M) > 0 else np.nan
+    POFD = F / (F + C) if (F + C) > 0 else np.nan
+    Accuracy = (H + C) / (H + M + F + C) if (H + M + F + C) > 0 else np.nan
+
+    # Heidke Skill Score (WMO)
+    denom = (H + M) * (M + C) + (H + F) * (F + C)
+    HSS = (2 * (H * C - M * F) / denom) if denom > 0 else np.nan
+
+    return {
+        "Hits": H,
+        "Misses": M,
+        "False_Alarms": F,
+        "Correct_Negatives": C,
+        "POD": POD,
+        "FAR": FAR,
+        "CSI": CSI,
+        "Bias": Bias,
+        "POFD": POFD,
+        "Accuracy": Accuracy,
+        "HSS": HSS
+    }
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def compute_pdf_elements(data, colname, bins):
+    pdfc = []  # PDF by occurrence
+    pdfv = []  # PDF by volume
+    bin_labels = []  # Bin labels for the DataFrame
+
+    total_count = len(data)
+    total_volume = 0
+
+    # Loop through bins to compute PDFc and PDFv
+    for i, bn in enumerate(bins):
+        if i == 0:
+            bin_data = data[data[colname] <= bn]
+        else:
+            bin_data = data[(data[colname] > bins[i - 1]) & (data[colname] <= bn)]
+
+        # PDFc: Percentage of occurrences in the bin
+        bin_count = len(bin_data)
+        pdfc.append((bin_count / total_count) * 100)
+
+        # PDFv: Percentage of volume in the bin
+        if bin_count > 0:
+            bin_mean = bin_data[colname].mean()
+            bin_volume = bin_count * bin_mean
+        else:
+            bin_volume = 0
+
+        total_volume += bin_volume
+        pdfv.append(bin_volume)
+
+        # Add bin label
+        if i == 0:
+            bin_labels.append(f"<= {bn}")
+        else:
+            bin_labels.append(f"{bins[i - 1]} - {bn}")
+
+    # Normalize PDFv to percentages
+    pdfv = [(volume / total_volume) * 100 for volume in pdfv]
+
+    # Create a DataFrame with bin, pdfc, and pdfv
+    pdf_df = pd.DataFrame({
+        "bin": bins,
+        "pdfc": pdfc,
+        "pdfv": pdfv
+    })
+
+    return pdf_df
+
+#%% THE PLOT FUNCTIONS
+def plot_satellite_vs_groundtruth(
+    df_dict,
+    truth_col,
+    product_cols,
+    product_labels=None,
+    truth_label=None,
+    max_val=18,
+    ticks=(0, 6, 12, 18),
+    figsize_per_col=6,
+    figsize_per_row=5,
+    savepath=None,
+):
+    """
+    Generic scatter-plot function for satellite vs in situ evaluation.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input dataframe containing truth and satellite columns
+    truth_col : str
+        Column name for ground truth (x-axis)
+    product_cols : list of str
+        Column names for satellite products (y-axis)
+    product_labels : list of str, optional
+        Display names for products (defaults to column names)
+    """
+
+    n_prod = len(product_cols)
+    ncols = min(3, n_prod)
+    nrows = math.ceil(n_prod / ncols)
+
+    if product_labels is None:
+        product_labels = product_cols
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(figsize_per_col * ncols, figsize_per_row * nrows),
+        squeeze=False
+    )
+
+    axes = axes.flatten()
+
+    for i, (prod, label) in enumerate(zip(product_cols, product_labels)):
+        df  = pd.concat([dff[[truth_col, prod]] for dff in df_dict.values()], ignore_index=True)
+        ax = axes[i]
+
+        x = df[truth_col].values
+        y = df[prod].values
+
+        rb, rmse, cc = calculate_metrics(df,truth_col, prod)
+
+        for region, dff in df_dict.items():
+
+            marker = region_markers.get(region, "o")
+
+            ax.scatter(
+                dff[truth_col].values,
+                dff[prod].values,
+                c="k",
+                marker=marker,
+                s=90,
+                edgecolor="k",
+                linewidth=0.8,
+                alpha=0.9,
+                label=region
+            )
+
+        ax.set_xlim(0, max_val)
+        ax.set_ylim(0, max_val)
+        ax.set_xticks(ticks)
+        ax.set_yticks(ticks)
+
+        ax.grid(True, which='major', linestyle='--', linewidth=0.7, alpha=0.7)
+        ax.minorticks_on()
+
+        ax.tick_params(axis='both', which='major', length=7, width=1.2, labelsize=16)
+        ax.tick_params(axis='both', which='minor', length=4, width=0.8)
+
+        # 1:1 line
+        xx = np.linspace(0, max_val, 100)
+        ax.plot(xx, xx, '--', color='gray')
+
+        ax.set_xlabel(f'{truth_col} [mm/day]', fontsize=16, fontweight='bold')
+        ax.set_ylabel(f'{label} Estimates [mm/day]', fontsize=16, fontweight='bold')
+        ax.set_title(f'{label} vs {truth_col}', fontsize=18, fontweight='bold')
+
+        # Stats annotation
+        ax.text(
+            0.05, 0.97,
+            f'RB: {rb:.2f}%\nRMSE: {rmse:.2f} mm/day\nCC: {cc:.2f}',
+            transform=ax.transAxes,
+            fontsize=15,
+            fontweight='bold',
+            verticalalignment='top'
+        )
+
+        for tick in ax.get_xticklabels() + ax.get_yticklabels():
+            tick.set_fontweight('bold')
+
+    # Remove empty panels
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+    
+    # Legend
+    # Build region legend handles
+    legend_handles = [
+        plt.Line2D(
+            [0], [0],
+            marker=region_markers[r],
+            color='k',
+            linestyle='None',
+            markersize=10,
+            markeredgewidth=1,
+            label=r
+        )
+        for r in region_markers
+    ]
+
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        ncol=6,
+        fontsize=14,
+        frameon=False
+    )
+
+    plt.tight_layout()
+
+    if savepath:
+        plt.savefig(savepath, dpi=500, bbox_inches='tight')
+
+    return fig
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def plot_categorical_metrics_by_region(
+    metrics_dict,
+    products,
+    product_colors,
+    metrics=("POD", "FAR", "Bias", "HSS"),
+    figsize=(16, 14),
+    bar_width=0.18,
+):
+    """
+    4x1 bar plot of categorical metrics by region, colored by product.
+    """
+
+    regions = list(metrics_dict.keys())
+    n_regions = len(regions)
+    n_products = len(products)
+
+    x = np.arange(n_regions)
+
+    fig, axes = plt.subplots(
+        len(metrics), 1, figsize=figsize, sharex=True
+    )
+
+    for i, metric in enumerate(metrics):
+        ax = axes[i]
+
+        for j, product in enumerate(products):
+            values = [
+                metrics_dict[reg][product][metric]
+                if product in metrics_dict[reg]
+                else np.nan
+                for reg in regions
+            ]
+
+            ax.bar(
+                    x + j * bar_width,
+                    values,
+                    width=bar_width,
+                    color=product_colors[product],
+                    edgecolor="black",
+                    linewidth=0.8,
+                    label=product if i == 0 else None,
+                )
+
+        ax.set_ylabel(metric, fontsize=18, fontweight="bold")
+        ax.grid(axis="y", linestyle="--", alpha=0.6)
+
+        # Metric-specific limits
+        if metric in ["POD", "FAR", "HSS"]:
+            ax.set_ylim(0, 1)
+
+        ax.tick_params(axis="both", labelsize=15)
+        for t in ax.get_yticklabels():
+            t.set_fontweight("bold")
+        
+
+    # X-axis
+    axes[-1].set_xticks(x + bar_width * (n_products - 1) / 2)
+    axes[-1].set_xticklabels(regions, fontsize=13, fontweight="bold")
+    axes[-1].set_xlabel("Region", fontsize=15, fontweight="bold")
+
+    # Legend (top, single row)
+    axes[0].legend(
+        ncol=len(products),
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.15),
+        fontsize=18,
+        frameon=False,
+    )
+
+    plt.tight_layout()
+    return fig
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
