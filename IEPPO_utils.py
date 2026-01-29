@@ -78,6 +78,7 @@ product_colors = {
     "GPCP v3.3": "#1f77b4",   # blue
     "ERA5": "#d62728",       # red
     "IMERG v07": "#2ca02c",  # green
+    "MERRA2": "#ff7f0e",     # orange
 }
 
 region_markers = {

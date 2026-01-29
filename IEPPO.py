@@ -433,17 +433,23 @@ gc.collect()  # Clean up memory
 # save dfs to disk
 print("✅ PAL-GPCP matching complete!")
 print("Saving PAL-GPCP matched dataframes to disk...")
-pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP v3.2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP v3.3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_era5_cmp = pd.concat([df[['rain_rate', 'ERA5']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_imergv07_cmp = pd.concat([df[['rain_rate', 'IMERG v07']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_merra2_cmp = pd.concat([df[['rain_rate', 'MERRA2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-# save these files for later use
-pal_gpcv3_2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_gpcv3_3_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_3_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_era5_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_era5_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_imergv07_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_imergv07_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
-pal_merra2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_merra2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+pal_sate_daily_mean_df = pd.concat([df for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+pal_sate_daily_mean_df.to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_mean_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+
+pal_sate_daily_rainfall_colasped_df = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
+pal_sate_daily_rainfall_colasped_df.to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_rainfall_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+
+# pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP v3.2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# pal_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP v3.3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# pal_era5_cmp = pd.concat([df[['rain_rate', 'ERA5']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# pal_imergv07_cmp = pd.concat([df[['rain_rate', 'IMERG v07']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# pal_merra2_cmp = pd.concat([df[['rain_rate', 'MERRA2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# # save these files for later use
+# pal_gpcv3_2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+# pal_gpcv3_3_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_gpcv3_3_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+# pal_era5_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_era5_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+# pal_imergv07_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_imergv07_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+# pal_merra2_cmp.to_pickle(os.path.join(path_to_put_dfs, f'pal_merra2_daily_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 # THE BUOY MATCHING
@@ -617,18 +623,25 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
 
 gc.collect()  # Clean up memory
+print("✅ Buoy-GPCP matching complete!")
+print("Saving Buoy-GPCP matched dataframes to disk...")
+buoy_sate_daily_mean_df = pd.concat([df for df in regional_buoy_sate_dfs_daily_mean.values()], ignore_index=True)
+buoy_sate_daily_mean_df.to_pickle(os.path.join(path_to_put_dfs, f'buoy_sate_daily_mean_from_all_regions_and_all_IDs_{cde_run_dte}.pkl'))
 
+buoy_sate_daily_rainfall_colasped_df = pd.concat(regional_buoy_sate_dfs_daily_lst, ignore_index=True)
+buoy_sate_daily_rainfall_colasped_df.to_pickle(os.path.join(path_to_put_dfs, f'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_{cde_run_dte}.pkl'))
+print("✅ Buoy-GPCP matched dataframes saved to disk!")
 
 #%% SCATTER PLOT
 # PAL BASED ASSESSMENT
 
 # calcute metrics for all regions combined
 # rb_v1pt3, rmse_v1pt3, cc_v1pt3 = calculate_metrics(pal_gpcv1_3_cmp['rain_rate'], pal_gpcv1_3_cmp['GPCP_v1pt3'])
-rb_v3pt2, rmse_v3pt2, cc_v3pt2 = calculate_metrics(pal_gpcv3_2_cmp,'rain_rate', 'GPCP v3.2')
-rb_v3pt3, rmse_v3pt3, cc_v3pt3 = calculate_metrics(pal_gpcv3_3_cmp, 'rain_rate', 'GPCP v3.3')
-rb_era5, rmse_era5, cc_era5 = calculate_metrics(pal_era5_cmp, 'rain_rate', 'ERA5')
-rb_imergv07, rmse_imergv07, cc_imergv07 = calculate_metrics(pal_imergv07_cmp, 'rain_rate', 'IMERG v07')
-rb_merra2, rmse_merra2, cc_merra2 = calculate_metrics(pal_merra2_cmp, 'rain_rate', 'MERRA2')
+# rb_v3pt2, rmse_v3pt2, cc_v3pt2 = calculate_metrics(pal_gpcv3_2_cmp,'rain_rate', 'GPCP v3.2')
+# rb_v3pt3, rmse_v3pt3, cc_v3pt3 = calculate_metrics(pal_gpcv3_3_cmp, 'rain_rate', 'GPCP v3.3')
+# rb_era5, rmse_era5, cc_era5 = calculate_metrics(pal_era5_cmp, 'rain_rate', 'ERA5')
+# rb_imergv07, rmse_imergv07, cc_imergv07 = calculate_metrics(pal_imergv07_cmp, 'rain_rate', 'IMERG v07')
+# rb_merra2, rmse_merra2, cc_merra2 = calculate_metrics(pal_merra2_cmp, 'rain_rate', 'MERRA2')
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 
@@ -636,16 +649,14 @@ rb_merra2, rmse_merra2, cc_merra2 = calculate_metrics(pal_merra2_cmp, 'rain_rate
 # Create scatter plots for PAL vs satellite products
 scatter_fig = plot_satellite_vs_groundtruth(regional_PAL_sate_dfs_daily_mean,
                                             truth_col='rain_rate',
-                                            product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07'],
-                                            product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07'],
+                                            product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
+                                            product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
                                             truth_label='PAL Observations',
                                             max_val=18,
                                             ticks=(0, 6, 12, 18),
                                             figsize_per_col=6,
                                             figsize_per_row=5,
                                             savepath=os.path.join(path_to_plots, f'PAL_vs_Satellite_Comparison_{cde_run_dte}.png'))
-
-
 
 
 #%% THE CATEGORICAL METRICS
@@ -671,7 +682,7 @@ for region_df in regional_PAL_sate_dfs_daily_lst:
 
 
 
-products = ["GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07"]
+products = ["GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5",  "MERRA2"]
 
 fig = plot_categorical_metrics_by_region(
     metrics_dict=region_based_cat_metrics,
@@ -686,7 +697,7 @@ fig.savefig(svnme, dpi=300)
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 # METRICS BY RAINFALL INTENSITY
 rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
-products = ['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07']
+products = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
 ct_met = ['POD', 'FAR', 'Bias', 'HSS']
 qt_met = ['CC', 'RMSE', 'RB']
 df_colapsed = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
@@ -819,6 +830,7 @@ img_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'IMERG v07', bin_values)
 gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'GPCP v3.2', bin_values)
 gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'GPCP v3.3', bin_values)
 era5_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'ERA5', bin_values)
+merra2_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'MERRA2', bin_values)
 
 # ============================================================
 # PDFv / PDFc by Rainfall Intensity (Figure-5 style)
@@ -835,10 +847,11 @@ x = bin_values#[:-1]   # last edge has no PDF value
 # PDFv (Volume-based PDF)  —— ACTIVE
 # ------------------------------------------------------------
 ax.plot(x, pal_pdfc_pdfv['pdfv'], lw=lw, color='b', ls=':', label='PAL')
+ax.plot(x, merra2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['MERRA2'], label='MERRA2')
+ax.plot(x, era5_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['ERA5'], label='ERA5')
 ax.plot(x, img_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['IMERG v07'], label='IMERG v07')
 ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.2'], label='GPCP v3.2')
 ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.3'], label='GPCP v3.3')
-ax.plot(x, era5_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['ERA5'], label='ERA5')
 
 # ------------------------------------------------------------
 # PDFc (Count-based PDF)  —— OPTIONAL (commented)
