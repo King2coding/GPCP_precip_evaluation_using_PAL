@@ -235,209 +235,209 @@ print("Data files listed and datasets loaded.")
 
 #%% MATCHING GROUND TRUTH DATA AND GRIDDED PRECIPITATION PRODUCTS
 # THE PAL MATCHING
-print("\nStarting spatiotemporal matching of PAL and GPCP data...")
-resolution = 0.5  # 0.5 degree resolution
+# print("\nStarting spatiotemporal matching of PAL and GPCP data...")
+# resolution = 0.5  # 0.5 degree resolution
 
+# # regional_PAL_sate_dfs_daily_mean = {}
 # regional_PAL_sate_dfs_daily_mean = {}
-regional_PAL_sate_dfs_daily_mean = {}
+# # regional_PAL_sate_dfs_daily_lst = []
 # regional_PAL_sate_dfs_daily_lst = []
-regional_PAL_sate_dfs_daily_lst = []
-for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
+# for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
   
-    print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")      
+#     print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")      
 
-    # store PAL and GPCP dataframes
-    region_pal_sate_dfs = []     
+#     # store PAL and GPCP dataframes
+#     region_pal_sate_dfs = []     
 
-    # LOAD PAL DATA
-    for i,pal_file in enumerate(pal_files):
-        pal_ds = xr.open_dataset(pal_file)
+#     # LOAD PAL DATA
+#     for i,pal_file in enumerate(pal_files):
+#         pal_ds = xr.open_dataset(pal_file)
 
-        if i % 5 == 0:
+#         if i % 5 == 0:
 
-            print(f"Processing PAL file: {os.path.basename(pal_file)}")
+#             print(f"Processing PAL file: {os.path.basename(pal_file)}")
 
-        pal_rain_df = grab_PAL_rain_and_wind_df(pal_ds)     
+#         pal_rain_df = grab_PAL_rain_and_wind_df(pal_ds)     
         
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-        pal_rain_gpcpv3pt2_df = pal_rain_df.copy()           
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+#         pal_rain_gpcpv3pt2_df = pal_rain_df.copy()           
         
-        pal_gpcpv3pt2_df_rain = process_gpcp_with_PAL_rain_and_wind(
-                                        pal_rain_gpcpv3pt2_df,
-                                        gpcp_ds_v3pt2_xr, 'GPCP v3.2') 
+#         pal_gpcpv3pt2_df_rain = process_gpcp_with_PAL_rain_and_wind(
+#                                         pal_rain_gpcpv3pt2_df,
+#                                         gpcp_ds_v3pt2_xr, 'GPCP v3.2') 
 
-        pal_gpcpv3pt2_df_rain.index = pd.to_datetime(pal_gpcpv3pt2_df_rain['time'])  # Ensure index is datetime
+#         pal_gpcpv3pt2_df_rain.index = pd.to_datetime(pal_gpcpv3pt2_df_rain['time'])  # Ensure index is datetime
 
-        # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
-        pal_rain_gpcpv3pt3_df = pal_rain_df.copy()          
+#         # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+#         pal_rain_gpcpv3pt3_df = pal_rain_df.copy()          
         
-        pal_gpcpv3pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
-                                        pal_rain_gpcpv3pt3_df,
-                                        gpcp_ds_v3pt3_xr, 'GPCP v3.3')  # , pal_wind_gpcpv3pt3_df
+#         pal_gpcpv3pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
+#                                         pal_rain_gpcpv3pt3_df,
+#                                         gpcp_ds_v3pt3_xr, 'GPCP v3.3')  # , pal_wind_gpcpv3pt3_df
 
-        pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
+#         pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
 
-        # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
-        # Process ERA5 data with PAL 
-        pal_rain_era5_df = pal_rain_df.copy() 
+#         # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+#         # Process ERA5 data with PAL 
+#         pal_rain_era5_df = pal_rain_df.copy() 
         
-        pal_era5_df_rain = process_era5_with_PAL_rain_and_wind_v1(pal_rain_era5_df, era5_ds_xr)        
+#         pal_era5_df_rain = process_era5_with_PAL_rain_and_wind_v1(pal_rain_era5_df, era5_ds_xr)        
 
-        pal_era5_df_rain.index = pd.to_datetime(pal_era5_df_rain['time'])
+#         pal_era5_df_rain.index = pd.to_datetime(pal_era5_df_rain['time'])
 
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
-        # Process IMERG data with PAL 
-        # pal_rain_imerg_df = pal_rain_df.copy() 
-        # pal_imerg_v06_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v06_ds_xr, 'v06')
-        # pal_imerg_v06_df_rain.index = pd.to_datetime(pal_imerg_v06_df_rain['time'])
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
-        pal_rain_imerg_df = pal_rain_df.copy() 
-        pal_imerg_v07_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v07_ds_xr, 'v07')
-        pal_imerg_v07_df_rain.index = pd.to_datetime(pal_imerg_v07_df_rain['time'])
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+#         # Process IMERG data with PAL 
+#         # pal_rain_imerg_df = pal_rain_df.copy() 
+#         # pal_imerg_v06_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v06_ds_xr, 'v06')
+#         # pal_imerg_v06_df_rain.index = pd.to_datetime(pal_imerg_v06_df_rain['time'])
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+#         pal_rain_imerg_df = pal_rain_df.copy() 
+#         pal_imerg_v07_df_rain = process_imerg_with_PAL_rain_and_wind_v1(pal_rain_imerg_df, imerg_v07_ds_xr, 'v07')
+#         pal_imerg_v07_df_rain.index = pd.to_datetime(pal_imerg_v07_df_rain['time'])
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
         
-        # Process MERRA2 data with PAL
-        pal_rain_merra2_df = pal_rain_df.copy()
-        pal_merra2_df_rain = process_merra2_with_PAL_rain_and_wind_v1(pal_rain_merra2_df, mer2_ds_xr)
-        pal_merra2_df_rain.index = pd.to_datetime(pal_merra2_df_rain['time'])
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
+#         # Process MERRA2 data with PAL
+#         pal_rain_merra2_df = pal_rain_df.copy()
+#         pal_merra2_df_rain = process_merra2_with_PAL_rain_and_wind_v1(pal_rain_merra2_df, mer2_ds_xr)
+#         pal_merra2_df_rain.index = pd.to_datetime(pal_merra2_df_rain['time'])
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  ---------------
 
-        # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data         
+#         # combine all dfs into a single df, retaining only date, region, rain_rate, and GPCP data         
 
-        # merge GPCP v3.2 data  
-        pal_df_combined_rain = pal_gpcpv3pt2_df_rain.copy()
-        pal_df_combined_rain = pal_df_combined_rain[['time','date','rain_rate', 
-                                                     'GPCP v3.2','PLP_GPCP v3.2']].copy()       
+#         # merge GPCP v3.2 data  
+#         pal_df_combined_rain = pal_gpcpv3pt2_df_rain.copy()
+#         pal_df_combined_rain = pal_df_combined_rain[['time','date','rain_rate', 
+#                                                      'GPCP v3.2','PLP_GPCP v3.2']].copy()       
 
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-        # merge GPCP v3.3 data
-        # bring the lquid precip data into gpcp v3.3 df
-        pal_df_combined_rain = pal_df_combined_rain.merge(
-            pal_gpcpv3pt3_df_rain[['date','GPCP v3.3']], 
-            left_index=True, right_index=True, how='left', suffixes=('', '_v3.3')
-        )
+#         # merge GPCP v3.3 data
+#         # bring the lquid precip data into gpcp v3.3 df
+#         pal_df_combined_rain = pal_df_combined_rain.merge(
+#             pal_gpcpv3pt3_df_rain[['date','GPCP v3.3']], 
+#             left_index=True, right_index=True, how='left', suffixes=('', '_v3.3')
+#         )
 
-        # Remove any duplicate columns from previous merges
-        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
-                                                ['GPCP v3.3_v3.3', 'date_v3.3']], 
-                                                inplace=True)
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#         # Remove any duplicate columns from previous merges
+#         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+#                                                 ['GPCP v3.3_v3.3', 'date_v3.3']], 
+#                                                 inplace=True)
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-        # ERA5 merge
+#         # ERA5 merge
         
-        pal_df_combined_rain = pal_df_combined_rain.merge(
-            pal_era5_df_rain[['date','ERA5']], 
-            left_index=True, right_index=True, how='left', suffixes=('', '_ERA5')
-        )
-        # # Remove any duplicate columns from previous merges
-        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
-                                                ['ERA5_ERA5', 'date_ERA5']], 
-                                                inplace=True)
+#         pal_df_combined_rain = pal_df_combined_rain.merge(
+#             pal_era5_df_rain[['date','ERA5']], 
+#             left_index=True, right_index=True, how='left', suffixes=('', '_ERA5')
+#         )
+#         # # Remove any duplicate columns from previous merges
+#         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+#                                                 ['ERA5_ERA5', 'date_ERA5']], 
+#                                                 inplace=True)
         
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
-        # IMERG v06 merge
-        # pal_imerg_v06_daily = pal_imerg_v06_df_rain.copy()
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
+#         # IMERG v06 merge
+#         # pal_imerg_v06_daily = pal_imerg_v06_df_rain.copy()
         
-        # pal_df_combined_rain = pal_df_combined_rain.merge(
-        #     pal_imerg_v06_df_rain[['date','IMERG v06']], 
-        #     left_index=True, right_index=True, how='left', suffixes=('', '_IMERG v06')
-        # )
-        # # Remove any duplicate columns from previous merges
-        # pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
-        #                                         ['IMERG v06_IMERG v06', 'date_IMERG v06']], 
-        #                                         inplace=True)
+#         # pal_df_combined_rain = pal_df_combined_rain.merge(
+#         #     pal_imerg_v06_df_rain[['date','IMERG v06']], 
+#         #     left_index=True, right_index=True, how='left', suffixes=('', '_IMERG v06')
+#         # )
+#         # # Remove any duplicate columns from previous merges
+#         # pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+#         #                                         ['IMERG v06_IMERG v06', 'date_IMERG v06']], 
+#         #                                         inplace=True)
         
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        # IMERG v07 merge
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+#         # IMERG v07 merge
         
-        pal_df_combined_rain = pal_df_combined_rain.merge(
-            pal_imerg_v07_df_rain[['date','v07']], 
-            left_index=True, right_index=True, how='left', suffixes=('', '_v07')  
-        )
-        # # Remove any duplicate columns from previous merges
-        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
-                                                ['v07_v07', 'date_v07']], 
-                                                inplace=True)       
+#         pal_df_combined_rain = pal_df_combined_rain.merge(
+#             pal_imerg_v07_df_rain[['date','v07']], 
+#             left_index=True, right_index=True, how='left', suffixes=('', '_v07')  
+#         )
+#         # # Remove any duplicate columns from previous merges
+#         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+#                                                 ['v07_v07', 'date_v07']], 
+#                                                 inplace=True)       
         
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
-        # MERRA2 merge
-        pal_df_combined_rain = pal_df_combined_rain.merge(
-            pal_merra2_df_rain[['date','MERRA2']], 
-            left_index=True, right_index=True, how='left', suffixes=('', '_MERRA2')
-        )
-        # Remove any duplicate columns from previous merges
-        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
-                                                ['MERRA2_MERRA2', 'date_MERRA2']], 
-                                                inplace=True)
-        # 
-        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -        
-        pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP v3.2'] == 100]        
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
+#         # MERRA2 merge
+#         pal_df_combined_rain = pal_df_combined_rain.merge(
+#             pal_merra2_df_rain[['date','MERRA2']], 
+#             left_index=True, right_index=True, how='left', suffixes=('', '_MERRA2')
+#         )
+#         # Remove any duplicate columns from previous merges
+#         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+#                                                 ['MERRA2_MERRA2', 'date_MERRA2']], 
+#                                                 inplace=True)
+#         # 
+#         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -        
+#         pal_df_combined_rain = pal_df_combined_rain[pal_df_combined_rain['PLP_GPCP v3.2'] == 100]        
 
-        # groupby date and get mean of rain_rate and GPCP data 'GPCP_v1pt3',
-        grp = pal_df_combined_rain.groupby('date')
-        daily_avg_rain = grp.mean([['rain_rate', 
-                                    'GPCP v3.2', 
-                                    'GPCP v3.3', 
-                                    # 'IMERG v06',
-                                    'IMERG v07',
-                                    'ERA5',
-                                    'MERRA2']]) \
-        .join(pal_df_combined_rain.groupby('date')['time'] \
-        .count() \
-        .to_frame('n_min')
-        ).reset_index()
+#         # groupby date and get mean of rain_rate and GPCP data 'GPCP_v1pt3',
+#         grp = pal_df_combined_rain.groupby('date')
+#         daily_avg_rain = grp.mean([['rain_rate', 
+#                                     'GPCP v3.2', 
+#                                     'GPCP v3.3', 
+#                                     # 'IMERG v06',
+#                                     'IMERG v07',
+#                                     'ERA5',
+#                                     'MERRA2']]) \
+#         .join(pal_df_combined_rain.groupby('date')['time'] \
+#         .count() \
+#         .to_frame('n_min')
+#         ).reset_index()
 
-        daily_avg_rain['cov_hr'] = daily_avg_rain['n_min'] / 60.0
-        daily_avg_rain = daily_avg_rain[daily_avg_rain['cov_hr'] >= 12] 
+#         daily_avg_rain['cov_hr'] = daily_avg_rain['n_min'] / 60.0
+#         daily_avg_rain = daily_avg_rain[daily_avg_rain['cov_hr'] >= 12] 
         
-        # # multiply PAL rain rate by 24 to get daily average
-        daily_avg_rain['rain_rate'] *= 24
-        # # add region name and track_PAL_id to the dataframe
-        daily_avg_rain['region'] = region_name  # Add region name for clarity
-        daily_avg_rain['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
+#         # # multiply PAL rain rate by 24 to get daily average
+#         daily_avg_rain['rain_rate'] *= 24
+#         # # add region name and track_PAL_id to the dataframe
+#         daily_avg_rain['region'] = region_name  # Add region name for clarity
+#         daily_avg_rain['track_PAL_id'] = os.path.basename(pal_file).split('.')[0]
 
-        daily_avg_rain.drop(columns=['n_min', 'cov_hr',
-                                     'PLP_GPCP v3.2',], 
-                                     inplace=True)
+#         daily_avg_rain.drop(columns=['n_min', 'cov_hr',
+#                                      'PLP_GPCP v3.2',], 
+#                                      inplace=True)
         
-        daily_avg_rain.rename(columns={'v07':'IMERG v07'}, 
-                                      inplace=True)
+#         daily_avg_rain.rename(columns={'v07':'IMERG v07'}, 
+#                                       inplace=True)
 
-        # region_pal_sate_dfs.append(daily_avg_rain)
-        region_pal_sate_dfs.append(daily_avg_rain)
+#         # region_pal_sate_dfs.append(daily_avg_rain)
+#         region_pal_sate_dfs.append(daily_avg_rain)
 
-        pal_ds.close()
+#         pal_ds.close()
 
-    # Combine all region PAL-GPCP dataframes into a single dataframe
-    region_pal_sate_df = pd.concat(region_pal_sate_dfs)        
+#     # Combine all region PAL-GPCP dataframes into a single dataframe
+#     region_pal_sate_df = pd.concat(region_pal_sate_dfs)        
     
-    # calculate daily mean per track_PAL_id
-    region_pal_sate_df_daily_mean = region_pal_sate_df.groupby(['track_PAL_id'])[
-                                                               ['rain_rate', 
-                                                                'GPCP v3.2', 
-                                                                'GPCP v3.3',
-                                                                # 'IMERG v06',
-                                                                'IMERG v07',
-                                                                'ERA5',
-                                                                'MERRA2']] \
-                                                     .mean() \
-                                                     .reset_index()
-    region_pal_sate_df_daily_mean['region'] = region_name  # Add region name for clarity
-    regional_PAL_sate_dfs_daily_mean[region_name] = region_pal_sate_df_daily_mean
+#     # calculate daily mean per track_PAL_id
+#     region_pal_sate_df_daily_mean = region_pal_sate_df.groupby(['track_PAL_id'])[
+#                                                                ['rain_rate', 
+#                                                                 'GPCP v3.2', 
+#                                                                 'GPCP v3.3',
+#                                                                 # 'IMERG v06',
+#                                                                 'IMERG v07',
+#                                                                 'ERA5',
+#                                                                 'MERRA2']] \
+#                                                      .mean() \
+#                                                      .reset_index()
+#     region_pal_sate_df_daily_mean['region'] = region_name  # Add region name for clarity
+#     regional_PAL_sate_dfs_daily_mean[region_name] = region_pal_sate_df_daily_mean
 
-    # Append to the list for later processing
-    regional_PAL_sate_dfs_daily_lst.append(region_pal_sate_df)
-gc.collect()  # Clean up memory
+#     # Append to the list for later processing
+#     regional_PAL_sate_dfs_daily_lst.append(region_pal_sate_df)
+# gc.collect()  # Clean up memory
 
-# save dfs to disk
-print("✅ PAL-GPCP matching complete!")
-print("Saving PAL-GPCP matched dataframes to disk...")
-pal_sate_daily_mean_df = pd.concat([df for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
-pal_sate_daily_mean_df.to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_mean_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+# # save dfs to disk
+# print("✅ PAL-GPCP matching complete!")
+# print("Saving PAL-GPCP matched dataframes to disk...")
+# pal_sate_daily_mean_df = pd.concat([df for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
+# pal_sate_daily_mean_df.to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_mean_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
 
-pal_sate_daily_rainfall_colasped_df = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
-pal_sate_daily_rainfall_colasped_df.to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_rainfall_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+# pal_sate_daily_rainfall_colasped_df = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
+# pal_sate_daily_rainfall_colasped_df.to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_rainfall_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
 
 # pal_gpcv3_2_cmp = pd.concat([df[['rain_rate', 'GPCP v3.2']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
 # pal_gpcv3_3_cmp = pd.concat([df[['rain_rate', 'GPCP v3.3']] for df in regional_PAL_sate_dfs_daily_mean.values()], ignore_index=True)
@@ -645,254 +645,255 @@ print("✅ Buoy-GPCP matched dataframes saved to disk!")
 # rb_merra2, rmse_merra2, cc_merra2 = calculate_metrics(pal_merra2_cmp, 'rain_rate', 'MERRA2')
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
-pal_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'pal_sate_daily_mean_from_all_regions_and_all_tracks_20260128.pkl'))  # .to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_mean_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
+# pal_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'pal_sate_daily_mean_from_all_regions_and_all_tracks_20260128.pkl'))  # .to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_mean_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
 
-pal_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'pal_sate_daily_rainfall_from_all_regions_and_all_tracks_20260128.pkl'))
+# pal_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'pal_sate_daily_rainfall_from_all_regions_and_all_tracks_20260128.pkl'))
 
-# Create scatter plots for PAL vs satellite products
-scatter_fig = plot_satellite_vs_groundtruth(pal_sate_daily_mean_df,
-                                            truth_col='rain_rate',
-                                            product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
-                                            product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
-                                            truth_label='PAL Observations',
-                                            max_val=18,
-                                            ticks=(0, 6, 12, 18),
-                                            figsize_per_col=6,
-                                            figsize_per_row=5,
-                                            savepath=os.path.join(path_to_plots, f'PAL_vs_Satellite_Comparison_{cde_run_dte}.png'))
+# # Create scatter plots for PAL vs satellite products
+# scatter_fig = plot_satellite_vs_groundtruth(pal_sate_daily_mean_df,
+#                                             truth_col='rain_rate',
+#                                             product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
+#                                             product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
+#                                             truth_label='PAL Observations',
+#                                             max_val=18,
+#                                             ticks=(0, 6, 12, 18),
+#                                             figsize_per_col=6,
+#                                             figsize_per_row=5,
+#                                             savepath=os.path.join(path_to_plots, f'PAL_vs_Satellite_Comparison_{cde_run_dte}.png'))
 
 
 #%% THE CATEGORICAL METRICS
 # PAL BASED ASSESSMENT
 # REGION BY REGION CAT METRICS
 
-region_based_cat_metrics = {}
-for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
+# region_based_cat_metrics = {}
+# for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
 
-    region_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['region'] == region_name]
+#     region_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['region'] == region_name]
 
-    # region_name = region_df['region'].unique()[0]
+#     # region_name = region_df['region'].unique()[0]
 
-    print(f"Processing region: {region_name}")
+#     print(f"Processing region: {region_name}")
 
-    for product in ['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2']:
-        forcast = region_df[product]
-        observed = region_df['rain_rate']
+#     for product in ['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2']:
+#         forcast = region_df[product]
+#         observed = region_df['rain_rate']
 
-        # Calculate the categorical metrics
-        reg_cat_met = categorical_stats(forcast, observed, 1.0)
+#         # Calculate the categorical metrics
+#         reg_cat_met = categorical_stats(forcast, observed, 1.0)
 
-        # Store the metrics in the dictionary
-        region_based_cat_metrics.setdefault(region_name, {})[product] = reg_cat_met
-
-
-
-products = ["GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5",  "MERRA2"]
-
-fig = plot_categorical_metrics_by_region(
-    metrics_dict=region_based_cat_metrics,
-    products=products,
-    product_colors=product_colors,
-)
-svnme = os.path.join(path_to_plots, 
-                     f'PAL_Satellite_Categorical_Metrics_by_Region_{cde_run_dte}.png')
-fig.savefig(svnme, dpi=300)
+#         # Store the metrics in the dictionary
+#         region_based_cat_metrics.setdefault(region_name, {})[product] = reg_cat_met
 
 
-# - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
-# METRICS BY RAINFALL INTENSITY
-rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
-products = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
-ct_met = ['POD', 'FAR', 'Bias', 'HSS']
-qt_met = ['CC', 'RMSE', 'RB']
-# df_colapsed = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
 
-qt_met_by_prdt = {}
-cat_met_by_prdt = {}
-for product in products:
+# products = ["GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5",  "MERRA2"]
 
-    cat_met_prdt = pd.DataFrame(index=rainfall_bins, columns=ct_met)
-    quant_met_prdt = pd.DataFrame(index=rainfall_bins, columns=qt_met)
+# fig = plot_categorical_metrics_by_region(
+#     metrics_dict=region_based_cat_metrics,
+#     products=products,
+#     product_colors=product_colors,
+# )
+# svnme = os.path.join(path_to_plots, 
+#                      f'PAL_Satellite_Categorical_Metrics_by_Region_{cde_run_dte}.png')
+# fig.savefig(svnme, dpi=300)
 
-    forcast = pal_sate_daily_rainfall_colasped_df[product]
-    observed = pal_sate_daily_rainfall_colasped_df['rain_rate']
 
-    for r_bin in rainfall_bins:
-        # Calculate the categorical metrics
-        cat_mets = categorical_stats(forcast, observed, r_bin)
-        cat_met_prdt.loc[r_bin,'POD'] = cat_mets['POD']
-        cat_met_prdt.loc[r_bin,'FAR'] = cat_mets['FAR']
-        cat_met_prdt.loc[r_bin,'Bias'] = cat_mets['Bias']
-        cat_met_prdt.loc[r_bin,'HSS'] = cat_mets['HSS']
+# # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
+# # METRICS BY RAINFALL INTENSITY
+# rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
+# products = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
+# ct_met = ['POD', 'FAR', 'Bias', 'HSS']
+# qt_met = ['CC', 'RMSE', 'RB']
+# # df_colapsed = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
 
-        # Calculate the quantitative metrics
-        bin_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['rain_rate'] >= r_bin]
-        quant_mets = calculate_metrics(bin_df, 'rain_rate', product)
-        quant_met_prdt.loc[r_bin,'CC'] = quant_mets[2]
-        quant_met_prdt.loc[r_bin,'RMSE'] = quant_mets[1]
-        quant_met_prdt.loc[r_bin,'RB'] = quant_mets[0]   
+# qt_met_by_prdt = {}
+# cat_met_by_prdt = {}
+# for product in products:
 
-    cat_met_by_prdt[product] = cat_met_prdt
-    qt_met_by_prdt[product] = quant_met_prdt
+#     cat_met_prdt = pd.DataFrame(index=rainfall_bins, columns=ct_met)
+#     quant_met_prdt = pd.DataFrame(index=rainfall_bins, columns=qt_met)
+
+#     forcast = pal_sate_daily_rainfall_colasped_df[product]
+#     observed = pal_sate_daily_rainfall_colasped_df['rain_rate']
+
+#     for r_bin in rainfall_bins:
+#         # Calculate the categorical metrics
+#         cat_mets = categorical_stats(forcast, observed, r_bin)
+#         cat_met_prdt.loc[r_bin,'POD'] = cat_mets['POD']
+#         cat_met_prdt.loc[r_bin,'FAR'] = cat_mets['FAR']
+#         cat_met_prdt.loc[r_bin,'Bias'] = cat_mets['Bias']
+#         cat_met_prdt.loc[r_bin,'HSS'] = cat_mets['HSS']
+
+#         # Calculate the quantitative metrics
+#         bin_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['rain_rate'] >= r_bin]
+#         quant_mets = calculate_metrics(bin_df, 'rain_rate', product)
+#         quant_met_prdt.loc[r_bin,'CC'] = quant_mets[2]
+#         quant_met_prdt.loc[r_bin,'RMSE'] = quant_mets[1]
+#         quant_met_prdt.loc[r_bin,'RB'] = quant_mets[0]   
+
+#     cat_met_by_prdt[product] = cat_met_prdt
+#     qt_met_by_prdt[product] = quant_met_prdt
     
-# - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
-# THE PLOTTING
-# - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
+# # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
+# # THE PLOTTING
+# # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 
 
-# Metrics to plot
-cat_metrics = ['POD', 'FAR', 'HSS']
-qt_metrics  = ['CC', 'RMSE', 'RB']
+# # Metrics to plot
+# cat_metrics = ['POD', 'FAR', 'HSS']
+# qt_metrics  = ['CC', 'RMSE', 'RB']
 
-fig, axes = plt.subplots(
-    nrows=3, ncols=2,
-    figsize=(14, 12),
-    sharex=True
-)
+# fig, axes = plt.subplots(
+#     nrows=3, ncols=2,
+#     figsize=(14, 12),
+#     sharex=True
+# )
 
-# ---- LEFT COLUMN: CATEGORICAL ----
-for i, met in enumerate(cat_metrics):
-    ax = axes[i, 0]
+# # ---- LEFT COLUMN: CATEGORICAL ----
+# for i, met in enumerate(cat_metrics):
+#     ax = axes[i, 0]
 
-    for product, df in cat_met_by_prdt.items():
-        ax.plot(
-            rainfall_bins,
-            df.loc[rainfall_bins, met].astype(float),
-            marker='o',
-            linewidth=2.2,
-            markersize=7,
-            color=product_colors[product],
-            label=product if i == 0 else None
-        )
+#     for product, df in cat_met_by_prdt.items():
+#         ax.plot(
+#             rainfall_bins,
+#             df.loc[rainfall_bins, met].astype(float),
+#             marker='o',
+#             linewidth=2.2,
+#             markersize=7,
+#             color=product_colors[product],
+#             label=product if i == 0 else None
+#         )
 
-    ax.set_ylabel(met, fontsize=14, fontweight='bold')
-    ax.grid(True, linestyle='--', alpha=0.6)
-    ax.set_xscale('log')
-    ax.set_xticks(rainfall_bins)
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-    ax.tick_params(labelsize=15)
+#     ax.set_ylabel(met, fontsize=14, fontweight='bold')
+#     ax.grid(True, linestyle='--', alpha=0.6)
+#     ax.set_xscale('log')
+#     ax.set_xticks(rainfall_bins)
+#     ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+#     ax.tick_params(labelsize=15)
 
-# ---- RIGHT COLUMN: QUANTITATIVE ----
-for i, met in enumerate(qt_metrics):
-    ax = axes[i, 1]
+# # ---- RIGHT COLUMN: QUANTITATIVE ----
+# for i, met in enumerate(qt_metrics):
+#     ax = axes[i, 1]
 
-    for product, df in qt_met_by_prdt.items():
-        ax.plot(
-            rainfall_bins,
-            df.loc[rainfall_bins, met].astype(float),
-            marker='o',
-            linewidth=2.2,
-            markersize=7,
-            color=product_colors[product],
-            label=product if i == 0 else None
-        )
+#     for product, df in qt_met_by_prdt.items():
+#         ax.plot(
+#             rainfall_bins,
+#             df.loc[rainfall_bins, met].astype(float),
+#             marker='o',
+#             linewidth=2.2,
+#             markersize=7,
+#             color=product_colors[product],
+#             label=product if i == 0 else None
+#         )
 
-    if met == 'RB':
-        met_label = 'Bias [%]' 
-    elif met == 'RMSE':
-        met_label = 'RMSE [mm/day]'
-    else:
-        met_label = met
+#     if met == 'RB':
+#         met_label = 'Bias [%]' 
+#     elif met == 'RMSE':
+#         met_label = 'RMSE [mm/day]'
+#     else:
+#         met_label = met
 
-    ax.set_ylabel(met_label, fontsize=15, fontweight='bold')
-    ax.grid(True, linestyle='--', alpha=0.6)
-    ax.set_xscale('log')
-    ax.set_xticks(rainfall_bins)
-    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-    ax.tick_params(labelsize=15)
+#     ax.set_ylabel(met_label, fontsize=15, fontweight='bold')
+#     ax.grid(True, linestyle='--', alpha=0.6)
+#     ax.set_xscale('log')
+#     ax.set_xticks(rainfall_bins)
+#     ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+#     ax.tick_params(labelsize=15)
 
-# ---- X-axis labels (bottom row only) ----
-for ax in axes[-1, :]:
-    ax.set_xlabel('Rain Rate (mm/day)', fontsize=18, fontweight='bold')
+# # ---- X-axis labels (bottom row only) ----
+# for ax in axes[-1, :]:
+#     ax.set_xlabel('Rain Rate (mm/day)', fontsize=18, fontweight='bold')
 
-# ---- Column titles ----
-# axes[0, 0].set_title('Categorical Metrics', fontsize=16, fontweight='bold')
-# axes[0, 1].set_title('Quantitative Metrics', fontsize=16, fontweight='bold')
+# # ---- Column titles ----
+# # axes[0, 0].set_title('Categorical Metrics', fontsize=16, fontweight='bold')
+# # axes[0, 1].set_title('Quantitative Metrics', fontsize=16, fontweight='bold')
 
-# ---- Legend (single, clean) ----
-handles, labels = axes[0, 0].get_legend_handles_labels()
-fig.subplots_adjust(bottom=0.15)
-fig.legend(
-    handles, labels,
-    loc='lower center',
-    ncol=4,
-    fontsize=18,
-    frameon=False
-)
+# # ---- Legend (single, clean) ----
+# handles, labels = axes[0, 0].get_legend_handles_labels()
+# fig.subplots_adjust(bottom=0.15)
+# fig.legend(
+#     handles, labels,
+#     loc='lower center',
+#     ncol=4,
+#     fontsize=18,
+#     frameon=False
+# )
 
-plt.tight_layout(rect=[0, 0.08, 1, 1])
-svnme = os.path.join(path_to_plots, 
-                     f'PAL_Satellite_Metrics_by_Rainfall_Intensity_{cde_run_dte}.png')
-fig.savefig(svnme, dpi=300)
-# plt.show()
+# plt.tight_layout(rect=[0, 0.08, 1, 1])
+# svnme = os.path.join(path_to_plots, 
+#                      f'PAL_Satellite_Metrics_by_Rainfall_Intensity_{cde_run_dte}.png')
+# fig.savefig(svnme, dpi=300)
+# # plt.show()
 
 #%%  PDF
-bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
-bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
+# bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+# bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
 
-# Compute PDF elements for all datasets
-pal_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'rain_rate', bin_values)
-img_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'IMERG v07', bin_values)
-gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.2', bin_values)
-gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.3', bin_values)
-era5_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'ERA5', bin_values)
-merra2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'MERRA2', bin_values)
-# ============================================================
-# PDFv / PDFc by Rainfall Intensity (Figure-5 style)
-# ============================================================
+# # Compute PDF elements for all datasets
+# pal_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'rain_rate', bin_values)
+# img_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'IMERG v07', bin_values)
+# gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.2', bin_values)
+# gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.3', bin_values)
+# era5_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'ERA5', bin_values)
+# merra2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'MERRA2', bin_values)
+# # ============================================================
+# # PDFv / PDFc by Rainfall Intensity (Figure-5 style)
+# # ============================================================
 
-fig, ax = plt.subplots(1, 1, figsize=(10, 7), dpi=500)
+# fig, ax = plt.subplots(1, 1, figsize=(10, 7), dpi=500)
 
-lw = 4
+# lw = 4
 
-# --- X axis: use actual bin values ---
-x = bin_values#[:-1]   # last edge has no PDF value
+# # --- X axis: use actual bin values ---
+# x = bin_values#[:-1]   # last edge has no PDF value
 
-# ------------------------------------------------------------
-# PDFv (Volume-based PDF)  —— ACTIVE
-# ------------------------------------------------------------
-ax.plot(x, pal_pdfc_pdfv['pdfv'], lw=lw, color='b', ls=':', label='PAL')
-ax.plot(x, merra2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['MERRA2'], label='MERRA2')
-ax.plot(x, era5_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['ERA5'], label='ERA5')
-ax.plot(x, img_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['IMERG v07'], label='IMERG v07')
-ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.2'], label='GPCP v3.2')
-ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.3'], label='GPCP v3.3')
+# # ------------------------------------------------------------
+# # PDFv (Volume-based PDF)  —— ACTIVE
+# # ------------------------------------------------------------
+# ax.plot(x, pal_pdfc_pdfv['pdfv'], lw=lw, color='b', ls=':', label='PAL')
+# ax.plot(x, merra2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['MERRA2'], label='MERRA2')
+# ax.plot(x, era5_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['ERA5'], label='ERA5')
+# ax.plot(x, img_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['IMERG v07'], label='IMERG v07')
+# ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.2'], label='GPCP v3.2')
+# ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.3'], label='GPCP v3.3')
 
-# ------------------------------------------------------------
-# PDFc (Count-based PDF)  —— OPTIONAL (commented)
-# ------------------------------------------------------------
-# ax.plot(x, pal_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-#         color=product_colors['PAL'], label='PAL (PDFc)')
-# ax.plot(x, img_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-#         color=product_colors['IMERG v07'], label='IMERG v07 (PDFc)')
-# ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-#         color=product_colors['GPCP v3.2'], label='GPCP v3.2 (PDFc)')
-# ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-#         color=product_colors['GPCP v3.3'], label='GPCP v3.3 (PDFc)')
-# ax.plot(x, era5_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-#         color=product_colors['ERA5'], label='ERA5 (PDFc)')
+# # ------------------------------------------------------------
+# # PDFc (Count-based PDF)  —— OPTIONAL (commented)
+# # ------------------------------------------------------------
+# # ax.plot(x, pal_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+# #         color=product_colors['PAL'], label='PAL (PDFc)')
+# # ax.plot(x, img_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+# #         color=product_colors['IMERG v07'], label='IMERG v07 (PDFc)')
+# # ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+# #         color=product_colors['GPCP v3.2'], label='GPCP v3.2 (PDFc)')
+# # ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+# #         color=product_colors['GPCP v3.3'], label='GPCP v3.3 (PDFc)')
+# # ax.plot(x, era5_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+# #         color=product_colors['ERA5'], label='ERA5 (PDFc)')
 
-# ------------------------------------------------------------
-# Formatting (paper-quality)
-# ------------------------------------------------------------
-ax.set_xscale('log')
-ax.set_xlabel('Rain Rate [mm day$^{-1}$]', fontsize=18, fontweight='bold')
-ax.set_ylabel('PDF (%)', fontsize=18, fontweight='bold')
+# # ------------------------------------------------------------
+# # Formatting (paper-quality)
+# # ------------------------------------------------------------
+# ax.set_xscale('log')
+# ax.set_xlabel('Rain Rate [mm day$^{-1}$]', fontsize=18, fontweight='bold')
+# ax.set_ylabel('PDF (%)', fontsize=18, fontweight='bold')
 
-ax.set_xticks(bin_values)
-ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-ax.tick_params(axis='both', which='major', labelsize=15, width=1.5, length=7)
+# ax.set_xticks(bin_values)
+# ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+# ax.tick_params(axis='both', which='major', labelsize=15, width=1.5, length=7)
 
-ax.grid(True, which='major', linestyle='--', alpha=0.6)
-ax.legend(fontsize=15, frameon=False)
+# ax.grid(True, which='major', linestyle='--', alpha=0.6)
+# ax.legend(fontsize=15, frameon=False)
 
-plt.tight_layout()
-svnme = os.path.join(path_to_plots, 
-                     f'PAL_Satellite_PDF_Comparison_{cde_run_dte}.png')
-fig.savefig(svnme, dpi=300)
+# plt.tight_layout()
+# svnme = os.path.join(path_to_plots, 
+#                      f'PAL_Satellite_PDF_Comparison_{cde_run_dte}.png')
+# fig.savefig(svnme, dpi=300)
 
 
 #%%
+print('Starting buoy-based assessment...')
 # THE BUOY BASED ASSESSMENT
 buoy_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_mean_from_all_regions_and_all_IDs_20260128.pkl'))  
 
@@ -908,8 +909,10 @@ scatter_fig_buoy = plot_satellite_vs_groundtruth(buoy_sate_daily_mean_df,
                                             figsize_per_row=5,
                                             savepath=os.path.join(path_to_plots, f'Buoy_vs_Satellite_Comparison_{cde_run_dte}.png'))
 
-
+print('Finished buoy-based assessment...')
+print("-" * 30 + "\n")
 #%%
+print('Starting monthly timeseries analysis...')
 # MONTHLY TIMESROES ANALYSIS
 buoy_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260128.pkl'))
 
@@ -1004,7 +1007,8 @@ svnme = os.path.join(path_to_plots,
                      f'Buoy_vs_Satellite_Monthly_Timeseries_Comparison_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
 # plt.show() 
-
+print('Finished monthly timeseries analysis...')
+print("-" * 30 + "\n")
 
 #%% MONTHLY CLIMATOLOGY
 df = buoy_sate_daily_rainfall_colasped_df.copy()
@@ -1099,7 +1103,9 @@ svnme = os.path.join(path_to_plots,
                      f'Buoy_vs_Satellite_Monthly_Climatology_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
 # plt.show()
-
+print('Finished monthly climatology analysis...')
+print("-" * 30 + "\n")
+print('Starting distribution of monthly means analysis...')
 
 
 #%% DISTRIBUTION OF MONTHLY MEANS 
@@ -1231,6 +1237,9 @@ plt.tight_layout()
 svnme = os.path.join(path_to_plots, 
                      f'Distribution_of_Monthly_Means_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
+print('Finished distribution of monthly means analysis...')
+print("-" * 30 + "\n")
+print('Starting distribution of daily means analysis...')
 # plt.show()
 
 
@@ -1327,7 +1336,9 @@ plt.tight_layout()
 svnme = os.path.join(path_to_plots, 
                      f'Distribution_of_Monthly_Means_per_Year_{cde_run_dte}.png')
 # plt.show()
-
+print('Finished distribution of daily means analysis...')
+print("-" * 30 + "\n")
+print('Starting year to year variability analysis...')
 
 #%%  YEAR TO YEAR VARIABILITY
 # Annual mean rainfall (mean of monthly means)
@@ -1402,3 +1413,6 @@ svnme = os.path.join(path_to_plots,
                      f'Annual_Mean_Rainfall_TimeSeries_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
 # plt.show()
+print('Finished year to year variability analysis...')
+print("-" * 30 + "\n")
+print('All analyses completed successfully.')
