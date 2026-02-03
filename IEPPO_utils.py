@@ -14,6 +14,7 @@ import pandas as pd
 import math
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import seaborn as sns
 
 import HydroErr as he
 
@@ -79,6 +80,8 @@ product_colors = {
     "ERA5": "#d62728",       # red
     "IMERG v07": "#2ca02c",  # green
     "MERRA2": "#ff7f0e",     # orange
+    'PAL': "#0820d4",         # deep blue
+    'Buoy': "#0820d4",       # deep blue
 }
 
 region_markers = {
@@ -783,7 +786,7 @@ def compute_pdf_elements(data, colname, bins):
 
 #%% THE PLOT FUNCTIONS
 def plot_satellite_vs_groundtruth(
-    df_dict,
+    df_all_regs,
     truth_col,
     product_cols,
     product_labels=None,
@@ -825,15 +828,17 @@ def plot_satellite_vs_groundtruth(
     axes = axes.flatten()
 
     for i, (prod, label) in enumerate(zip(product_cols, product_labels)):
-        df  = pd.concat([dff[[truth_col, prod]] for dff in df_dict.values()], ignore_index=True)
+        # df  = pd.concat([dff[[truth_col, prod]] for dff in df_dict.values()], ignore_index=True)
         ax = axes[i]
 
-        x = df[truth_col].values
-        y = df[prod].values
+        # x = df[truth_col].values
+        # y = df[prod].values
 
-        rb, rmse, cc = calculate_metrics(df,truth_col, prod)
+        rb, rmse, cc = calculate_metrics(df_all_regs,truth_col, prod)
 
-        for region, dff in df_dict.items():
+        for region in df_all_regs['region'].unique():
+
+            dff = df_all_regs[df_all_regs['region'] == region]
 
             marker = region_markers.get(region, "o")
 
@@ -900,6 +905,9 @@ def plot_satellite_vs_groundtruth(
         for r in region_markers
     ]
 
+    # Make room at the bottom for the legend
+    fig.subplots_adjust(bottom=0.15)
+
     fig.legend(
         handles=legend_handles,
         loc="lower center",
@@ -908,7 +916,7 @@ def plot_satellite_vs_groundtruth(
         frameon=False
     )
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0.08, 1, 1])
 
     if savepath:
         plt.savefig(savepath, dpi=500, bbox_inches='tight')

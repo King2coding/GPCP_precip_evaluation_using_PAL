@@ -614,7 +614,8 @@ for region_name, buoy_files in buoy_files_by_region.items():
                                                                         'GPCP v3.3', 
                                                                         # 'IMERG_v06',
                                                                         'IMERG v07',
-                                                                        'ERA5']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
+                                                                        'ERA5',
+                                                                        'MERRA2']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
     region_buoy_sate_df_daily_mean['region'] = region_name  # Add region name for clarity
     regional_buoy_sate_dfs_daily_mean[region_name] = region_buoy_sate_df_daily_mean
 
@@ -644,10 +645,12 @@ print("✅ Buoy-GPCP matched dataframes saved to disk!")
 # rb_merra2, rmse_merra2, cc_merra2 = calculate_metrics(pal_merra2_cmp, 'rain_rate', 'MERRA2')
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
+pal_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'pal_sate_daily_mean_from_all_regions_and_all_tracks_20260128.pkl'))  # .to_pickle(os.path.join(path_to_put_dfs, f'pal_sate_daily_mean_from_all_regions_and_all_tracks_{cde_run_dte}.pkl'))
 
+pal_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'pal_sate_daily_rainfall_from_all_regions_and_all_tracks_20260128.pkl'))
 
 # Create scatter plots for PAL vs satellite products
-scatter_fig = plot_satellite_vs_groundtruth(regional_PAL_sate_dfs_daily_mean,
+scatter_fig = plot_satellite_vs_groundtruth(pal_sate_daily_mean_df,
                                             truth_col='rain_rate',
                                             product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
                                             product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
@@ -664,13 +667,15 @@ scatter_fig = plot_satellite_vs_groundtruth(regional_PAL_sate_dfs_daily_mean,
 # REGION BY REGION CAT METRICS
 
 region_based_cat_metrics = {}
-for region_df in regional_PAL_sate_dfs_daily_lst:
+for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
 
-    region_name = region_df['region'].unique()[0]
+    region_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['region'] == region_name]
+
+    # region_name = region_df['region'].unique()[0]
 
     print(f"Processing region: {region_name}")
 
-    for product in ['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07']:
+    for product in ['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2']:
         forcast = region_df[product]
         observed = region_df['rain_rate']
 
@@ -700,7 +705,7 @@ rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
 products = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
 ct_met = ['POD', 'FAR', 'Bias', 'HSS']
 qt_met = ['CC', 'RMSE', 'RB']
-df_colapsed = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
+# df_colapsed = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
 
 qt_met_by_prdt = {}
 cat_met_by_prdt = {}
@@ -709,8 +714,8 @@ for product in products:
     cat_met_prdt = pd.DataFrame(index=rainfall_bins, columns=ct_met)
     quant_met_prdt = pd.DataFrame(index=rainfall_bins, columns=qt_met)
 
-    forcast = df_colapsed[product]
-    observed = df_colapsed['rain_rate']
+    forcast = pal_sate_daily_rainfall_colasped_df[product]
+    observed = pal_sate_daily_rainfall_colasped_df['rain_rate']
 
     for r_bin in rainfall_bins:
         # Calculate the categorical metrics
@@ -721,7 +726,7 @@ for product in products:
         cat_met_prdt.loc[r_bin,'HSS'] = cat_mets['HSS']
 
         # Calculate the quantitative metrics
-        bin_df = df_colapsed[df_colapsed['rain_rate'] >= r_bin]
+        bin_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['rain_rate'] >= r_bin]
         quant_mets = calculate_metrics(bin_df, 'rain_rate', product)
         quant_met_prdt.loc[r_bin,'CC'] = quant_mets[2]
         quant_met_prdt.loc[r_bin,'RMSE'] = quant_mets[1]
@@ -806,6 +811,7 @@ for ax in axes[-1, :]:
 
 # ---- Legend (single, clean) ----
 handles, labels = axes[0, 0].get_legend_handles_labels()
+fig.subplots_adjust(bottom=0.15)
 fig.legend(
     handles, labels,
     loc='lower center',
@@ -814,7 +820,7 @@ fig.legend(
     frameon=False
 )
 
-plt.tight_layout(rect=[0, 0.05, 1, 1])
+plt.tight_layout(rect=[0, 0.08, 1, 1])
 svnme = os.path.join(path_to_plots, 
                      f'PAL_Satellite_Metrics_by_Rainfall_Intensity_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
@@ -825,13 +831,12 @@ bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
 bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
 
 # Compute PDF elements for all datasets
-pal_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'rain_rate', bin_values)
-img_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'IMERG v07', bin_values)
-gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'GPCP v3.2', bin_values)
-gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'GPCP v3.3', bin_values)
-era5_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'ERA5', bin_values)
-merra2_pdfc_pdfv = compute_pdf_elements(df_colapsed, 'MERRA2', bin_values)
-
+pal_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'rain_rate', bin_values)
+img_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'IMERG v07', bin_values)
+gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.2', bin_values)
+gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.3', bin_values)
+era5_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'ERA5', bin_values)
+merra2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'MERRA2', bin_values)
 # ============================================================
 # PDFv / PDFc by Rainfall Intensity (Figure-5 style)
 # ============================================================
@@ -885,3 +890,515 @@ plt.tight_layout()
 svnme = os.path.join(path_to_plots, 
                      f'PAL_Satellite_PDF_Comparison_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
+
+
+#%%
+# THE BUOY BASED ASSESSMENT
+buoy_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_mean_from_all_regions_and_all_IDs_20260128.pkl'))  
+
+# Create scatter plots for Buoy vs satellite products
+scatter_fig_buoy = plot_satellite_vs_groundtruth(buoy_sate_daily_mean_df,
+                                            truth_col='rain_rate',
+                                            product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07'], # , 'MERRA2'
+                                            product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07'], # , 'MERRA2'
+                                            truth_label='Buoy Observations',
+                                            max_val=18,
+                                            ticks=(0, 6, 12, 18),
+                                            figsize_per_col=6,
+                                            figsize_per_row=5,
+                                            savepath=os.path.join(path_to_plots, f'Buoy_vs_Satellite_Comparison_{cde_run_dte}.png'))
+
+
+#%%
+# MONTHLY TIMESROES ANALYSIS
+buoy_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260128.pkl'))
+
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+
+# Ensure datetime
+df['date'] = pd.to_datetime(df['date'])
+
+# Year–month
+df['year_month'] = df['date'].dt.to_period('M')
+
+products = [
+    'rain_rate',     # Buoy (truth)
+    'GPCP v3.2',
+    'GPCP v3.3',
+    'ERA5',
+    'IMERG v07',
+    'MERRA2'
+]
+
+monthly_by_region = {}
+
+for region in df['region'].unique():
+    dfr = df[df['region'] == region]
+
+    monthly = (
+        dfr
+        .groupby('year_month')[products]
+        .mean()
+        .reset_index()
+    )
+
+    # Period → Timestamp
+    monthly['year_month'] = monthly['year_month'].dt.to_timestamp()
+
+    monthly_by_region[region] = monthly
+
+regions = list(monthly_by_region.keys())
+
+fig, axes = plt.subplots(
+    nrows=len(regions),
+    ncols=1,
+    figsize=(14, 3.5 * len(regions)),
+    sharex=False
+)
+
+if len(regions) == 1:
+    axes = [axes]
+
+# Product colors (reuse your scheme if already defined)
+
+
+for ax, region in zip(axes, regions):
+    ts = monthly_by_region[region]
+
+    # Buoy (reference)
+    ax.plot(
+        ts['year_month'],
+        ts['rain_rate'],
+        lw=2.5,
+        color='b',
+        label='Buoy'
+    )
+
+    # Satellite / reanalysis
+    for prod in products[1:]:
+        ax.plot(
+            ts['year_month'],
+            ts[prod],
+            lw=2,
+            color=product_colors[prod],
+            alpha=0.9,
+            label=prod
+        )
+
+    ax.set_title(region, fontsize=14, fontweight='bold')
+    ax.set_ylabel('Monthly Mean Rainfall (mm/day)', fontsize=12)
+    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.tick_params(axis='both', labelsize=11)
+
+# Legend (single, clean)
+axes[0].legend(
+    ncol=3,
+    fontsize=11,
+    frameon=False
+)
+
+axes[-1].set_xlabel('Time', fontsize=13)
+
+plt.tight_layout()
+svnme = os.path.join(path_to_plots, 
+                     f'Buoy_vs_Satellite_Monthly_Timeseries_Comparison_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
+# plt.show() 
+
+
+#%% MONTHLY CLIMATOLOGY
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+
+# Ensure datetime
+df['date'] = pd.to_datetime(df['date'])
+
+# Month index (1–12)
+df['month'] = df['date'].dt.month
+
+products = [
+    'rain_rate',     # Buoy
+    'GPCP v3.2',
+    'GPCP v3.3',
+    'ERA5',
+    'IMERG v07',
+    'MERRA2'
+]
+
+monthly_clim_by_region = {}
+
+for region in df['region'].unique():
+    dfr = df[df['region'] == region]
+
+    clim = (
+        dfr
+        .groupby('month')[products]
+        .mean()
+        .reset_index()
+    )
+
+    monthly_clim_by_region[region] = clim
+
+
+regions = list(monthly_clim_by_region.keys())
+
+fig, axes = plt.subplots(
+    nrows=len(regions),
+    ncols=1,
+    figsize=(14, 3.5 * len(regions)),
+    sharex=True
+)
+
+if len(regions) == 1:
+    axes = [axes]
+
+
+month_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec']
+
+for ax, region in zip(axes, regions):
+    clim = monthly_clim_by_region[region]
+
+    # Buoy reference
+    ax.plot(
+        clim['month'],
+        clim['rain_rate'],
+        lw=4,
+        color='b',
+        label='Buoy'
+    )
+
+    # Satellite / reanalysis
+    for prod in products[1:]:
+        ax.plot(
+            clim['month'],
+            clim[prod],
+            lw=4,
+            color=product_colors[prod],
+            label=prod
+        )
+
+    ax.set_title(region, fontsize=14, fontweight='bold')
+    ax.set_ylabel('Monthly Mean Rainfall (mm/day)', fontsize=12)
+    ax.set_xticks(range(1, 13))
+    ax.set_xticklabels(month_labels)
+    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.tick_params(axis='both', labelsize=11)
+
+# Shared x-label
+axes[-1].set_xlabel('Month', fontsize=13)
+
+# One clean legend
+axes[0].legend(
+    ncol=3,
+    fontsize=11,
+    frameon=False
+)
+
+plt.tight_layout()
+svnme = os.path.join(path_to_plots, 
+                     f'Buoy_vs_Satellite_Monthly_Climatology_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
+# plt.show()
+
+
+
+#%% DISTRIBUTION OF MONTHLY MEANS 
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+PRODUCT_COLS = {
+    "Buoy": "rain_rate",
+    "GPCP v3.2": "GPCP v3.2",
+    "GPCP v3.3": "GPCP v3.3",
+    "ERA5": "ERA5",
+    "IMERG v07": "IMERG v07",
+    "MERRA2": "MERRA2",
+}
+
+df = df.copy()
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year
+df["month"] = df["date"].dt.month
+
+monthly = (
+    df
+    .groupby(["region", "year", "month"])[list(PRODUCT_COLS.values())]
+    .mean()
+    .reset_index()
+)
+
+region = 'ENP'
+dfr = monthly[monthly['region'] == region]
+
+products_to_plot = [
+    'rain_rate',    # Buoy
+    'GPCP v3.2',
+    'ERA5',
+    'IMERG v07'
+]
+
+labels = {
+    'rain_rate': 'Buoy',
+    'GPCP v3.2': 'GPCP v3.2',
+    'ERA5': 'ERA5',
+    'IMERG v07': 'IMERG v07'
+}
+
+# reshape to long format
+long_df = dfr.melt(
+    id_vars=['year', 'month'],
+    value_vars=products_to_plot,
+    var_name='product',
+    value_name='monthly_mean'
+)
+
+long_df['product'] = long_df['product'].map(labels)
+
+regions = monthly["region"].unique()
+nrows = len(regions)
+
+fig, axes = plt.subplots(
+    nrows=nrows,
+    ncols=1,
+    figsize=(12, 3.8 * nrows),
+    sharex=True
+)
+
+if nrows == 1:
+    axes = [axes]
+
+for ax, region in zip(axes, regions):
+    dfr = monthly[monthly["region"] == region]
+
+    # ---- Long format (NO renaming of original df) ----
+    long_df = dfr.melt(
+        value_vars=list(PRODUCT_COLS.values()),
+        var_name="Product",
+        value_name="Monthly Mean Rainfall"
+    )
+
+    # ---- Rename rain_rate → Buoy for plotting only ----
+    long_df["Product"] = long_df["Product"].replace({
+        "rain_rate": "Buoy"
+    })
+
+    # ---- Violin plot (distribution) ----
+    sns.violinplot(
+        data=long_df,
+        x="Product",
+        y="Monthly Mean Rainfall",
+        ax=ax,
+        palette=product_colors,
+        inner=None,        # turn off internal quartiles
+        cut=0,
+        linewidth=1
+    )
+
+    # ---- Boxplot overlay (IQR + median) ----
+    sns.boxplot(
+        data=long_df,
+        x="Product",
+        y="Monthly Mean Rainfall",
+        ax=ax,
+        width=0.18,        # narrow box
+        showcaps=True,
+        boxprops=dict(facecolor="none", edgecolor="k", linewidth=1.2),
+        whiskerprops=dict(color="k", linewidth=2.5),
+        medianprops=dict(color="c", linewidth=2.5),
+        showfliers=False
+    )
+
+    # ---- Mean marker ----
+    sns.pointplot(
+        data=long_df,
+        x="Product",
+        y="Monthly Mean Rainfall",
+        ax=ax,
+        estimator="mean",
+        errorbar=None,
+        color="r",
+        markers="D",
+        markersize=12,
+        scale=0.6
+    )
+
+    ax.set_title(region, fontsize=14, fontweight="bold")
+    ax.set_ylabel("Monthly Mean Rainfall (mm/day)")
+    ax.grid(True, linestyle="--", alpha=0.5)
+
+# axes[-1].set_xlabel("Product")
+
+plt.tight_layout()
+
+svnme = os.path.join(path_to_plots, 
+                     f'Distribution_of_Monthly_Means_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
+# plt.show()
+
+
+#%% DISTRIBUTION OF DAILY MEANS
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+
+# Ensure datetime
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year
+df["month"] = df["date"].dt.month
+
+PRODUCT_COLS = {
+    "Buoy": "rain_rate",
+    "GPCP v3.2": "GPCP v3.2",
+    "GPCP v3.3": "GPCP v3.3",
+    "ERA5": "ERA5",
+    "IMERG v07": "IMERG v07",
+    "MERRA2": "MERRA2",
+}
+
+# Monthly means per region–year–month
+monthly = (
+    df
+    .groupby(["region", "year", "month"])[list(PRODUCT_COLS.values())]
+    .mean()
+    .reset_index()
+)
+
+# Long format (key step)
+long_df = monthly.melt(
+    id_vars=["region", "year", "month"],
+    value_vars=list(PRODUCT_COLS.values()),
+    var_name="Product",
+    value_name="Monthly Mean Rainfall"
+)
+
+# Rename rain_rate → Buoy (ONLY for plotting)
+long_df["Product"] = long_df["Product"].replace({
+    "rain_rate": "Buoy"
+})
+
+
+regions = long_df["region"].unique()
+nrows = len(regions)
+
+fig, axes = plt.subplots(
+    nrows=nrows,
+    ncols=1,
+    figsize=(16, 3.8 * nrows),
+    sharex=True
+)
+
+if nrows == 1:
+    axes = [axes]
+
+for ax, region in zip(axes, regions):
+    dfr = long_df[long_df["region"] == region]
+
+    sns.boxplot(
+        data=dfr,
+        x="year",
+        y="Monthly Mean Rainfall",
+        hue="Product",
+        palette=product_colors,
+        linewidth=0.8,
+        fliersize=1.5,
+        ax=ax
+    )
+
+    ax.set_title(region, fontsize=14, fontweight="bold")
+    ax.set_ylabel("Monthly Mean Rainfall (mm/day)")
+    ax.grid(True, linestyle="--", alpha=0.5)
+
+    # Reduce clutter
+    ax.tick_params(axis="x", rotation=45, labelsize=10)
+    ax.tick_params(axis="y", labelsize=11)
+
+    # One legend only
+    if ax != axes[0]:
+        ax.legend_.remove()
+
+axes[0].legend(
+    ncol=6,
+    fontsize=11,
+    frameon=False,
+    loc="upper center",
+    bbox_to_anchor=(0.5, 1.25)
+)
+
+axes[-1].set_xlabel("Year", fontsize=13)
+
+plt.tight_layout()
+
+svnme = os.path.join(path_to_plots, 
+                     f'Distribution_of_Monthly_Means_per_Year_{cde_run_dte}.png')
+# plt.show()
+
+
+#%%  YEAR TO YEAR VARIABILITY
+# Annual mean rainfall (mean of monthly means)
+annual = (
+    monthly
+    .groupby(["region", "year"])[list(PRODUCT_COLS.values())]
+    .mean()
+    .reset_index()
+)
+
+# Long format for plotting
+annual_long = annual.melt(
+    id_vars=["region", "year"],
+    value_vars=list(PRODUCT_COLS.values()),
+    var_name="Product",
+    value_name="Annual Mean Rainfall"
+)
+
+# Rename rain_rate → Buoy (plotting only)
+annual_long["Product"] = annual_long["Product"].replace({
+    "rain_rate": "Buoy"
+})
+
+
+regions = annual_long["region"].unique()
+nrows = len(regions)
+
+fig, axes = plt.subplots(
+    nrows=nrows,
+    ncols=1,
+    figsize=(14, 3.5 * nrows),
+    sharex=False
+)
+
+if nrows == 1:
+    axes = [axes]
+
+for ax, region in zip(axes, regions):
+    dfr = annual_long[annual_long["region"] == region]
+
+    for product, color in product_colors.items():
+        dff = dfr[dfr["Product"] == product]
+
+        ax.plot(
+            dff["year"],
+            dff["Annual Mean Rainfall"],
+            lw=4 if product == "Buoy" else 4,
+            color=color,
+            alpha=0.95,
+            label=product
+        )
+
+    ax.set_title(region, fontsize=14, fontweight="bold")
+    ax.set_ylabel("Annual Mean Rainfall (mm/day)")
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.tick_params(axis="both", labelsize=11)
+
+# One clean legend
+axes[0].legend(
+    ncol=4,
+    fontsize=11,
+    frameon=False,
+    loc="upper right",
+    bbox_to_anchor=(0.5, 1.25)
+)
+
+axes[-1].set_xlabel("Year", fontsize=13)
+
+plt.tight_layout()
+
+svnme = os.path.join(path_to_plots, 
+                     f'Annual_Mean_Rainfall_TimeSeries_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
+# plt.show()
