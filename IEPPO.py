@@ -454,6 +454,7 @@ print("Data files listed and datasets loaded.")
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 # THE BUOY MATCHING
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
+print('Starting Buoy-GPCP matching...')
 regional_buoy_sate_dfs_daily_mean = {}
 regional_buoy_sate_dfs_daily_lst = []
 for region_name, buoy_files in buoy_files_by_region.items():
