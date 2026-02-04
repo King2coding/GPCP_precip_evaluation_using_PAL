@@ -84,13 +84,20 @@ product_colors = {
     'Buoy': "#0820d4",       # deep blue
 }
 
-region_markers = {
+PAL_region_markers = {
     "ETNP": "*",
     "TNEP": "o",
     "TSEP": "s",
     "TNWP": "^",
     "TNIO": "D",
     "STNA": "P",
+}
+
+Buoy_region_markers = {
+    "ENP": "*",
+    "WNP": "o",
+    "IND": "s",
+    "ATL": "^",
 }
 
 #%% DEFINE CUSTOM FUNCTIONS
@@ -795,6 +802,7 @@ def plot_satellite_vs_groundtruth(
     ticks=(0, 6, 12, 18),
     figsize_per_col=6,
     figsize_per_row=5,
+    region_markers=None,
     savepath=None,
 ):
     """
