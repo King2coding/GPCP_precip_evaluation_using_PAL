@@ -791,6 +791,25 @@ def compute_pdf_elements(data, colname, bins):
 
     return pdf_df
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def make_monthly_clim_anoms(monthly_clim_by_region, buoy_col="rain_rate", products=None):
+    """
+    For each region: add anomaly columns prod_anom = prod - buoy_col
+    Returns dict(region -> dataframe with anomaly columns)
+    """
+    anom_by_region = {}
+
+    for region, clim in monthly_clim_by_region.items():
+        c = clim.copy()
+
+        for prod in products:
+            if prod == buoy_col:
+                continue
+            c[f"{prod}_anom"] = c[prod] - c[buoy_col]
+
+        anom_by_region[region] = c
+
+    return anom_by_region
 #%% THE PLOT FUNCTIONS
 def plot_satellite_vs_groundtruth(
     df_all_regs,
@@ -877,8 +896,8 @@ def plot_satellite_vs_groundtruth(
         xx = np.linspace(0, max_val, 100)
         ax.plot(xx, xx, '--', color='gray')
 
-        ax.set_xlabel(f'{truth_col} [mm/day]', fontsize=16, fontweight='bold')
-        ax.set_ylabel(f'{label} Estimates [mm/day]', fontsize=16, fontweight='bold')
+        ax.set_xlabel(f'{truth_col} [mm day$^{-1}$]', fontsize=16, fontweight='bold')
+        ax.set_ylabel(f'{label} Estimates [mm day$^{-1}$]', fontsize=16, fontweight='bold')
         ax.set_title(f'{label} vs {truth_col}', fontsize=18, fontweight='bold')
 
         # Stats annotation
@@ -974,12 +993,18 @@ def plot_categorical_metrics_by_region(
                     linewidth=0.8,
                     label=product if i == 0 else None,
                 )
+            # Metric-specific limits
+            if metric in ["POD", "FAR"]:
+                ax.set_ylim(0, 1)
+            elif metric == "HSS":
+                ax.set_ylim(0, 0.4)   # zoom in to show variability
+            # (optional) leave Bias auto-scaled unless you want fixed bounds
 
         ax.set_ylabel(metric, fontsize=18, fontweight="bold")
         ax.grid(axis="y", linestyle="--", alpha=0.6)
 
         # Metric-specific limits
-        if metric in ["POD", "FAR", "HSS"]:
+        if metric in ["POD", "FAR"]:
             ax.set_ylim(0, 1)
 
         ax.tick_params(axis="both", labelsize=15)
@@ -1005,3 +1030,220 @@ def plot_categorical_metrics_by_region(
     return fig
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def plot_monthly_climatology_2x2(
+    monthly_clim_by_region,
+    regions,
+    products,
+    product_colors,
+    figsize=(12, 9),   # close to the 2x2 style you showed
+    lw=3.5,
+    ncol_legend=3
+):
+    """
+    Plot monthly climatology in 2x2 subplots (no shared axes).
+    Makes multiple figures if len(regions) > 4.
+    X-axis uses month integers (1–12).
+    """
+
+    months = np.arange(1, 13)
+
+    # chunk regions into groups of 4
+    for k in range(0, len(regions), 4):
+        regs = regions[k:k+4]
+
+        fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
+        axes = axes.flatten()
+
+        for i, ax in enumerate(axes):
+            if i >= len(regs):
+                ax.axis("off")
+                continue
+
+            region = regs[i]
+            clim = monthly_clim_by_region[region]
+
+            # ---- Buoy (reference) ----
+            ax.plot(
+                clim["month"], clim["rain_rate"],
+                lw=lw, color="b", label="Buoy"
+            )
+
+            # ---- Products ----
+            for prod in products[1:]:
+                ax.plot(
+                    clim["month"], clim[prod],
+                    lw=lw, color=product_colors[prod], label=prod
+                )
+
+            ax.set_title(region, fontsize=14, fontweight="bold")
+            ax.set_xlabel("Month", fontsize=12, fontweight="bold")
+            ax.set_ylabel("Monthly Mean Rainfall [mm day$^{-1}$]", fontsize=12, fontweight="bold")
+
+            ax.set_xticks(months)
+            ax.set_xlim(1, 12)
+
+            ax.grid(True, linestyle="--", alpha=0.5)
+            ax.tick_params(axis="both", labelsize=11)
+
+        # one legend for the whole figure (clean)
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(
+            handles, labels,
+            loc="upper center",
+            ncol=ncol_legend,
+            frameon=False,
+            fontsize=11,
+            bbox_to_anchor=(0.5, 0.98)
+        )
+
+        fig.tight_layout(rect=[0, 0, 1, 0.94])  # leave room for legend
+        plt.show()
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def plot_monthly_climatology_anoms_2x2(
+    monthly_anom_by_region,
+    regions,
+    products,                 # include buoy_col as first element, same as your list
+    product_colors,
+    buoy_col="rain_rate",
+    figsize=(12, 9),
+    lw=3.2,
+    ncol_legend=3,
+    ylim=None,                # e.g., (-3, 3) if you want fixed range
+):
+    """
+    2x2 plot of monthly climatology anomalies (Product - Buoy) per region.
+    No shared axes. Month numbers 1–12.
+    Creates multiple figures if regions > 4.
+    """
+
+    months = np.arange(1, 13)
+
+    # chunk into groups of 4
+    for k in range(0, len(regions), 4):
+        regs = regions[k:k+4]
+
+        fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
+        axes = axes.flatten()
+
+        for i, ax in enumerate(axes):
+            if i >= len(regs):
+                ax.axis("off")
+                continue
+
+            region = regs[i]
+            clim = monthly_anom_by_region[region]
+
+            # plot each product anomaly
+            for prod in products:
+                if prod == buoy_col:
+                    continue
+                ax.plot(
+                    clim["month"],
+                    clim[f"{prod}_anom"],
+                    lw=lw,
+                    color=product_colors[prod],
+                    label=prod
+                )
+
+            ax.axhline(0, color="k", lw=1.5, ls ='--' ,alpha=0.8)  # zero reference
+            ax.set_title(region, fontsize=14, fontweight="bold")
+            ax.set_xlabel("Month", fontsize=12, fontweight="bold")
+            ax.set_ylabel("Δ Monthly Mean \n (Product − Buoy) [mm day$^{-1}$]", fontsize=12, fontweight="bold")
+
+            ax.set_xticks(months)
+            ax.set_xlim(1, 12)
+            ax.grid(True, linestyle="--", alpha=0.5)
+            ax.tick_params(axis="both", labelsize=11)
+
+            if ylim is not None:
+                ax.set_ylim(*ylim)
+
+        # One legend for the whole figure (use first active axis)
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(
+            handles, labels,
+            loc="upper center",
+            ncol=ncol_legend,
+            frameon=False,
+            fontsize=11,
+            bbox_to_anchor=(0.5, 0.98)
+        )
+
+        fig.tight_layout(rect=[0, 0, 1, 0.94])
+        yield fig  # <-- generator: yields each figure
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+#%%
+# additional analysis functions
+def _prob_from_hist(x, bin_edges, eps=1e-12):
+    """Histogram -> probability mass per bin (sums to 1)."""
+    x = np.asarray(x)
+    x = x[np.isfinite(x)]
+    # keep nonnegative rain only (optional)
+    x = x[x >= 0]
+
+    h, _ = np.histogram(x, bins=bin_edges)
+    p = h.astype(float)
+    p = p + eps               # smoothing to avoid zeros
+    p = p / p.sum()
+    return p
+
+def kl_divergence(p, q):
+    """KL(P||Q) for discrete distributions."""
+    return np.sum(p * np.log(p / q))
+
+def js_divergence(p, q, base=2):
+    """Jensen–Shannon divergence (bounded, symmetric)."""
+    m = 0.5 * (p + q)
+    js = 0.5 * kl_divergence(p, m) + 0.5 * kl_divergence(q, m)
+    if base == 2:
+        js = js / np.log(2)
+    return js
+
+def wasserstein_binned(p, q, bin_centers):
+    """
+    1D Wasserstein distance for binned discrete distributions.
+    Uses CDF difference integrated over bin spacing.
+    """
+    cdf_p = np.cumsum(p)
+    cdf_q = np.cumsum(q)
+
+    # bin widths for integration
+    centers = np.asarray(bin_centers)
+    # approximate widths from centers (works for log bins too)
+    widths = np.empty_like(centers)
+    widths[1:-1] = 0.5 * (centers[2:] - centers[:-2])
+    widths[0]    = centers[1] - centers[0]
+    widths[-1]   = centers[-1] - centers[-2]
+
+    return np.sum(np.abs(cdf_p - cdf_q) * widths)
+
+def pdf_distance_table(df, region, ref_col, product_cols, bin_edges):
+    """
+    Returns a table of PDF distances between each product and the reference
+    for one region.
+    """
+    dfr = df[df["region"] == region].copy()
+
+    # reference distribution
+    p_ref = _prob_from_hist(dfr[ref_col].values, bin_edges)
+
+    # bin centers
+    bin_centers = 0.5 * (np.asarray(bin_edges[:-1]) + np.asarray(bin_edges[1:]))
+
+    rows = []
+    for prod in product_cols:
+        p_prod = _prob_from_hist(dfr[prod].values, bin_edges)
+
+        rows.append({
+            "region": region,
+            "product": prod,
+            "JSD": js_divergence(p_ref, p_prod, base=2),       # 0..1
+            "KL(ref||prod)": kl_divergence(p_ref, p_prod),     # >=0
+            "Wasserstein": wasserstein_binned(p_ref, p_prod, bin_centers)
+        })
+
+    out = pd.DataFrame(rows).sort_values("JSD")
+    return out

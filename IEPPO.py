@@ -828,70 +828,88 @@ svnme = os.path.join(path_to_plots,
 fig.savefig(svnme, dpi=300)
 # plt.show()
 
-#%%  PDF
-# bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
-# bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
+#%%  PDF Assessment relative to PAL
+bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
 
-# # Compute PDF elements for all datasets
-# pal_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'rain_rate', bin_values)
-# img_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'IMERG v07', bin_values)
-# gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.2', bin_values)
-# gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.3', bin_values)
-# era5_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'ERA5', bin_values)
-# merra2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'MERRA2', bin_values)
-# # ============================================================
-# # PDFv / PDFc by Rainfall Intensity (Figure-5 style)
-# # ============================================================
+# Compute PDF elements for all datasets
+pal_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'rain_rate', bin_values)
+img_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'IMERG v07', bin_values)
+gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.2', bin_values)
+gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'GPCP v3.3', bin_values)
+era5_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'ERA5', bin_values)
+merra2_pdfc_pdfv = compute_pdf_elements(pal_sate_daily_rainfall_colasped_df, 'MERRA2', bin_values)
+# ============================================================
+# PDFv / PDFc by Rainfall Intensity (Figure-5 style)
+# ============================================================
 
-# fig, ax = plt.subplots(1, 1, figsize=(10, 7), dpi=500)
+fig, ax = plt.subplots(1, 1, figsize=(10, 7), dpi=500)
 
-# lw = 4
+lw = 4
 
-# # --- X axis: use actual bin values ---
-# x = bin_values#[:-1]   # last edge has no PDF value
+# --- X axis: use actual bin values ---
+x = pal_pdfc_pdfv['bin'].values#bin_values#[:-1]   # last edge has no PDF value
 
-# # ------------------------------------------------------------
-# # PDFv (Volume-based PDF)  —— ACTIVE
-# # ------------------------------------------------------------
-# ax.plot(x, pal_pdfc_pdfv['pdfv'], lw=lw, color='b', ls=':', label='PAL')
-# ax.plot(x, merra2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['MERRA2'], label='MERRA2')
-# ax.plot(x, era5_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['ERA5'], label='ERA5')
-# ax.plot(x, img_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['IMERG v07'], label='IMERG v07')
-# ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.2'], label='GPCP v3.2')
-# ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.3'], label='GPCP v3.3')
+# ------------------------------------------------------------
+# PDFv (Volume-based PDF)  —— ACTIVE
+# ------------------------------------------------------------
+ax.plot(x, pal_pdfc_pdfv['pdfv'], lw=lw, color='b', ls=':', label='PAL')
+ax.plot(x, merra2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['MERRA2'], label='MERRA2')
+ax.plot(x, era5_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['ERA5'], label='ERA5')
+ax.plot(x, img_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['IMERG v07'], label='IMERG v07')
+ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.2'], label='GPCP v3.2')
+ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.3'], label='GPCP v3.3')
 
-# # ------------------------------------------------------------
-# # PDFc (Count-based PDF)  —— OPTIONAL (commented)
-# # ------------------------------------------------------------
-# # ax.plot(x, pal_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-# #         color=product_colors['PAL'], label='PAL (PDFc)')
-# # ax.plot(x, img_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-# #         color=product_colors['IMERG v07'], label='IMERG v07 (PDFc)')
-# # ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-# #         color=product_colors['GPCP v3.2'], label='GPCP v3.2 (PDFc)')
-# # ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-# #         color=product_colors['GPCP v3.3'], label='GPCP v3.3 (PDFc)')
-# # ax.plot(x, era5_pdfc_pdfv['pdfc'], lw=lw, ls='--',
-# #         color=product_colors['ERA5'], label='ERA5 (PDFc)')
+# ------------------------------------------------------------
+# PDFc (Count-based PDF)  —— OPTIONAL (commented)
+# ------------------------------------------------------------
+# ax.plot(x, pal_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['PAL'], label='PAL (PDFc)')
+# ax.plot(x, img_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['IMERG v07'], label='IMERG v07 (PDFc)')
+# ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['GPCP v3.2'], label='GPCP v3.2 (PDFc)')
+# ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['GPCP v3.3'], label='GPCP v3.3 (PDFc)')
+# ax.plot(x, era5_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['ERA5'], label='ERA5 (PDFc)')
 
-# # ------------------------------------------------------------
-# # Formatting (paper-quality)
-# # ------------------------------------------------------------
-# ax.set_xscale('log')
-# ax.set_xlabel('Rain Rate [mm day$^{-1}$]', fontsize=18, fontweight='bold')
-# ax.set_ylabel('PDF (%)', fontsize=18, fontweight='bold')
+# ------------------------------------------------------------
+# Formatting (paper-quality)
+# ------------------------------------------------------------
+ax.set_xscale('log')
+ax.set_xlabel('Rain Rate [mm day$^{-1}$]', fontsize=18, fontweight='bold')
+ax.set_ylabel('PDF (%)', fontsize=18, fontweight='bold')
 
 # ax.set_xticks(bin_values)
+# ax.set_xticklabels(bin_labels)
+from matplotlib.ticker import FixedLocator, FuncFormatter
+
+bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+
+ax.set_xscale('log')
+ax.xaxis.set_major_locator(FixedLocator(bin_values))
+
+ax.xaxis.set_major_formatter(FuncFormatter(
+    lambda v, pos: "0.5" if abs(v-0.5) < 1e-12 else f"{int(round(v))}"
+))
+
+# optional: remove minor tick marks entirely (cleaner for paper)
+ax.xaxis.set_minor_locator(FixedLocator([]))
+
+# (optional) turn off minor tick labels so only these show
+ax.tick_params(axis='x', which='minor', bottom=False)
+ax.tick_params(axis='x', which='major', labelsize=15)
 # ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-# ax.tick_params(axis='both', which='major', labelsize=15, width=1.5, length=7)
+ax.tick_params(axis='both', which='major', labelsize=15, width=1.5, length=7)
 
-# ax.grid(True, which='major', linestyle='--', alpha=0.6)
-# ax.legend(fontsize=15, frameon=False)
+ax.grid(True, which='major', linestyle='--', alpha=0.6)
+ax.legend(fontsize=15, frameon=False)
 
-# plt.tight_layout()
-# svnme = os.path.join(path_to_plots, 
-#                      f'PAL_Satellite_PDF_Comparison_{cde_run_dte}.png')
-# fig.savefig(svnme, dpi=300)
+plt.tight_layout()
+svnme = os.path.join(path_to_plots, 
+                     f'PAL_Satellite_PDF_Comparison_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
 
 
 #%%
@@ -1238,6 +1256,74 @@ print("-" * 30 + "\n")
 print('Starting distribution of monthly means analysis...')
 
 
+#-----------------------------------------------------------------------------
+# A SIMILAR MONTHLY CLIMATOLY IN A 2BY2 SUBPLOTS
+regions = list(Buoy_region_markers.keys())  # or whatever order you want
+
+products = [
+    "rain_rate",     # Buoy
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "ERA5",
+    "IMERG v07",
+    "MERRA2",
+]
+
+plot_monthly_climatology_2x2(
+    monthly_clim_by_region=monthly_clim_by_region,
+    regions=regions,
+    products=products,
+    product_colors=product_colors,
+    figsize=(12, 9),
+    lw=3.5,
+    ncol_legend=3
+)
+svnme = os.path.join(path_to_plots, 
+                     f'Buoy_vs_Satellite_Monthly_Climatology_2x2_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
+# plt.show()
+
+
+#-----------------------------------------------------------------------------
+# DIFFERENCES IN MONTHLY MEANS
+regions = list(Buoy_region_markers.keys())
+
+products = [
+    "rain_rate",     # Buoy
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "ERA5",
+    "IMERG v07",
+    "MERRA2",
+]
+
+# Build anomalies
+monthly_anom_by_region = make_monthly_clim_anoms(
+    monthly_clim_by_region,
+    buoy_col="rain_rate",
+    products=products
+)
+
+# Plot + save (handles multiple figures if >4 regions)
+for idx, fig in enumerate(
+    plot_monthly_climatology_anoms_2x2(
+        monthly_anom_by_region=monthly_anom_by_region,
+        regions=regions,
+        products=products,
+        product_colors=product_colors,
+        figsize=(12, 9),
+        lw=3.2,
+        ncol_legend=3,
+        ylim=None  # or e.g. (-3, 3)
+    )
+):
+    svnme = os.path.join(
+        path_to_plots,
+        f"Buoy_vs_Satellite_Monthly_Climatology_ANOM_2x2_{cde_run_dte}_p{idx+1}.png"
+    )
+    fig.savefig(svnme, dpi=300)
+    plt.close(fig)
+
 #%% DISTRIBUTION OF MONTHLY MEANS 
 df = buoy_sate_daily_rainfall_colasped_df.copy()
 PRODUCT_COLS = {
@@ -1532,7 +1618,7 @@ for ax, region in zip(axes, regions):
         )
 
     ax.set_title(region, fontsize=14, fontweight="bold")
-    ax.set_ylabel("Annual Mean Rainfall (mm/day)")
+    ax.set_ylabel("Annual Mean Rainfall [mm day$^{-1}$]")
     ax.grid(True, linestyle="--", alpha=0.6)
     ax.tick_params(axis="both", labelsize=11)
 
@@ -1557,3 +1643,140 @@ fig.savefig(svnme, dpi=300)
 
 print("Finished gap-aware year-to-year variability analysis.")
 print("-" * 30)
+
+
+#%%
+#%%  PDF Assessment relative to Buoy
+bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
+
+# Compute PDF elements for all datasets
+buoy_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'rain_rate', bin_values)
+img_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'IMERG v07', bin_values)
+gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'GPCP v3.2', bin_values)
+gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'GPCP v3.3', bin_values)
+era5_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'ERA5', bin_values)
+merra2_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'MERRA2', bin_values)
+# ============================================================
+# PDFv / PDFc by Rainfall Intensity (Figure-5 style)
+# ============================================================
+
+fig, ax = plt.subplots(1, 1, figsize=(10, 7), dpi=500)
+
+lw = 4
+
+# --- X axis: use actual bin values ---
+x = buoy_pdfc_pdfv['bin'].values#bin_values#[:-1]   # last edge has no PDF value
+
+# ------------------------------------------------------------
+# PDFv (Volume-based PDF)  —— ACTIVE
+# ------------------------------------------------------------
+ax.plot(x, buoy_pdfc_pdfv['pdfv'], lw=lw, color='b', ls='-', label='Buoy')
+ax.plot(x, merra2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['MERRA2'], label='MERRA2')
+ax.plot(x, era5_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['ERA5'], label='ERA5')
+ax.plot(x, img_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['IMERG v07'], label='IMERG v07')
+ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.2'], label='GPCP v3.2')
+ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfv'], lw=lw, color=product_colors['GPCP v3.3'], label='GPCP v3.3')
+
+# ------------------------------------------------------------
+# PDFc (Count-based PDF)  —— OPTIONAL (commented)
+# ------------------------------------------------------------
+# ax.plot(x, pal_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['PAL'], label='PAL (PDFc)')
+# ax.plot(x, img_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['IMERG v07'], label='IMERG v07 (PDFc)')
+# ax.plot(x, gpcp_v3pt2_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['GPCP v3.2'], label='GPCP v3.2 (PDFc)')
+# ax.plot(x, gpcp_v3pt3_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['GPCP v3.3'], label='GPCP v3.3 (PDFc)')
+# ax.plot(x, era5_pdfc_pdfv['pdfc'], lw=lw, ls='--',
+#         color=product_colors['ERA5'], label='ERA5 (PDFc)')
+
+# ------------------------------------------------------------
+# Formatting (paper-quality)
+# ------------------------------------------------------------
+ax.set_xscale('log')
+ax.set_xlabel('Rain Rate [mm day$^{-1}$]', fontsize=18, fontweight='bold')
+ax.set_ylabel('PDF (%)', fontsize=18, fontweight='bold')
+
+# ax.set_xticks(bin_values)
+# ax.set_xticklabels(bin_labels)
+from matplotlib.ticker import FixedLocator, FuncFormatter
+
+bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
+
+ax.set_xscale('log')
+ax.xaxis.set_major_locator(FixedLocator(bin_values))
+
+ax.xaxis.set_major_formatter(FuncFormatter(
+    lambda v, pos: "0.5" if abs(v-0.5) < 1e-12 else f"{int(round(v))}"
+))
+
+# optional: remove minor tick marks entirely (cleaner for paper)
+ax.xaxis.set_minor_locator(FixedLocator([]))
+
+# (optional) turn off minor tick labels so only these show
+ax.tick_params(axis='x', which='minor', bottom=False)
+ax.tick_params(axis='x', which='major', labelsize=15)
+# ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+ax.tick_params(axis='both', which='major', labelsize=15, width=1.5, length=7)
+
+ax.grid(True, which='major', linestyle='--', alpha=0.6)
+ax.legend(fontsize=15, frameon=False)
+
+plt.tight_layout()
+svnme = os.path.join(path_to_plots, 
+                     f'Buoy_Satellite_PDF_Comparison_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
+
+
+#%% Abalysis plot scaleimport matplotlib.pyplot as plt
+
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(9, 6))
+
+# Log scales
+ax.set_xscale("log")
+ax.set_yscale("log")
+
+# Axis limits (start at Daily now)
+ax.set_xlim(1e-1, 1e4)
+ax.set_ylim(1e0, 1e4)
+
+# ---- X-axis: Spatial scale ----
+x_ticks = [1e-1, 1e0, 1e2, 1e4]
+x_labels = [
+    "Point/Pixel",
+    "Local",
+    "Regional",
+    "Global"
+]
+ax.set_xticks(x_ticks)
+ax.set_xticklabels(x_labels, fontsize=13, fontweight="bold")
+
+# ---- Y-axis: Temporal scale (Daily → Climatological) ----
+y_ticks = [1e0, 1e1, 1e2, 1e3, 1e4]
+y_labels = [
+    "Daily",
+    "Monthly",
+    "Seasonal",
+    "Annual",
+    "Climatological"
+]
+ax.set_yticks(y_ticks)
+ax.set_yticklabels(y_labels, fontsize=13, fontweight="bold")
+
+# Grid
+ax.grid(True, which="both", linestyle="--", linewidth=0.7, alpha=0.6)
+
+# Labels
+ax.set_xlabel("Spatial Scale", fontsize=15, fontweight="bold")
+ax.set_ylabel("Temporal Scale", fontsize=15, fontweight="bold")
+
+# Frame styling
+for spine in ax.spines.values():
+    spine.set_linewidth(1.2)
+
+plt.tight_layout()
+plt.show()
