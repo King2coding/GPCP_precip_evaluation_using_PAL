@@ -241,6 +241,17 @@ buoy_files_by_region['ATL'] = sorted([os.path.join(atlantic_buoy_dir, f) for f i
 print("✅ BUOY CLASSIFICATION SUMMARY COMPLETED")
 print("\n" + "="*50)
 gc.collect()
+
+# Load OceanRain data file
+# Load the .npz file using numpy
+ocRain = np.load(r'/ra1/pubdat/OceanRain/output/OceanRAIN_GPCPV33_coordinates_and_data_Kingsley.npz')
+
+# Access the keys in the .npz file
+keys = ocRain.files
+print("Keys in the .npz file:", keys)
+# Create a DataFrame from the .npz file
+ocRain_df = pd.DataFrame({key: ocRain[key] for key in keys})
+
 print("Data files listed and datasets loaded.")
 
 
@@ -468,6 +479,7 @@ print("Data files listed and datasets loaded.")
 print('Starting Buoy-GPCP matching...')
 regional_buoy_sate_dfs_daily_mean = {}
 regional_buoy_sate_dfs_daily_lst = []
+dtmin,dtmax = pd.to_datetime(mindate).date(),pd.to_datetime(maxdate).date() # satellite data's min max date range
 for region_name, buoy_files in buoy_files_by_region.items():
     print(f"Processing region: {region_name}")
         # store Buoy and GPCP dataframes
@@ -476,6 +488,11 @@ for region_name, buoy_files in buoy_files_by_region.items():
     # LOAD Buoy DATA
     for b, b_file in enumerate(buoy_files):
         b_df, b_lat, b_lon = grab_Buoy_data_df(b_file)
+        # subset b_df by time for wihtin dtmin,dtmax date range
+        b_df = b_df[(b_df['time'].dt.date >= dtmin) & (b_df['time'].dt.date <= dtmax)]
+        if b_df.empty:
+            print(f"Warning: Buoy file {os.path.basename(b_file)} has no data within the date range {dtmin} to {dtmax}")
+            continue
         df_t_min, df_t_max = b_df['time'].min().date(), b_df['time'].max().date()
         if b % 5 == 0:
             print(f"Processing Buoy file: {os.path.basename(b_file)}")      
@@ -1076,6 +1093,8 @@ scatter_fig_buoy = plot_satellite_vs_groundtruth(buoy_sate_daily_mean_df,
 
 print('Finished buoy-based assessment...')
 print("-" * 30 + "\n")
+
+gc.collect()
 #%%
 print('Starting monthly timeseries analysis...')
 # MONTHLY TIMESERIES ANALYSIS
@@ -1086,7 +1105,7 @@ df = buoy_sate_daily_rainfall_colasped_df.copy()
 df["date"] = pd.to_datetime(df["date"])
 df["year"] = df["date"].dt.year.astype(int)
 
-df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+# df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 
 # Ensure datetime
 df['date'] = pd.to_datetime(df['date'])
@@ -1094,14 +1113,6 @@ df['date'] = pd.to_datetime(df['date'])
 # Year–month
 df['year_month'] = df['date'].dt.to_period('M')
 
-products = [
-    'rain_rate',     # Buoy (truth)
-    'GPCP v3.2',
-    'GPCP v3.3',
-    'ERA5',
-    'IMERG v07',
-    'MERRA2'
-]
 
 monthly_by_region = {}
 
@@ -1174,15 +1185,15 @@ for ax, region in zip(axes, regions):
             label=prod
         )
 
-    ax.set_title(region, fontsize=14, fontweight='bold')
-    ax.set_ylabel('Monthly Mean Rainfall (mm/day)', fontsize=12)
+    ax.set_title(Buoy_REGION_NAMES[region], fontsize=16, fontweight='bold')#region, fontsize=14, fontweight='bold')
+    ax.set_ylabel('Rainfall [mm day$^{-1}$]', fontsize=16)
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.tick_params(axis='both', labelsize=11)
 
 # Legend (single, clean)
 axes[0].legend(
     ncol=3,
-    fontsize=11,
+    fontsize=16,
     frameon=False
 )
 
@@ -1195,72 +1206,154 @@ fig.savefig(svnme, dpi=300)
 # plt.show() 
 print('Finished monthly timeseries analysis...')
 print("-" * 30 + "\n")
-
+gc.collect()
 #%% TIME SEREIES ANALYSIS OF 6 MONTHS RUNNING MEAN
 print('Starting 6 month running mean year to year variability analysis...')
 
+# df = buoy_sate_daily_rainfall_colasped_df.copy()
+
+# df["date"] = pd.to_datetime(df["date"])
+# df["month"] = df["date"].dt.month
+
+# df["year"] = df["date"].dt.year.astype(int)
+
+# # df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+
+# # ---- Define half-year flag and anchor month ----
+# df["half"] = np.where(df["month"] <= 6, "H1", "H2")
+# df["anchor_month"] = np.where(df["half"] == "H1", 6, 12)
+
+# # ---- Semiannual mean ----
+# semiannual = (
+#     df
+#     .groupby(["region", "year", "half", "anchor_month"])[products]
+#     .mean()
+#     .reset_index()
+# )
+
+# # ---- Create timestamp (June or December) ----
+# semiannual["time"] = pd.to_datetime(
+#     dict(
+#         year=semiannual["year"],
+#         month=semiannual["anchor_month"],
+#         day=1
+#     )
+# )
+
+# semiannual_by_region = {}
+
+# for region in Buoy_region_markers.keys():#semiannual["region"].unique():
+#     dfr = semiannual[semiannual["region"] == region].copy()
+
+#     full_index = pd.date_range(
+#         start=dfr["time"].min(),
+#         end=dfr["time"].max(),
+#         freq="6MS"   # 6-month frequency
+#     )
+
+#     dfr = (
+#         dfr
+#         .set_index("time")
+#         .reindex(full_index)
+#         .rename_axis("time")
+#         .reset_index()
+#     )
+
+#     semiannual_by_region[region] = dfr
+
+# regions = list(semiannual_by_region.keys())
+
+# fig, axes = plt.subplots(
+#     nrows=len(regions),
+#     ncols=1,
+#     figsize=(14, 3.5 * len(regions)),
+#     sharex=False
+# )
+
+# if len(regions) == 1:
+#     axes = [axes]
+
+# for ax, region in zip(axes, regions):
+#     ts = semiannual_by_region[region]
+
+#     # Buoy
+#     ax.plot(
+#         ts["time"],
+#         ts["rain_rate"],
+#         lw=2.8,
+#         color="blue",
+#         label="Buoy"
+#     )
+
+#     # Satellite / reanalysis
+#     for prod in products[1:]:
+#         ax.plot(
+#             ts["time"],
+#             ts[prod],
+#             lw=2,
+#             color=product_colors[prod],
+#             alpha=0.9,
+#             label=prod
+#         )
+
+#     ax.set_title(region, fontsize=14, fontweight="bold")
+#     ax.set_ylabel("6-month Mean Rainfall [mm day$^{-1}$]")
+#     ax.grid(True, linestyle="--", alpha=0.6)
+#     ax.tick_params(axis="both", labelsize=11)
+
+# # Single legend
+# axes[0].legend(
+#     ncol=3,
+#     fontsize=11,
+#     frameon=False
+# )
+
+# axes[-1].set_xlabel("Time (June / December anchors)", fontsize=13)
+
+# plt.tight_layout()
+# # plt.show()
+
+# svnme = os.path.join(path_to_plots, 
+#                      f'Buoy_vs_Satellite_Semiannual_Timeseries_Comparison_{cde_run_dte}.png')
+# fig.savefig(svnme, dpi=300)
+# print('Finished 6 month running mean analysis...')
+# print("-" * 30 + "\n")
+
+#--------------------------------------------------------------------------------
+# calculate and and plot 6 months running mean
 df = buoy_sate_daily_rainfall_colasped_df.copy()
 
 df["date"] = pd.to_datetime(df["date"])
-df["month"] = df["date"].dt.month
-
 df["year"] = df["date"].dt.year.astype(int)
+# Year–month
+df['year_month'] = df['date'].dt.to_period('M')
 
-df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 
+seven_months_rolling_mean_by_region = {}
 
-products = [
-    "rain_rate",     # Buoy
-    "GPCP v3.2",
-    "GPCP v3.3",
-    "ERA5",
-    "IMERG v07",
-    "MERRA2",
-]
+for region in list(Buoy_region_markers.keys()):
+    dfr = df[df['region'] == region].copy()
 
-# ---- Define half-year flag and anchor month ----
-df["half"] = np.where(df["month"] <= 6, "H1", "H2")
-df["anchor_month"] = np.where(df["half"] == "H1", 6, 12)
-
-# ---- Semiannual mean ----
-semiannual = (
-    df
-    .groupby(["region", "year", "half", "anchor_month"])[products]
-    .mean()
-    .reset_index()
-)
-
-# ---- Create timestamp (June or December) ----
-semiannual["time"] = pd.to_datetime(
-    dict(
-        year=semiannual["year"],
-        month=semiannual["anchor_month"],
-        day=1
-    )
-)
-
-semiannual_by_region = {}
-
-for region in Buoy_region_markers.keys():#semiannual["region"].unique():
-    dfr = semiannual[semiannual["region"] == region].copy()
-
-    full_index = pd.date_range(
-        start=dfr["time"].min(),
-        end=dfr["time"].max(),
-        freq="6MS"   # 6-month frequency
-    )
-
-    dfr = (
+    monthly = (
         dfr
-        .set_index("time")
-        .reindex(full_index)
-        .rename_axis("time")
+        .groupby('year_month')[products]
+        .mean()
         .reset_index()
     )
 
-    semiannual_by_region[region] = dfr
+    mnth = monthly.copy()
 
-regions = list(semiannual_by_region.keys())
+    mnth = mnth.sort_values('year_month')
+
+    for p in products:
+        mnth[p + "_rm13"] = (
+            mnth[p]
+            .rolling(window=7, center=True, min_periods=7)
+            .mean()
+        )
+
+    seven_months_rolling_mean_by_region[region] = mnth[['year_month'] + [p + "_rm13" for p in products]]
+
 
 fig, axes = plt.subplots(
     nrows=len(regions),
@@ -1272,13 +1365,16 @@ fig, axes = plt.subplots(
 if len(regions) == 1:
     axes = [axes]
 
-for ax, region in zip(axes, regions):
-    ts = semiannual_by_region[region]
+for i, (ax, region) in enumerate(zip(axes, regions)):
+    ts = seven_months_rolling_mean_by_region[region].copy()
+
+    # Convert Period -> datetime (month start)
+    x = ts["year_month"].dt.to_timestamp(how="start")
 
     # Buoy
     ax.plot(
-        ts["time"],
-        ts["rain_rate"],
+        x,
+        ts["rain_rate_rm13"],
         lw=2.8,
         color="blue",
         label="Buoy"
@@ -1287,38 +1383,55 @@ for ax, region in zip(axes, regions):
     # Satellite / reanalysis
     for prod in products[1:]:
         ax.plot(
-            ts["time"],
-            ts[prod],
+            x,
+            ts[prod + "_rm13"],
             lw=2,
             color=product_colors[prod],
             alpha=0.9,
             label=prod
         )
 
-    ax.set_title(region, fontsize=14, fontweight="bold")
-    ax.set_ylabel("6-month Mean Rainfall [mm day$^{-1}$]")
+    ax.set_title(Buoy_REGION_NAMES[region], fontsize=16, fontweight="bold")#region, fontsize=14, fontweight="bold")
+
+    # y-axis label fontsize = 18
+    ax.set_ylabel("Rainfall [mm day$^{-1}$]", fontsize=16)
+
     ax.grid(True, linestyle="--", alpha=0.6)
-    ax.tick_params(axis="both", labelsize=11)
+
+    # all tick labels fontsize = 15
+    ax.tick_params(axis="both", labelsize=15)
+
+    # ---- custom y ticks per panel ----
+    if i == 0:
+        ax.set_yticks([0, 3, 6, 9])
+    elif i == 1:
+        ax.set_yticks([4, 6, 8, 10, 12])
+    elif i == 2:
+        ax.set_yticks([4, 6, 8, 10, 12])
+    elif i == 3:
+        ax.set_yticks([0, 3, 6, 9])
 
 # Single legend
-axes[0].legend(
-    ncol=3,
-    fontsize=11,
-    frameon=False
-)
-
-axes[-1].set_xlabel("Time (June / December anchors)", fontsize=13)
+axes[0].legend(ncol=3, fontsize=15, frameon=False)
 
 plt.tight_layout()
-# plt.show()
 
+svnme = os.path.join(
+    path_to_plots,
+    f"Buoy_vs_Satellite_6_Month_Running_Mean_{cde_run_dte}.png"
+)
+fig.savefig(svnme, dpi=300)
+
+print('Finished 6 month running mean analysis...')
+print("-" * 30 + "\n")
+gc.collect()
 #%% MONTHLY CLIMATOLOGY
 
 df = buoy_sate_daily_rainfall_colasped_df.copy()
 df["date"] = pd.to_datetime(df["date"])
 # df['month'] = df['date'].dt.month.astype(int)
 df["year"] = df["date"].dt.year.astype(int)
-df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+# df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 
 products = [
     "rain_rate",
@@ -1455,18 +1568,11 @@ print('Starting distribution of monthly means analysis...')
 # A SIMILAR MONTHLY CLIMATOLY IN A 2BY2 SUBPLOTS
 regions = list(Buoy_region_markers.keys())  # or whatever order you want
 
-products = [
-    "rain_rate",     # Buoy
-    "GPCP v3.2",
-    "GPCP v3.3",
-    "ERA5",
-    "IMERG v07",
-    "MERRA2",
-]
 
 plot_monthly_climatology_2x2(
     monthly_clim_by_region=monthly_clim_by_region,
     regions=regions,
+    region_labels=Buoy_REGION_NAMES,
     products=products,
     product_colors=product_colors,
     figsize=(12, 9),
@@ -1494,15 +1600,6 @@ fig.savefig(svnme, dpi=300, bbox_inches="tight")
 # DIFFERENCES IN MONTHLY MEANS
 regions = list(Buoy_region_markers.keys())
 
-products = [
-    "rain_rate",     # Buoy
-    "GPCP v3.2",
-    "GPCP v3.3",
-    "ERA5",
-    "IMERG v07",
-    "MERRA2",
-]
-
 # Build anomalies
 monthly_anom_by_region = make_monthly_clim_anoms(
     monthly_clim_by_region,
@@ -1515,6 +1612,7 @@ for idx, fig in enumerate(
     plot_monthly_climatology_anoms_2x2(
         monthly_anom_by_region=monthly_anom_by_region,
         regions=regions,
+        region_labels=Buoy_REGION_NAMES,
         products=products,
         product_colors=product_colors,
         figsize=(12, 9),
@@ -1535,7 +1633,7 @@ df = buoy_sate_daily_rainfall_colasped_df.copy()
 df["date"] = pd.to_datetime(df["date"])
 df["year"] = df["date"].dt.year.astype(int)
 
-df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+# df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 PRODUCT_COLS = {
     "Buoy": "rain_rate",
     "GPCP v3.2": "GPCP v3.2",
@@ -1652,8 +1750,8 @@ for ax, region in zip(axes, regions):
         scale=0.6
     )
 
-    ax.set_title(region, fontsize=14, fontweight="bold")
-    ax.set_ylabel("Monthly Mean Rainfall [mm day$^{-1}$]")
+    ax.set_title(Buoy_REGION_NAMES[region], fontsize=14, fontweight="bold")#region, fontsize=14, fontweight="bold")
+    ax.set_ylabel("Rainfall [mm day$^{-1}$]",fontsize=15)
     ax.grid(True, linestyle="--", alpha=0.5)
 
 # axes[-1].set_xlabel("Product")

@@ -32,6 +32,15 @@ from multiprocessing import Pool
 
 #%% DEFINE GLOBAL VARIABLES
 
+products = [
+    "rain_rate",     # Buoy
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "ERA5",
+    "IMERG v07",
+    "MERRA2",
+]
+
 cc = CRS.from_authority(code=4326, auth_name='EPSG')
 
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
@@ -1128,7 +1137,7 @@ def plot_satellite_vs_groundtruth(
         # x = df[truth_col].values
         # y = df[prod].values
 
-        rb, rmse, cc, mae = calculate_metrics(df_all_regs,truth_col, prod)
+        qt_met = calculate_metrics(df_all_regs,truth_col, prod)
 
         for region in df_all_regs['region'].unique():
 
@@ -1163,14 +1172,14 @@ def plot_satellite_vs_groundtruth(
         xx = np.linspace(0, max_val, 100)
         ax.plot(xx, xx, '--', color='gray')
 
-        ax.set_xlabel(f'{truth_label} [mm day$^{-1}$]', fontsize=16, fontweight='bold')
-        ax.set_ylabel(f'{label} Estimates \n [mm day$^{-1}$]', fontsize=16, fontweight='bold')
+        ax.set_xlabel(truth_label + ' [mm day$^{-1}$]', fontsize=16, fontweight='bold')
+        ax.set_ylabel(label + ' Estimates \n [mm day$^{-1}$]', fontsize=16, fontweight='bold')
         ax.set_title(f'{label} vs {truth_col}', fontsize=18, fontweight='bold')
 
         # Stats annotation
         ax.text(
             0.05, 0.97,
-            f'RB: {rb:.2f}%\nRMSE: {rmse:.2f} mm/day\nCC: {cc:.2f}',
+            f'RB: {qt_met["Bias"]:.2f}%\nRMSE: {qt_met["RMSE"]:.2f} mm/day\nCC: {qt_met["CC"]:.2f}',
             transform=ax.transAxes,
             fontsize=15,
             fontweight='bold',
@@ -1305,6 +1314,7 @@ def plot_categorical_metrics_by_region(
 def plot_monthly_climatology_2x2(
     monthly_clim_by_region,
     regions,
+    region_labels,
     products,
     product_colors,
     figsize=(12, 9),   # close to the 2x2 style you showed
@@ -1347,9 +1357,9 @@ def plot_monthly_climatology_2x2(
                     lw=lw, color=product_colors[prod], label=prod
                 )
 
-            ax.set_title(region, fontsize=14, fontweight="bold")
+            ax.set_title(region_labels[region], fontsize=14, fontweight="bold")
             ax.set_xlabel("Month", fontsize=12, fontweight="bold")
-            ax.set_ylabel("Monthly Mean Rainfall [mm day$^{-1}$]", fontsize=12, fontweight="bold")
+            ax.set_ylabel("Rainfall [mm day$^{-1}$]", fontsize=12, fontweight="bold")
 
             ax.set_xticks(months)
             ax.set_xlim(1, 12)
@@ -1365,16 +1375,17 @@ def plot_monthly_climatology_2x2(
             ncol=ncol_legend,
             frameon=False,
             fontsize=11,
-            bbox_to_anchor=(0.5, 0.98)
+            bbox_to_anchor=(0.5, 0.05)#(0.5, 0.98)
         )
 
-        fig.tight_layout(rect=[0, 0, 1, 0.94])  # leave room for legend
+        fig.tight_layout(rect=[0.02, 0.04, 0.98, 0.92])  # leave room for legend, titlerect=[0, 0, 1, 0.94])  # leave room for legend
         plt.show()
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def plot_monthly_climatology_anoms_2x2(
     monthly_anom_by_region,
     regions,
+    region_labels,
     products,                 # include buoy_col as first element, same as your list
     product_colors,
     buoy_col="rain_rate",
@@ -1419,9 +1430,9 @@ def plot_monthly_climatology_anoms_2x2(
                 )
 
             ax.axhline(0, color="k", lw=1.5, ls ='--' ,alpha=0.8)  # zero reference
-            ax.set_title(region, fontsize=14, fontweight="bold")
+            ax.set_title(region_labels[region], fontsize=15, fontweight="bold")
             ax.set_xlabel("Month", fontsize=12, fontweight="bold")
-            ax.set_ylabel("Δ Monthly Mean \n (Product − Buoy) [mm day$^{-1}$]", fontsize=12, fontweight="bold")
+            ax.set_ylabel("Product − Buoy [mm day$^{-1}$]", fontsize=12, fontweight="bold")
 
             ax.set_xticks(months)
             ax.set_xlim(1, 12)
@@ -1632,8 +1643,8 @@ def amp_and_phase_scores(monthly_clim_by_region, ref_col="rain_rate",
 
         ref = clim[ref_col].values.astype(float)
         ref_amp = np.nanmax(ref) - np.nanmin(ref)
-        # ref_peak_month = int(clim.loc[np.nanargmax(ref), "month"])
-        ref_peak_month = robust_peak_month(clim["month"].values, ref)
+        ref_peak_month = int(clim.loc[np.nanargmax(ref), "month"])
+        # ref_peak_month = robust_peak_month(clim["month"].values, ref)
 
         for prod in product_cols:
             y = clim[prod].values.astype(float)
