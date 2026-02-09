@@ -142,6 +142,17 @@ del(imerg_v06_ds_xr_list, imerg_v07_ds_xr_list)
 gc.collect() 
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+# ALIGN ALL DATASETS IN TIME
+mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
+
+# select time range for all datasets
+gpcp_ds_v3pt2_al = gpcp_ds_v3pt2_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
+gpcp_ds_v3pt3_al = gpcp_ds_v3pt3_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
+era5_ds_al = era5_ds_xr.sel(valid_time=slice(mindate, maxdate))#.compute()#.chunk({'valid_time': -1})
+imerg_v07_al = imerg_v07_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chunk({'time': -1})
+mer2_ds_al = mer2_ds_xr.sel(time=slice(mindate, maxdate))#.chunk({'time': -1})
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # CLASSIFY PAL FILES BY REGION
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, 
                                                                PAL_region_bounds)
@@ -463,71 +474,176 @@ for region_name, buoy_files in buoy_files_by_region.items():
     region_buoy_sate_dfs = []  
 
     # LOAD Buoy DATA
-    for b_file in buoy_files:
+    for b, b_file in enumerate(buoy_files):
         b_df, b_lat, b_lon = grab_Buoy_data_df(b_file)
-        print(f"Processing Buoy file: {os.path.basename(b_file)}")
+        df_t_min, df_t_max = b_df['time'].min().date(), b_df['time'].max().date()
+        if b % 5 == 0:
+            print(f"Processing Buoy file: {os.path.basename(b_file)}")      
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
 
         # Process GPCP v3.2 - Memory efficient version
-        gpcpv3pt2_df = extract_buoy_satellite_data_memory_efficient(
-            gpcp_ds_v3pt2_xr, b_lat, b_lon, 'GPCP v3.2', 'precip',chunk_size=300
-        )
+        # gpcpv3pt2_df = extract_buoy_satellite_data_memory_efficient(
+        #     gpcp_ds_v3pt2_xr, b_lat, b_lon, 'GPCP v3.2', 'precip',chunk_size=300
+        # )
         
-        if gpcpv3pt2_df is None:
+        # if gpcpv3pt2_df is None:
+        #     print("Warning: Failed to extract GPCP v3.2 data, creating empty dataframe")
+        #     b_rain_gpcpv3pt2_df = pd.DataFrame(columns=['date', 'GPCP v3.2'])
+
+        gpcpv3pt2_df = extract_point_timeseries_to_df(
+                gpcp_ds_v3pt2_al,
+                b_lat,
+                b_lon,
+                df_t_min,
+                df_t_max,
+                varnames=["precip",'probability_liquid_phase'],          # <- can be "precip" or ["precip"] or ("precip", "probability_liquid_phase")
+                method="nearest",
+                time_name="time",
+                lat_name="lat",
+                lon_name="lon",
+            )
+        
+        if gpcpv3pt2_df.empty:
             print("Warning: Failed to extract GPCP v3.2 data, creating empty dataframe")
-            b_rain_gpcpv3pt2_df = pd.DataFrame(columns=['date', 'GPCP v3.2'])
+            gpcpv3pt2_df = pd.DataFrame(columns=['date', 'GPCP v3.2', 'PLP_GPCP v3.2'])
+        else:
+            gpcpv3pt2_df = gpcpv3pt2_df[['time','precip', 'probability_liquid_phase']].copy()
+            gpcpv3pt2_df.columns = ['time', 'GPCP v3.2', 'PLP_GPCP v3.2']     
+            gpcpv3pt2_df['date'] = gpcpv3pt2_df['time'].dt.date
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
         # Process GPCP v3.3 - Memory efficient version
-        gpcpv3pt3_df = extract_buoy_satellite_data_memory_efficient(
-            gpcp_ds_v3pt3_xr, b_lat, b_lon, 'GPCP v3.3', 'precip', chunk_size=300
-        )
+        # gpcpv3pt3_df = extract_buoy_satellite_data_memory_efficient(
+        #     gpcp_ds_v3pt3_xr, b_lat, b_lon, 'GPCP v3.3', 'precip', chunk_size=300
+        # )
         
-        if gpcpv3pt3_df is None:
+        # if gpcpv3pt3_df is None:
+        #     print("Warning: Failed to extract GPCP v3.3 data, creating empty dataframe")
+        #     gpcpv3pt3_df = pd.DataFrame(columns=['date', 'GPCP v3.3'])
+
+        
+        gpcpv3pt3_df = extract_point_timeseries_to_df(
+                gpcp_ds_v3pt3_al,
+                b_lat,
+                b_lon,
+                df_t_min,
+                df_t_max,
+                varnames=["precip"],          # <- can be "precip" or ["precip"] or ("precip", "probability_liquid_phase")
+                method="nearest",
+                time_name="time",
+                lat_name="lat",
+                lon_name="lon",
+            )
+        
+        if gpcpv3pt3_df.empty:
             print("Warning: Failed to extract GPCP v3.3 data, creating empty dataframe")
             gpcpv3pt3_df = pd.DataFrame(columns=['date', 'GPCP v3.3'])
+        else:
+            gpcpv3pt3_df = gpcpv3pt3_df[['time','precip']].copy()
+            gpcpv3pt3_df.columns = ['time', 'GPCP v3.3']
+            gpcpv3pt3_df['date'] = gpcpv3pt3_df['time'].dt.date
+
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
         
         # Process ERA5 data with Buoy - Memory efficient version 
-        era5_df = extract_buoy_satellite_data_memory_efficient(
-            era5_ds_xr, b_lat, b_lon, 'ERA5', 'tp', chunk_size=300
-        )
-        era5_df.drop(columns=['number','spatial_ref'], inplace=True)  # drop redundant column
-        era5_df.rename(columns={'tp': 'ERA5'}, inplace=True)
+        # era5_df = extract_buoy_satellite_data_memory_efficient(
+        #     era5_ds_xr, b_lat, b_lon, 'ERA5', 'tp', chunk_size=300
+        # )
+        # era5_df.drop(columns=['number','spatial_ref'], inplace=True)  # drop redundant column
+        # era5_df.rename(columns={'tp': 'ERA5'}, inplace=True)
         
-        if era5_df is None:
+        # if era5_df is None:
+        #     print("Warning: Failed to extract ERA5 data, creating empty dataframe")
+        #     era5_df = pd.DataFrame(columns=['date', 'ERA5'])
+
+        era5_df = extract_point_timeseries_to_df(
+                era5_ds_al,
+                b_lat,
+                b_lon,
+                df_t_min,
+                df_t_max,
+                varnames=["tp"],          # <- can be "precip" or ["precip"] or ("precip", "probability_liquid_phase")
+                method="nearest",
+                time_name="valid_time",
+                lat_name="y",
+                lon_name="x",
+            )
+        if era5_df.empty:
             print("Warning: Failed to extract ERA5 data, creating empty dataframe")
             era5_df = pd.DataFrame(columns=['date', 'ERA5'])
+        else:
+            era5_df = era5_df[['valid_time','tp']].copy()
+            era5_df.columns = ['time', 'ERA5']
+            era5_df['date'] = era5_df['time'].dt.date
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
         
         # Process IMERG data with Buoy - Memory efficient version
-        imerg_v07_df = extract_buoy_satellite_data_memory_efficient(
-            imerg_v07_ds_xr, b_lat, b_lon, 'IMERG v07', None, chunk_size=300  # Reduced from 100 to 50 for IMERG
-        )
+        # imerg_v07_df = extract_buoy_satellite_data_memory_efficient(
+        #     imerg_v07_ds_xr, b_lat, b_lon, 'IMERG v07', None, chunk_size=300  # Reduced from 100 to 50 for IMERG
+        # )
 
-        imerg_v07_df.drop(columns=['spatial_ref'], inplace=True)  # drop redundant column
-        imerg_v07_df.rename(columns={'precipitation': 'IMERG v07'}, inplace=True)
+        # imerg_v07_df.drop(columns=['spatial_ref'], inplace=True)  # drop redundant column
+        # imerg_v07_df.rename(columns={'precipitation': 'IMERG v07'}, inplace=True)
         
-        if imerg_v07_df is None:
+        # if imerg_v07_df is None:
+        #     print("Warning: Failed to extract IMERG data, creating empty dataframe")
+        #     imerg_v07_df = pd.DataFrame(columns=['date', 'IMERG v07'])
+
+        imerg_v07_df = extract_point_timeseries_to_df(
+                imerg_v07_al,
+                b_lat,
+                b_lon,
+                df_t_min,
+                df_t_max,
+                varnames=None,          # <- can be "precip" or ["precip"] or ("precip", "probability_liquid_phase")
+                method="nearest",
+                time_name="time",
+                lat_name="lat",
+                lon_name="lon",
+            )
+        if imerg_v07_df.empty:
             print("Warning: Failed to extract IMERG data, creating empty dataframe")
             imerg_v07_df = pd.DataFrame(columns=['date', 'IMERG v07'])
+        else:
+            imerg_v07_df = imerg_v07_df[['time','precipitation']].copy()
+            imerg_v07_df.columns = ['time', 'IMERG v07']
+            imerg_v07_df['date'] = imerg_v07_df['time'].dt.date
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
 
         # Process MERRA2 data with Buoy - Memory efficient version
-        merra2_df = extract_buoy_satellite_data_memory_efficient(
-            mer2_ds_xr, b_lat, b_lon, 'MERRA2', None, chunk_size=300
-        )
+        # merra2_df = extract_buoy_satellite_data_memory_efficient(
+        #     mer2_ds_xr, b_lat, b_lon, 'MERRA2', None, chunk_size=300
+        # )
         
-        merra2_df.drop(columns=['spatial_ref'], inplace=True)
-        merra2_df.rename(columns={'PRECTOTCORR':'MERRA2'}, inplace=True)
+        # merra2_df.drop(columns=['spatial_ref'], inplace=True)
+        # merra2_df.rename(columns={'PRECTOTCORR':'MERRA2'}, inplace=True)
         
-        if merra2_df is None:
+        # if merra2_df is None:
+        #     print("Warning: Failed to extract MERRA2 data, creating empty dataframe")
+        #     merra2_df = pd.DataFrame(columns=['date', 'MERRA2'])
+
+        merra2_df = extract_point_timeseries_to_df(
+                mer2_ds_al,
+                b_lat,
+                b_lon,
+                df_t_min,
+                df_t_max,
+                varnames=None,          # <- can be "precip" or ["precip"] or ("precip", "probability_liquid_phase")
+                method="nearest",
+                time_name="time",
+                lat_name="y",
+                lon_name="x",
+            )
+        if merra2_df.empty:
             print("Warning: Failed to extract MERRA2 data, creating empty dataframe")
             merra2_df = pd.DataFrame(columns=['date', 'MERRA2'])
-
+        else:
+            merra2_df = merra2_df[['time','PRECTOTCORR']].copy()
+            merra2_df.columns = ['time', 'MERRA2']
+            merra2_df['date'] = merra2_df['time'].dt.date
         # COMBINE BY RAINFALL RATE
         b_df_combined_rain = b_df[['date', 'rain_rate', 'quality_flag']].copy()        
         
@@ -661,6 +777,8 @@ scatter_fig = plot_satellite_vs_groundtruth(pal_sate_daily_mean_df,
                                             figsize_per_col=6,
                                             figsize_per_row=5,
                                             region_markers=PAL_region_markers,
+                                            region_colors=PAL_region_colors,
+                                            region_labels=PAL_REGION_NAMES,
                                             savepath=os.path.join(path_to_plots, f'PAL_vs_Satellite_Comparison_{cde_run_dte}.png'))
 
 
@@ -669,6 +787,8 @@ scatter_fig = plot_satellite_vs_groundtruth(pal_sate_daily_mean_df,
 # REGION BY REGION CAT METRICS
 
 region_based_cat_metrics = {}
+region_based_qt_metrics = {}
+
 for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
 
     region_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['region'] == region_name]
@@ -683,72 +803,93 @@ for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
 
         # Calculate the categorical metrics
         reg_cat_met = categorical_stats(forcast, observed, 1.0)
+        # Calculate the quantitative metrics
+        reg_qt_met = calculate_metrics(region_df, 'rain_rate', product)
 
         # Store the metrics in the dictionary
         region_based_cat_metrics.setdefault(region_name, {})[product] = reg_cat_met
+        region_based_qt_metrics.setdefault(region_name, {})[product] = reg_qt_met
 
 
+# The plot
 
 products = ["GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5",  "MERRA2"]
 
+# cate metrics
 fig = plot_categorical_metrics_by_region(
     metrics_dict=region_based_cat_metrics,
     products=products,
     product_colors=product_colors,
+    metrics=("POD", "FAR", "Bias", "HSS"),
+    region_labels=PAL_REGION_NAMES,
 )
 svnme = os.path.join(path_to_plots, 
                      f'PAL_Satellite_Categorical_Metrics_by_Region_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
 
-
+# quant metrics
+fig = plot_categorical_metrics_by_region(
+    metrics_dict=region_based_qt_metrics,
+    products=products,
+    product_colors=product_colors,
+    metrics=("CC", "RMSE", "MAE", "Bias"),
+    region_labels=PAL_REGION_NAMES,
+)
+svnme = os.path.join(path_to_plots, 
+                     f'PAL_Satellite_Quantitative_Metrics_by_Region_{cde_run_dte}.png')
+fig.savefig(svnme, dpi=300)
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 # METRICS BY RAINFALL INTENSITY
 rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0] # 
 products = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
-ct_met = ['POD', 'FAR', 'Bias', 'HSS']
-qt_met = ['CC', 'RMSE', 'RB']
-# df_colapsed = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
 
+cat_metrics = ['POD', 'FAR', 'Bias', 'HSS']
+qt_metrics  = ['CC', 'RMSE', 'MAE', 'RB']   # <- as you want (Bias handled as RB in %)
+
+# df_colapsed = pd.concat(regional_PAL_sate_dfs_daily_lst, ignore_index=True)
+df_all = pal_sate_daily_rainfall_colasped_df.copy()
+
+# ------------------------------------------------------------
+# COMPUTE METRICS BY PRODUCT
+# ------------------------------------------------------------
 qt_met_by_prdt = {}
 cat_met_by_prdt = {}
+
 for product in products:
 
-    cat_met_prdt = pd.DataFrame(index=rainfall_bins, columns=ct_met)
-    quant_met_prdt = pd.DataFrame(index=rainfall_bins, columns=qt_met)
+    cat_met_prdt = pd.DataFrame(index=rainfall_bins, columns=cat_metrics, dtype=float)
+    qt_met_prdt  = pd.DataFrame(index=rainfall_bins, columns=qt_metrics,  dtype=float)
 
-    forcast = pal_sate_daily_rainfall_colasped_df[product]
-    observed = pal_sate_daily_rainfall_colasped_df['rain_rate'] # 
+    forecast = df_all[product]
+    observed = df_all['rain_rate']
 
     for r_bin in rainfall_bins:
-        # Calculate the categorical metrics
-        cat_mets = categorical_stats(forcast, observed, r_bin)
-        cat_met_prdt.loc[r_bin,'POD'] = cat_mets['POD']
-        cat_met_prdt.loc[r_bin,'FAR'] = cat_mets['FAR']
-        cat_met_prdt.loc[r_bin,'Bias'] = cat_mets['Bias']
-        cat_met_prdt.loc[r_bin,'HSS'] = cat_mets['HSS']
+        # ---- categorical ----
+        cat_mets = categorical_stats(forecast, observed, r_bin)
+        cat_met_prdt.loc[r_bin, 'POD']  = cat_mets.get('POD',  np.nan)
+        cat_met_prdt.loc[r_bin, 'FAR']  = cat_mets.get('FAR',  np.nan)
+        cat_met_prdt.loc[r_bin, 'Bias'] = cat_mets.get('Bias', np.nan)
+        cat_met_prdt.loc[r_bin, 'HSS']  = cat_mets.get('HSS',  np.nan)
 
-        # Calculate the quantitative metrics
-        bin_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['rain_rate'] >= r_bin]
-        quant_mets = calculate_metrics(bin_df, 'rain_rate', product)
-        quant_met_prdt.loc[r_bin,'CC'] = quant_mets[2]
-        quant_met_prdt.loc[r_bin,'RMSE'] = quant_mets[1]
-        quant_met_prdt.loc[r_bin,'RB'] = quant_mets[0]   
+        # ---- quantitative (only days where observed >= bin) ----
+        # bin_df = df_all[df_all['rain_rate'] >= r_bin]
+        bin_df = df_all[(df_all['rain_rate'] >= r_bin) & (df_all[product] >=r_bin)]
+        qt_mets = calculate_metrics(bin_df, 'rain_rate', product)
+
+        qt_met_prdt.loc[r_bin, 'CC']   = qt_mets.get('CC',   np.nan)
+        qt_met_prdt.loc[r_bin, 'RMSE'] = qt_mets.get('RMSE', np.nan)
+        qt_met_prdt.loc[r_bin, 'MAE']  = qt_mets.get('MAE',  np.nan)
+        qt_met_prdt.loc[r_bin, 'RB']   = qt_mets.get('Bias', np.nan)  # bias [%]
 
     cat_met_by_prdt[product] = cat_met_prdt
-    qt_met_by_prdt[product] = quant_met_prdt
+    qt_met_by_prdt[product]  = qt_met_prdt
     
-# - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
-# THE PLOTTING
-# - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
-
-
-# Metrics to plot
-cat_metrics = ['POD', 'FAR', 'HSS']
-qt_metrics  = ['CC', 'RMSE', 'RB']
-
+# ------------------------------------------------------------
+# PLOTTING: 4x2 layout (left=categorical, right=quantitative)
+# ------------------------------------------------------------
 fig, axes = plt.subplots(
-    nrows=3, ncols=2,
-    figsize=(14, 12),
+    nrows=4, ncols=2,
+    figsize=(14, 14),
     sharex=True
 )
 
@@ -756,10 +897,10 @@ fig, axes = plt.subplots(
 for i, met in enumerate(cat_metrics):
     ax = axes[i, 0]
 
-    for product, df in cat_met_by_prdt.items():
+    for product, dmet in cat_met_by_prdt.items():
         ax.plot(
             rainfall_bins,
-            df.loc[rainfall_bins, met].astype(float),
+            dmet.loc[rainfall_bins, met].astype(float),
             marker='o',
             linewidth=2.2,
             markersize=7,
@@ -767,21 +908,28 @@ for i, met in enumerate(cat_metrics):
             label=product if i == 0 else None
         )
 
-    ax.set_ylabel(met, fontsize=14, fontweight='bold')
+    ax.set_ylabel(met, fontsize=18, fontweight='bold')
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.set_xscale('log')
     ax.set_xticks(rainfall_bins)
     ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-    ax.tick_params(labelsize=15)
+    ax.tick_params(labelsize=14)
 
 # ---- RIGHT COLUMN: QUANTITATIVE ----
+qt_labels = {
+    'CC':   'CC',
+    'RMSE': 'RMSE [mm/day]',
+    'MAE':  'MAE [mm/day]',
+    'RB':   'Bias [%]'
+}
+
 for i, met in enumerate(qt_metrics):
     ax = axes[i, 1]
 
-    for product, df in qt_met_by_prdt.items():
+    for product, dmet in qt_met_by_prdt.items():
         ax.plot(
             rainfall_bins,
-            df.loc[rainfall_bins, met].astype(float),
+            dmet.loc[rainfall_bins, met].astype(float),
             marker='o',
             linewidth=2.2,
             markersize=7,
@@ -789,31 +937,25 @@ for i, met in enumerate(qt_metrics):
             label=product if i == 0 else None
         )
 
-    if met == 'RB':
-        met_label = 'Bias [%]' 
-    elif met == 'RMSE':
-        met_label = 'RMSE [mm/day]'
-    else:
-        met_label = met
-
-    ax.set_ylabel(met_label, fontsize=15, fontweight='bold')
+    ax.set_ylabel(qt_labels.get(met, met), fontsize=18, fontweight='bold')
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.set_xscale('log')
     ax.set_xticks(rainfall_bins)
     ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
-    ax.tick_params(labelsize=15)
+    ax.tick_params(labelsize=14)
 
-# ---- X-axis labels (bottom row only) ----
+# ---- X labels (bottom row only) ----
 for ax in axes[-1, :]:
     ax.set_xlabel('Rain Rate (mm/day)', fontsize=18, fontweight='bold')
 
-# ---- Column titles ----
-# axes[0, 0].set_title('Categorical Metrics', fontsize=16, fontweight='bold')
-# axes[0, 1].set_title('Quantitative Metrics', fontsize=16, fontweight='bold')
+# ---- Optional column titles ----
+axes[0, 0].set_title('Categorical Metrics', fontsize=18, fontweight='bold')
+axes[0, 1].set_title('Quantitative Metrics', fontsize=18, fontweight='bold')
 
-# ---- Legend (single, clean) ----
+# ---- Single legend below figure ----
 handles, labels = axes[0, 0].get_legend_handles_labels()
-fig.subplots_adjust(bottom=0.15)
+fig.subplots_adjust(bottom=0.12)
+
 fig.legend(
     handles, labels,
     loc='lower center',
@@ -823,6 +965,7 @@ fig.legend(
 )
 
 plt.tight_layout(rect=[0, 0.08, 1, 1])
+# plt.show()
 svnme = os.path.join(path_to_plots, 
                      f'PAL_Satellite_Metrics_by_Rainfall_Intensity_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
@@ -883,7 +1026,6 @@ ax.set_ylabel('PDF (%)', fontsize=18, fontweight='bold')
 
 # ax.set_xticks(bin_values)
 # ax.set_xticklabels(bin_labels)
-from matplotlib.ticker import FixedLocator, FuncFormatter
 
 bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
 
@@ -915,7 +1057,7 @@ fig.savefig(svnme, dpi=300)
 #%%
 print('Starting buoy-based assessment...')
 # THE BUOY BASED ASSESSMENT
-buoy_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_mean_from_all_regions_and_all_IDs_20260203.pkl'))  
+buoy_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_mean_from_all_regions_and_all_IDs_20260206.pkl'))  
 
 # Create scatter plots for Buoy vs satellite products
 scatter_fig_buoy = plot_satellite_vs_groundtruth(buoy_sate_daily_mean_df,
@@ -923,11 +1065,13 @@ scatter_fig_buoy = plot_satellite_vs_groundtruth(buoy_sate_daily_mean_df,
                                             product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'], # 
                                             product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'], # 
                                             truth_label='Buoy Observations',
-                                            max_val=18,
-                                            ticks=(0, 6, 12, 18),
+                                            max_val=15,
+                                            ticks=(0, 5, 10, 15),
                                             figsize_per_col=6,
                                             figsize_per_row=5,
                                             region_markers=Buoy_region_markers,
+                                            region_colors=Buoy_region_colors,
+                                            region_labels=Buoy_REGION_NAMES,
                                             savepath=os.path.join(path_to_plots, f'Buoy_vs_Satellite_Comparison_{cde_run_dte}.png'))
 
 print('Finished buoy-based assessment...')
@@ -935,9 +1079,14 @@ print("-" * 30 + "\n")
 #%%
 print('Starting monthly timeseries analysis...')
 # MONTHLY TIMESERIES ANALYSIS
-buoy_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260203.pkl'))
+buoy_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260206.pkl'))
 
 df = buoy_sate_daily_rainfall_colasped_df.copy()
+
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year.astype(int)
+
+df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 
 # Ensure datetime
 df['date'] = pd.to_datetime(df['date'])
@@ -956,8 +1105,8 @@ products = [
 
 monthly_by_region = {}
 
-for region in df['region'].unique():
-    dfr = df[df['region'] == region]
+for region in list(Buoy_region_markers.keys()):
+    dfr = df[df['region'] == region].copy()
 
     monthly = (
         dfr
@@ -1051,9 +1200,14 @@ print("-" * 30 + "\n")
 print('Starting 6 month running mean year to year variability analysis...')
 
 df = buoy_sate_daily_rainfall_colasped_df.copy()
+
 df["date"] = pd.to_datetime(df["date"])
-df["year"] = df["date"].dt.year
 df["month"] = df["date"].dt.month
+
+df["year"] = df["date"].dt.year.astype(int)
+
+df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+
 
 products = [
     "rain_rate",     # Buoy
@@ -1087,7 +1241,7 @@ semiannual["time"] = pd.to_datetime(
 
 semiannual_by_region = {}
 
-for region in semiannual["region"].unique():
+for region in Buoy_region_markers.keys():#semiannual["region"].unique():
     dfr = semiannual[semiannual["region"] == region].copy()
 
     full_index = pd.date_range(
@@ -1142,7 +1296,7 @@ for ax, region in zip(axes, regions):
         )
 
     ax.set_title(region, fontsize=14, fontweight="bold")
-    ax.set_ylabel("6-month Mean Rainfall (mm/day)")
+    ax.set_ylabel("6-month Mean Rainfall [mm day$^{-1}$]")
     ax.grid(True, linestyle="--", alpha=0.6)
     ax.tick_params(axis="both", labelsize=11)
 
@@ -1159,37 +1313,44 @@ plt.tight_layout()
 # plt.show()
 
 #%% MONTHLY CLIMATOLOGY
+
 df = buoy_sate_daily_rainfall_colasped_df.copy()
-
-# Ensure datetime
-df['date'] = pd.to_datetime(df['date'])
-
-# Month index (1–12)
-df['month'] = df['date'].dt.month
+df["date"] = pd.to_datetime(df["date"])
+# df['month'] = df['date'].dt.month.astype(int)
+df["year"] = df["date"].dt.year.astype(int)
+df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 
 products = [
-    'rain_rate',     # Buoy
-    'GPCP v3.2',
-    'GPCP v3.3',
-    'ERA5',
-    'IMERG v07',
-    'MERRA2'
+    "rain_rate",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "ERA5",
+    "IMERG v07",
+    "MERRA2",
 ]
 
 monthly_clim_by_region = {}
 
-for region in df['region'].unique():
-    dfr = df[df['region'] == region]
+for region in df["region"].unique():
+    dfr = df[df["region"] == region].copy()
 
+    # # 1) collapse multiple IDs -> ONE value per day for the region
+    # daily_region = (
+    #     dfr.groupby("date")[products]
+    #        .mean()
+    #        .reset_index()
+    # )
+
+    # 2) climatological monthly cycle (mean across years for each calendar month)
+    # daily_region["month"] = daily_region["date"].dt.month
+    dfr["month"] = dfr["date"].dt.month
     clim = (
-        dfr
-        .groupby('month')[products]
-        .mean()
-        .reset_index()
+        dfr.groupby("month")[products]
+                    .mean()
+                    .reset_index()
     )
 
     monthly_clim_by_region[region] = clim
-
 
 regions = list(Buoy_region_markers.keys())#list(monthly_clim_by_region.keys())
 
@@ -1251,6 +1412,40 @@ svnme = os.path.join(path_to_plots,
                      f'Buoy_vs_Satellite_Monthly_Climatology_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
 # plt.show()
+
+# -----------------------------
+# different method
+# -----------------------------
+# df = buoy_sate_daily_rainfall_colasped_df.copy()
+# products = ["rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"]
+
+# # Compute equal-station-weight climatology
+# monthly_clim_by_region, station_month = compute_monthly_climatology_equal_station_weight(
+#     df=df,
+#     products=products,
+#     id_col="ID",
+#     region_col="region",
+#     date_col="date",
+# )
+
+regions = list(Buoy_region_markers.keys())
+
+# Plot
+svnme = os.path.join(
+    path_to_plots,
+    f"Buoy_vs_Satellite_Monthly_Climatology_equalStationWeight_{cde_run_dte}.png"
+)
+
+fig = plot_monthly_climatology_stack(
+    monthly_clim_by_region=monthly_clim_by_region,
+    regions=regions,
+    products=products,
+    product_colors=product_colors,
+    figsize=(14, 3.5 * len(regions)),
+    month_as_numbers=True,   # <-- month numbers as you prefer
+    savepath=svnme
+)
+
 print('Finished monthly climatology analysis...')
 print("-" * 30 + "\n")
 print('Starting distribution of monthly means analysis...')
@@ -1282,6 +1477,17 @@ svnme = os.path.join(path_to_plots,
                      f'Buoy_vs_Satellite_Monthly_Climatology_2x2_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
 # plt.show()
+
+#-----------------------------------------------------------------------------
+# AMP AND PHASE SCORES
+scores = amp_and_phase_scores(monthly_clim_by_region)
+scores.sort_values(["region","amp_ratio"])
+
+fig = plot_amp_phase_heatmaps(scores)
+
+# save if you want
+svnme = os.path.join(path_to_plots, f"SeasonalCycle_AmpRatio_PhaseLag_Heatmaps_{cde_run_dte}.png")
+fig.savefig(svnme, dpi=300, bbox_inches="tight")
 
 
 #-----------------------------------------------------------------------------
@@ -1326,6 +1532,10 @@ for idx, fig in enumerate(
 
 #%% DISTRIBUTION OF MONTHLY MEANS 
 df = buoy_sate_daily_rainfall_colasped_df.copy()
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year.astype(int)
+
+df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 PRODUCT_COLS = {
     "Buoy": "rain_rate",
     "GPCP v3.2": "GPCP v3.2",
@@ -1443,7 +1653,7 @@ for ax, region in zip(axes, regions):
     )
 
     ax.set_title(region, fontsize=14, fontweight="bold")
-    ax.set_ylabel("Monthly Mean Rainfall (mm/day)")
+    ax.set_ylabel("Monthly Mean Rainfall [mm day$^{-1}$]")
     ax.grid(True, linestyle="--", alpha=0.5)
 
 # axes[-1].set_xlabel("Product")
@@ -1461,7 +1671,10 @@ print('Starting distribution of daily means analysis...')
 
 #%% DISTRIBUTION OF DAILY MEANS
 df = buoy_sate_daily_rainfall_colasped_df.copy()
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year.astype(int)
 
+df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 # Ensure datetime
 df["date"] = pd.to_datetime(df["date"])
 df["year"] = df["date"].dt.year
@@ -1526,7 +1739,7 @@ for ax, region in zip(axes, regions):
     )
 
     ax.set_title(region, fontsize=14, fontweight="bold")
-    ax.set_ylabel("Monthly Mean Rainfall (mm/day)")
+    ax.set_ylabel("Monthly Mean Rainfall [mm day$^{-1}$]")
     ax.grid(True, linestyle="--", alpha=0.5)
 
     # Reduce clutter
@@ -1641,22 +1854,109 @@ svnme = os.path.join(
 )
 fig.savefig(svnme, dpi=300)
 
+
+#-----------------------------------------------------------------------------
+# 2x2 subplots
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year.astype(int)
+
+df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+products = ["rain_rate","GPCP v3.2","GPCP v3.3","ERA5","IMERG v07","MERRA2"]
+
+annual_df = pd.concat(
+    [
+        annual_mean_with_coverage(
+            df,
+            products=products,
+            region=reg,
+            min_days=250,          # products threshold
+            min_days_ref=300,      # buoy threshold (ref only)
+            ref="rain_rate",
+        )
+        for reg in list(Buoy_region_markers.keys())
+    ],
+    ignore_index=True
+).sort_values(["region", "year"])
+
+regions = ["ENP","WNP","IND","ATL"]  # make sure this is defined
+
+fig = plot_interannual_variability_2x2_gapaware(
+    annual_df=annual_df,
+    regions=regions,
+    products=products,
+    product_colors=product_colors,
+    ref="rain_rate",
+    min_days_ref=300,         # matches what annual_df used for buoy
+    max_gap_years=1,
+    add_trend_band=True,
+    n_boot=2000,
+    ci=95
+)
+
+fig.savefig(os.path.join(path_to_plots, 
+                         f"Interannual_variability_2x2_{cde_run_dte}.png"), dpi=300, bbox_inches="tight")
+
 print("Finished gap-aware year-to-year variability analysis.")
 print("-" * 30)
+
+#-----------------------------------------------------------------------------
+products = ["rain_rate","GPCP v3.2","GPCP v3.3","ERA5","IMERG v07","MERRA2"]
+
+monthly_df = pd.concat(
+    [
+        monthly_mean_with_coverage(
+            buoy_sate_daily_rainfall_colasped_df,
+            products=products,
+            region=reg,
+            min_days=20,
+            ref="rain_rate",
+            min_days_ref=25
+        )
+        for reg in Buoy_region_markers.keys()
+    ],
+    ignore_index=True
+)
+
+# limit to 2000–2020 (monthly)
+monthly_df["date"] = pd.to_datetime(monthly_df["date"])
+monthly_df = monthly_df[
+    (monthly_df["date"] >= "2000-01-01") & (monthly_df["date"] <= "2020-12-31")
+].copy()
+
+
+fig = plot_2x2_annual_rm13_with_trends(
+    df_raw=buoy_sate_daily_rainfall_colasped_df,
+    regions=["ENP","WNP","IND","ATL"],
+    products=["rain_rate","GPCP v3.2","GPCP v3.3","ERA5","IMERG v07","MERRA2"],
+    product_colors=product_colors,
+    ref="rain_rate",
+    region_names=Buoy_REGION_NAMES,
+    year_min=2000,
+    year_max=2020,
+    xtick_step=2,
+    show_ci_band=False  # set True if you want the band back
+)
+
 
 
 #%%
 #%%  PDF Assessment relative to Buoy
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year.astype(int)
+
+df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
 bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
 bin_labels = ['0.5', '1', '2', '4', '8', '16', '32', '64', '128', '256']
 
 # Compute PDF elements for all datasets
-buoy_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'rain_rate', bin_values)
-img_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'IMERG v07', bin_values)
-gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'GPCP v3.2', bin_values)
-gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'GPCP v3.3', bin_values)
-era5_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'ERA5', bin_values)
-merra2_pdfc_pdfv = compute_pdf_elements(buoy_sate_daily_rainfall_colasped_df, 'MERRA2', bin_values)
+buoy_pdfc_pdfv = compute_pdf_elements(df, 'rain_rate', bin_values)
+img_pdfc_pdfv = compute_pdf_elements(df, 'IMERG v07', bin_values)
+gpcp_v3pt2_pdfc_pdfv = compute_pdf_elements(df, 'GPCP v3.2', bin_values)
+gpcp_v3pt3_pdfc_pdfv = compute_pdf_elements(df, 'GPCP v3.3', bin_values)
+era5_pdfc_pdfv = compute_pdf_elements(df, 'ERA5', bin_values)
+merra2_pdfc_pdfv = compute_pdf_elements(df, 'MERRA2', bin_values)
 # ============================================================
 # PDFv / PDFc by Rainfall Intensity (Figure-5 style)
 # ============================================================
@@ -1730,7 +2030,7 @@ svnme = os.path.join(path_to_plots,
 fig.savefig(svnme, dpi=300)
 
 
-#%% Abalysis plot scaleimport matplotlib.pyplot as plt
+#%% Data Visaulization plots
 
 import matplotlib.pyplot as plt
 
@@ -1779,4 +2079,74 @@ for spine in ax.spines.values():
     spine.set_linewidth(1.2)
 
 plt.tight_layout()
+plt.show()
+
+
+#----------------------------------------------------------------------------
+import matplotlib.pyplot as plt
+
+# ---- define datasets: (name, start_year, end_year, resolution_group) ----
+datasets = [
+    ("PAL",        2010, 2021, "subhourly"),
+    ("Buoy",       1997, 2023, "hourly"),      # or "present" -> use last year in your plot
+    ("Atolls",     1983, 2023, "monthly"),
+    ("OceanRAIN",  2010, 2017, "subhourly"),   # adjust if you know exact start
+    ("GPCP v3.2",  1983, 2023, "daily"),
+    ("GPCP v3.3",  1983, 2023, "daily"),
+    ("IMERG v07",  1998, 2023, "daily"),       # depends on what you use; change as needed
+    ("ERA5",       1983, 2023, "daily"),
+    ("MERRA2",     1983, 2023, "daily"),
+]
+
+# ---- color by native temporal resolution ----
+colors = {
+    "subhourly": "#7B2CBF",
+    "hourly":    "#1D4ED8",
+    "daily":     "#16A34A",
+    "monthly":   "#F59E0B",
+}
+
+fig, ax = plt.subplots(figsize=(12, 5), dpi=200)
+
+# y positions (top to bottom)
+names = [d[0] for d in datasets]
+ypos = list(range(len(names)))[::-1]
+
+for (name, x0, x1, res), y in zip(datasets, ypos):
+    ax.hlines(y, x0, x1, lw=10, color=colors[res], alpha=0.9)
+    # optional end caps
+    ax.plot([x0, x1], [y, y], "o", ms=4, color=colors[res])
+
+ax.set_yticks(ypos)
+ax.set_yticklabels(names, fontsize=11)
+ax.set_xlim(1983, 2023)
+ax.set_xticks(np.arange(1983,2028,5))#[1983, 1987, 1990, 1995, 2000, 2005, 2010, 2015, 2019, 2023])
+# ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+
+# style: only left + bottom axes
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+
+# Leave room at the bottom for the legend
+fig.subplots_adjust(bottom=0.3)  # increase to 0.22 if needed
+
+# Legend BELOW the axes (won’t overlap ticks)
+handles = [plt.Line2D([0],[0], color=colors[k], lw=10) for k in colors]
+labels  = ["Subhourly", "Hourly", "Daily", "Monthly"]
+
+fig.legend(
+    handles, labels,
+    loc="lower center",
+    bbox_to_anchor=(0.5, 0.005),   # tweak: 0.04 lower, 0.08 higher
+    ncol=4,
+    frameon=False,
+    fontsize=12,
+    handlelength=2.5,
+    columnspacing=1.8
+)
+
+# --- layout: reserve space for bottom legend + top title ---
+fig.tight_layout(rect=[0.02, 0.08, 0.98, 0.92])
+
+# plt.tight_layout()
 plt.show()
