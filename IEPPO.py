@@ -244,7 +244,7 @@ gc.collect()
 
 # Load OceanRain data file
 # Load the .npz file using numpy
-ocRain = np.load(r'/ra1/pubdat/OceanRain/output/OceanRAIN_GPCPV33_coordinates_and_data_Kingsley.npz')
+ocRain = np.load(r'/ra1/pubdat/OceanRain/output/OceanRAIN_MINUTE_coordinates_and_data_Kingsley_new.npz')
 
 # Access the keys in the .npz file
 keys = ocRain.files
@@ -252,9 +252,48 @@ print("Keys in the .npz file:", keys)
 # Create a DataFrame from the .npz file
 ocRain_df = pd.DataFrame({key: ocRain[key] for key in keys})
 
+# do some cleaning
+df_qc = oceanrain_step0_qc(
+    ocRain_df,
+    min_flag2=14,      # keep >=0.1 mm/h
+    prob_thr=0.9,      # high-confidence phase
+    wind_max=None      # or 15 if you want
+)
+
+# ensure datetime
+ocRain_daily_df["hour_utc"] = pd.to_datetime(ocRain_daily_df["hour_utc"])
+
+# --- DSD cleaning ---
+ocRain_daily_df.loc[ocRain_daily_df["rate_dsd_mean_mmph"] > 400, "rate_dsd_mean_mmph"] = np.nan
+ocRain_daily_df["month"] = ocRain_daily_df["hour_utc"].dt.to_period("M")
+q = ocRain_daily_df.groupby("month")["rate_dsd_mean_mmph"].transform(lambda s: s.quantile(0.999))
+ocRain_daily_df["rate_dsd_qc"] = ocRain_daily_df["rate_dsd_mean_mmph"].where(ocRain_daily_df["rate_dsd_mean_mmph"] <= q)
+
+# --- Gauge cleaning (make QC column) ---
+g = ocRain_daily_df["rate_gag_mean_mmph"]
+g = g.mask(np.isclose(g, 99.99), np.nan)   # mask placeholders explicitly
+g = g.where((g >= 0) & (g < 50))           # then apply physical cap
+ocRain_daily_df["rate_gag_qc"] = g
+
+# --- Daily aggregation using QC columns ---
+ocRain_daily_df["date"] = ocRain_daily_df["hour_utc"].dt.floor("D")
+
+daily = (
+    ocRain_daily_df
+    .groupby(["date", "gpcp_lat", "gpcp_lon"], as_index=False)
+    .agg(
+        n_samples=("n_samples", "sum"),
+        rate_dsd_mean_mmph=("rate_dsd_qc", "mean"),
+        rate_gag_mean_mmph=("rate_gag_qc", "mean"),
+    )
+    .sort_values(["date", "gpcp_lat", "gpcp_lon"])
+)
+
+daily.plot(x="date", y=["rate_dsd_mean_mmph", "rate_gag_mean_mmph"])
+
 print("Data files listed and datasets loaded.")
 
-
+gc.collect()
 #%% MATCHING GROUND TRUTH DATA AND GRIDDED PRECIPITATION PRODUCTS
 # THE PAL MATCHING
 # print("\nStarting spatiotemporal matching of PAL and GPCP data...")

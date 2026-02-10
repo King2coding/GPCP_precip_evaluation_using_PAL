@@ -1084,6 +1084,152 @@ def compute_monthly_climatology_equal_station_weight(
     }
 
     return monthly_clim_by_region, station_month
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# QC for OceanRAIN data
+def oceanrain_step0_qc(
+    df: pd.DataFrame,
+    *,
+    keep_cols=None,
+    drop_harbor_inop=True,
+    drop_spurious=True,
+    min_flag2=None,          # e.g., 14 to keep >=0.1 mm/h
+    prob_thr=None,           # e.g., 0.9 for high-confidence phase (optional)
+    wind_max=None            # e.g., 15.0 if you want a wind limit (optional)
+) -> pd.DataFrame:
+    """
+    Minute-level OceanRAIN QC for the 'detailed' dataframe:
+    time_utc, lat, lon, rate_dsd_mmph, rate_gag_mmph, precip_flag, precip_flag2,
+    mixed_prob, rain_prob, snow_prob, wind_speed, ship
+
+    Returns a filtered dataframe (still minute-resolution) ready for pixel-mapping.
+    """
+
+    df = df.copy()
+
+    # ----------------------------
+    # 1) Ensure datetime + basic columns
+    # ----------------------------
+    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce")
+    df = df.dropna(subset=["time_utc", "lat", "lon"])
+
+    # ----------------------------
+    # 2) Replace common fill values with NaN
+    # (your merged df may already have NaNs, but be safe)
+    # ----------------------------
+    fill_vals = [-99.99, -99.9, -999.99, -999.9, -9999, -99999]
+    for c in ["rate_dsd_mmph", "rate_gag_mmph", "mixed_prob", "rain_prob", "snow_prob", "wind_speed"]:
+        if c in df.columns:
+            df[c] = df[c].replace(fill_vals, np.nan)
+
+    # Flags can also carry fill values
+    for c in ["precip_flag", "precip_flag2"]:
+        if c in df.columns:
+            df[c] = df[c].replace([9, 99, -99, -999], np.nan)
+
+    # Cast flags to Int64 (nullable ints)
+    if "precip_flag" in df.columns:
+        df["precip_flag"] = df["precip_flag"].astype("Int64")
+    if "precip_flag2" in df.columns:
+        df["precip_flag2"] = df["precip_flag2"].astype("Int64")
+
+    # ----------------------------
+    # 3) Core QC filtering (minute-level)
+    # ----------------------------
+    m = pd.Series(True, index=df.index)
+
+    # drop inoperative + harbor
+    if drop_harbor_inop and "precip_flag" in df.columns:
+        # 4=inoperative, 5=harbor
+        m &= ~df["precip_flag"].isin([4, 5])
+
+    # drop spurious/unknown precip_flag2
+    if drop_spurious and "precip_flag2" in df.columns:
+        m &= (df["precip_flag2"] != 11)
+
+    # optional minimum intensity gate using precip_flag2
+    # 13: 0.01–0.09, 14: 0.1–0.99, 15+: >=1 mm/h
+    if (min_flag2 is not None) and ("precip_flag2" in df.columns):
+        m &= (df["precip_flag2"] >= int(min_flag2))
+
+    # optional wind filter
+    if (wind_max is not None) and ("wind_speed" in df.columns):
+        m &= (df["wind_speed"].isna() | (df["wind_speed"] <= float(wind_max)))
+
+    df = df.loc[m].copy()
+
+    # ----------------------------
+    # 4) Rate sanity masks (no flags version fallback)
+    # ----------------------------
+    # DSD: allow big values but remove absolute junk
+    if "rate_dsd_mmph" in df.columns:
+        df.loc[(df["rate_dsd_mmph"] < 0) | (df["rate_dsd_mmph"] > 400), "rate_dsd_mmph"] = np.nan
+
+    # Gauge: treat as diagnostic; remove placeholders/spikes
+    if "rate_gag_mmph" in df.columns:
+        df.loc[(df["rate_gag_mmph"] < 0), "rate_gag_mmph"] = np.nan
+        df.loc[np.isclose(df["rate_gag_mmph"], 99.99, atol=1e-6), "rate_gag_mmph"] = np.nan
+        # optional physical cap for gauge artefacts
+        df.loc[df["rate_gag_mmph"] >= 50, "rate_gag_mmph"] = np.nan
+
+    # ----------------------------
+    # 5) Optional: high-confidence phase subsets via probabilities
+    # ----------------------------
+    if prob_thr is not None:
+        thr = float(prob_thr)
+
+        # Only enforce if the probability columns exist
+        if "rain_prob" in df.columns and "precip_flag" in df.columns:
+            # for rain minutes, require rain_prob >= thr
+            df = df[~((df["precip_flag"] == 0) & (df["rain_prob"].notna()) & (df["rain_prob"] < thr))]
+
+        if "snow_prob" in df.columns and "precip_flag" in df.columns:
+            df = df[~((df["precip_flag"] == 1) & (df["snow_prob"].notna()) & (df["snow_prob"] < thr))]
+
+        if "mixed_prob" in df.columns and "precip_flag" in df.columns:
+            df = df[~((df["precip_flag"] == 2) & (df["mixed_prob"].notna()) & (df["mixed_prob"] < thr))]
+
+        df = df.copy()
+
+    # ----------------------------
+    # 6) Keep only the columns you need (memory efficiency)
+    # ----------------------------
+    default_cols = [
+        "time_utc", "lat", "lon", "ship",
+        "rate_dsd_mmph", "rate_gag_mmph",
+        "precip_flag", "precip_flag2",
+        "rain_prob", "snow_prob", "mixed_prob",
+        "wind_speed"
+    ]
+    if keep_cols is None:
+        keep_cols = [c for c in default_cols if c in df.columns]
+
+    return df[keep_cols].reset_index(drop=True)
+
+
+#------------------------------------------------------------------------
+def map_to_gpcp_idx(arr1d, values):
+    a = np.asarray(arr1d)
+    v = np.asarray(values)
+    if a.ndim != 1: a = a.ravel()
+    if v.ndim != 1: v = v.ravel()
+    v_finite = np.where(np.isfinite(v), v, np.nan)
+    asc = bool(a[0] <= a[-1])
+    if not asc: a_work = a[::-1]
+    else: a_work = a
+    idx = np.searchsorted(a_work, v_finite)
+    idx0 = np.clip(idx - 1, 0, a_work.size - 1)
+    idx1 = np.clip(idx, 0, a_work.size - 1)
+    choose_left = (np.abs(v_finite - a_work[idx0]) <= np.abs(v_finite - a_work[idx1]))
+    out_rev = np.where(choose_left, idx0, idx1)
+    if not asc: out = (a_work.size - 1) - out_rev
+    else: out = out_rev
+    if np.issubdtype(v.dtype, np.floating):
+        nanmask = ~np.isfinite(v)
+        if nanmask.any():
+            out = out.astype('int64')
+            out[nanmask] = 0
+    return out
 #%% THE PLOT FUNCTIONS
 def plot_satellite_vs_groundtruth(
     df_all_regs,
