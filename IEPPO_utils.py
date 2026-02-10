@@ -1087,47 +1087,65 @@ def compute_monthly_climatology_equal_station_weight(
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # QC for OceanRAIN data
+
 def oceanrain_step0_qc(
     df: pd.DataFrame,
     *,
     keep_cols=None,
     drop_harbor_inop=True,
     drop_spurious=True,
-    min_flag2=None,          # e.g., 14 to keep >=0.1 mm/h
+    min_flag2=None,          # e.g., 14 to keep >=0.1 mm/h (keeps true_zero too unless you exclude)
     prob_thr=None,           # e.g., 0.9 for high-confidence phase (optional)
-    wind_max=None            # e.g., 15.0 if you want a wind limit (optional)
+    wind_max=None,           # e.g., 15.0 if you want a wind limit (optional)
+    wind_col_preference=("true_wind_speed", "u10", "rel_wind_speed"),
+    # sanity caps (conservative)
+    dsd_cap_mmph=400.0,
+    gag_cap_mmph=50.0,
+    odm_cap_mmph=400.0,
 ) -> pd.DataFrame:
     """
-    Minute-level OceanRAIN QC for the 'detailed' dataframe:
-    time_utc, lat, lon, rate_dsd_mmph, rate_gag_mmph, precip_flag, precip_flag2,
-    mixed_prob, rain_prob, snow_prob, wind_speed, ship
+    Minute-level OceanRAIN QC for your *new* extracted dataframe.
 
-    Returns a filtered dataframe (still minute-resolution) ready for pixel-mapping.
+    Expected columns (subset ok):
+      time_utc, lat, lon, ship,
+      rate_rain_dsd_mmph, rate_snow_dsd_mmph, rate_gag_mmph, rate_odm_mmph,
+      precip_flag, precip_flag2,
+      rain_prob, snow_prob, mixed_prob,
+      true_wind_speed/u10/rel_wind_speed
+
+    Returns minute-resolution dataframe ready for:
+      - optional geographic subset (e.g., |lat|>=45)
+      - GPCP pixel mapping
+      - daily aggregation
     """
 
     df = df.copy()
 
     # ----------------------------
-    # 1) Ensure datetime + basic columns
+    # 1) Datetime + required cols
     # ----------------------------
-    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce")
+    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
     df = df.dropna(subset=["time_utc", "lat", "lon"])
 
     # ----------------------------
     # 2) Replace common fill values with NaN
-    # (your merged df may already have NaNs, but be safe)
     # ----------------------------
-    fill_vals = [-99.99, -99.9, -999.99, -999.9, -9999, -99999]
-    for c in ["rate_dsd_mmph", "rate_gag_mmph", "mixed_prob", "rain_prob", "snow_prob", "wind_speed"]:
+    fill_vals = [-99.99, -99.9, -999.99, -999.9, -9999, -99999, -999.0, -9.9]
+    num_cols = [
+        "rate_rain_dsd_mmph", "rate_snow_dsd_mmph", "rate_gag_mmph", "rate_odm_mmph",
+        "rain_prob", "snow_prob", "mixed_prob",
+        "true_wind_speed", "u10", "rel_wind_speed"
+    ]
+    for c in num_cols:
         if c in df.columns:
             df[c] = df[c].replace(fill_vals, np.nan)
 
-    # Flags can also carry fill values
+    # Flags can carry fill values
     for c in ["precip_flag", "precip_flag2"]:
         if c in df.columns:
             df[c] = df[c].replace([9, 99, -99, -999], np.nan)
 
-    # Cast flags to Int64 (nullable ints)
+    # Use nullable integer for flags (safe with NaNs)
     if "precip_flag" in df.columns:
         df["precip_flag"] = df["precip_flag"].astype("Int64")
     if "precip_flag2" in df.columns:
@@ -1145,42 +1163,60 @@ def oceanrain_step0_qc(
 
     # drop spurious/unknown precip_flag2
     if drop_spurious and "precip_flag2" in df.columns:
+        # 11 = spurious_unknown
         m &= (df["precip_flag2"] != 11)
 
     # optional minimum intensity gate using precip_flag2
-    # 13: 0.01–0.09, 14: 0.1–0.99, 15+: >=1 mm/h
+    # flag_values:
+    # 10 true_zero
+    # 12 precip_0.00
+    # 13 precip_0.01-0.09
+    # 14 precip_0.1-0.99
+    # 15 precip_1.0-9.99
+    # 16 precip_10.0-49.99
+    # 17 precip_gt_50
     if (min_flag2 is not None) and ("precip_flag2" in df.columns):
-        m &= (df["precip_flag2"] >= int(min_flag2))
+        min_flag2 = int(min_flag2)
+        # Keep true_zero (10) always; otherwise enforce >= min_flag2
+        m &= (df["precip_flag2"].isin([10, 12]) | (df["precip_flag2"] >= min_flag2))
 
     # optional wind filter
-    if (wind_max is not None) and ("wind_speed" in df.columns):
-        m &= (df["wind_speed"].isna() | (df["wind_speed"] <= float(wind_max)))
+    wind_col = None
+    for wc in wind_col_preference:
+        if wc in df.columns:
+            wind_col = wc
+            break
+    if (wind_max is not None) and (wind_col is not None):
+        m &= (df[wind_col].isna() | (df[wind_col] <= float(wind_max)))
 
     df = df.loc[m].copy()
 
     # ----------------------------
-    # 4) Rate sanity masks (no flags version fallback)
+    # 4) Rate sanity masks (do NOT drop rows; set bad values to NaN)
     # ----------------------------
-    # DSD: allow big values but remove absolute junk
-    if "rate_dsd_mmph" in df.columns:
-        df.loc[(df["rate_dsd_mmph"] < 0) | (df["rate_dsd_mmph"] > 400), "rate_dsd_mmph"] = np.nan
+    # DSD rain/snow: allow big values but remove absolute junk
+    for c in ["rate_rain_dsd_mmph", "rate_snow_dsd_mmph"]:
+        if c in df.columns:
+            df.loc[(df[c] < 0) | (df[c] > float(dsd_cap_mmph)), c] = np.nan
 
-    # Gauge: treat as diagnostic; remove placeholders/spikes
+    # ODM rate (optional diagnostic)
+    if "rate_odm_mmph" in df.columns:
+        df.loc[(df["rate_odm_mmph"] < 0) | (df["rate_odm_mmph"] > float(odm_cap_mmph)), "rate_odm_mmph"] = np.nan
+
+    # Gauge: remove placeholders/spikes
     if "rate_gag_mmph" in df.columns:
         df.loc[(df["rate_gag_mmph"] < 0), "rate_gag_mmph"] = np.nan
         df.loc[np.isclose(df["rate_gag_mmph"], 99.99, atol=1e-6), "rate_gag_mmph"] = np.nan
-        # optional physical cap for gauge artefacts
-        df.loc[df["rate_gag_mmph"] >= 50, "rate_gag_mmph"] = np.nan
+        df.loc[df["rate_gag_mmph"] >= float(gag_cap_mmph), "rate_gag_mmph"] = np.nan
 
     # ----------------------------
     # 5) Optional: high-confidence phase subsets via probabilities
+    # (we still do NOT drop rows unless prob is present and <thr)
     # ----------------------------
     if prob_thr is not None:
         thr = float(prob_thr)
 
-        # Only enforce if the probability columns exist
         if "rain_prob" in df.columns and "precip_flag" in df.columns:
-            # for rain minutes, require rain_prob >= thr
             df = df[~((df["precip_flag"] == 0) & (df["rain_prob"].notna()) & (df["rain_prob"] < thr))]
 
         if "snow_prob" in df.columns and "precip_flag" in df.columns:
@@ -1192,44 +1228,409 @@ def oceanrain_step0_qc(
         df = df.copy()
 
     # ----------------------------
-    # 6) Keep only the columns you need (memory efficiency)
+    # 6) Keep only needed columns (memory efficiency)
     # ----------------------------
     default_cols = [
         "time_utc", "lat", "lon", "ship",
-        "rate_dsd_mmph", "rate_gag_mmph",
+        "rate_rain_dsd_mmph", "rate_snow_dsd_mmph",
+        "rate_gag_mmph", "rate_odm_mmph",
         "precip_flag", "precip_flag2",
         "rain_prob", "snow_prob", "mixed_prob",
-        "wind_speed"
+        "true_wind_speed", "u10", "rel_wind_speed"
     ]
     if keep_cols is None:
         keep_cols = [c for c in default_cols if c in df.columns]
 
     return df[keep_cols].reset_index(drop=True)
 
-
-#------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# Nearest grid-index mapping (your current function is fine)
 def map_to_gpcp_idx(arr1d, values):
     a = np.asarray(arr1d)
     v = np.asarray(values)
     if a.ndim != 1: a = a.ravel()
     if v.ndim != 1: v = v.ravel()
+
     v_finite = np.where(np.isfinite(v), v, np.nan)
+
     asc = bool(a[0] <= a[-1])
-    if not asc: a_work = a[::-1]
-    else: a_work = a
+    a_work = a if asc else a[::-1]
+
     idx = np.searchsorted(a_work, v_finite)
     idx0 = np.clip(idx - 1, 0, a_work.size - 1)
     idx1 = np.clip(idx, 0, a_work.size - 1)
+
     choose_left = (np.abs(v_finite - a_work[idx0]) <= np.abs(v_finite - a_work[idx1]))
     out_rev = np.where(choose_left, idx0, idx1)
-    if not asc: out = (a_work.size - 1) - out_rev
-    else: out = out_rev
+
+    out = out_rev if asc else (a_work.size - 1) - out_rev
+
     if np.issubdtype(v.dtype, np.floating):
         nanmask = ~np.isfinite(v)
         if nanmask.any():
-            out = out.astype('int64')
+            out = out.astype("int64")
             out[nanmask] = 0
+
     return out
+
+# -------------------------------------------------------------------
+# Daily aggregation (phase-consistent)
+def oceanrain_daily_aggregate_to_gpcp_v2(
+    oc_df_minute: pd.DataFrame,
+    gpcp_lat_1d,
+    gpcp_lon_1d,
+    *,
+    lat_abs_min=45.0,
+    coverage_frac=0.10,         # e.g. 0.10 * 1440 = 144 minutes
+    phase_frac_thr=0.20,        # "mostly rain/snow" fraction threshold
+    include_mixed_in_all=False, # if True, include mixed in all-precip total
+    mixed_rule="rain",          # "rain" or "ignore" (if include_mixed_in_all=True)
+    wind_mean_col_preference=("true_wind_speed", "u10", "rel_wind_speed"),
+):
+    """
+    Step 1:
+      - (Assumes Step0 QC already done)
+      - poleward subset
+      - map to (ilat, ilon)
+      - daily ship+pixel aggregation
+      - adds lat_c, lon_c, hemi for NH/SH analysis
+
+    Required columns in oc_df_minute:
+      time_utc, lat, lon, ship, precip_flag,
+      rate_rain_dsd_mmph, rate_snow_dsd_mmph
+    Optional:
+      rate_gag_mmph, true_wind_speed/u10/rel_wind_speed
+    """
+
+    df = oc_df_minute.copy()
+    df["time_utc"] = pd.to_datetime(df["time_utc"], utc=True, errors="coerce")
+    df = df.dropna(subset=["time_utc", "lat", "lon"])
+    df["date"] = df["time_utc"].dt.floor("D")
+
+    # poleward subset
+    if lat_abs_min is not None:
+        df = df[df["lat"].abs() >= float(lat_abs_min)].copy()
+
+    # map to gpcp indices (lon wrap to [-180,180))
+    lon_wrapped = ((df["lon"].to_numpy(dtype="float64") + 180.0) % 360.0) - 180.0
+    df["ilat"] = map_to_gpcp_idx(np.asarray(gpcp_lat_1d), df["lat"].to_numpy())
+    df["ilon"] = map_to_gpcp_idx(np.asarray(gpcp_lon_1d), lon_wrapped)
+
+    # choose wind column
+    wind_col = None
+    for wc in wind_mean_col_preference:
+        if wc in df.columns:
+            wind_col = wc
+            break
+
+    grp_keys = ["date", "ilat", "ilon", "ship"]
+
+    # ---------- coverage + phase fractions ----------
+    # fractions: mean(boolean) works because True=1, False=0
+    daily_cov = (
+        df.groupby(grp_keys, as_index=False)
+          .agg(
+              n_min_total=("precip_flag", "size"),
+              n_min_rain=("precip_flag", lambda s: np.sum(s.to_numpy() == 0)),
+              n_min_snow=("precip_flag", lambda s: np.sum(s.to_numpy() == 1)),
+              n_min_mixed=("precip_flag", lambda s: np.sum(s.to_numpy() == 2)),
+
+              frac_rain=("precip_flag", lambda s: np.mean(s.to_numpy() == 0)),
+              frac_snow=("precip_flag", lambda s: np.mean(s.to_numpy() == 1)),
+              frac_mixed=("precip_flag", lambda s: np.mean(s.to_numpy() == 2)),
+
+              wind_mean=(wind_col, "mean") if wind_col is not None else ("lat", "mean"),
+          )
+    )
+
+    # ---------- phase-consistent rates ----------
+    d2_cols = grp_keys + ["precip_flag", "rate_rain_dsd_mmph", "rate_snow_dsd_mmph"]
+    if "rate_gag_mmph" in df.columns:
+        d2_cols += ["rate_gag_mmph"]
+
+    d2 = df[d2_cols].copy()
+
+    # rain-only and snow-only minute series
+    d2["dsd_rain_mmph"] = d2["rate_rain_dsd_mmph"].where(d2["precip_flag"] == 0)
+    d2["dsd_snow_mmph"] = d2["rate_snow_dsd_mmph"].where(d2["precip_flag"] == 1)
+
+    # all-phase precip (liquid-equivalent using the appropriate theoretical rate)
+    d2["dsd_all_mmph"] = np.nan
+    d2.loc[d2["precip_flag"] == 0, "dsd_all_mmph"] = d2.loc[d2["precip_flag"] == 0, "rate_rain_dsd_mmph"]
+    d2.loc[d2["precip_flag"] == 1, "dsd_all_mmph"] = d2.loc[d2["precip_flag"] == 1, "rate_snow_dsd_mmph"]
+
+    if include_mixed_in_all:
+        if mixed_rule == "rain":
+            d2.loc[d2["precip_flag"] == 2, "dsd_all_mmph"] = d2.loc[d2["precip_flag"] == 2, "rate_rain_dsd_mmph"]
+        elif mixed_rule == "ignore":
+            pass
+        else:
+            raise ValueError("mixed_rule must be 'rain' or 'ignore'")
+
+    def _mmday_from_mmph(series):
+        # minute sampling: mm/day = sum(mm/h)/60
+        return np.nansum(series.to_numpy()) / 60.0
+
+    daily_rates = (
+        d2.groupby(grp_keys, as_index=False)
+          .agg(
+              dsd_mean_all_mmph=("dsd_all_mmph", "mean"),
+              dsd_mean_rain_mmph=("dsd_rain_mmph", "mean"),
+              dsd_mean_snow_mmph=("dsd_snow_mmph", "mean"),
+
+              dsd_mmday_all=("dsd_all_mmph", _mmday_from_mmph),
+              dsd_mmday_rain=("dsd_rain_mmph", _mmday_from_mmph),
+              dsd_mmday_snow=("dsd_snow_mmph", _mmday_from_mmph),
+
+              gag_mean_mmph=("rate_gag_mmph", "mean") if "rate_gag_mmph" in d2.columns else ("dsd_all_mmph", "mean"),
+              gag_mmday=("rate_gag_mmph", _mmday_from_mmph) if "rate_gag_mmph" in d2.columns else ("dsd_all_mmph", _mmday_from_mmph),
+          )
+    )
+
+    daily_or = daily_cov.merge(daily_rates, on=grp_keys, how="left")
+
+    # ---------- attach coordinate centers + hemisphere ----------
+    g_lat = np.asarray(gpcp_lat_1d)
+    g_lon = np.asarray(gpcp_lon_1d)
+
+    daily_or["lat_c"] = g_lat[daily_or["ilat"].to_numpy()]
+    daily_or["lon_c"] = g_lon[daily_or["ilon"].to_numpy()]
+    daily_or["hemi"] = np.where(daily_or["lat_c"] >= 0, "NH", "SH")
+
+    # ---------- thresholds for "usable" days ----------
+    min_minutes = float(coverage_frac) * (24.0 * 60.0)
+
+    mostly_rain = daily_or["frac_rain"] >= float(phase_frac_thr)
+    mostly_snow = daily_or["frac_snow"] >= float(phase_frac_thr)
+
+    rain_days = daily_or[(daily_or["n_min_rain"] >= min_minutes) & mostly_rain].copy()
+    snow_days = daily_or[(daily_or["n_min_snow"] >= min_minutes) & mostly_snow].copy()
+
+    return daily_or, rain_days, snow_days
+
+# -----------------------------------------------------------------------------
+# STEP 2A: Add pixel-center coordinates + hemisphere from ilat/ilon
+# -----------------------------------------------------------------------------
+def add_pixel_coords_and_hemi(
+    df: pd.DataFrame,
+    lat_grid_1d: np.ndarray,   # e.g., gpcp_ds.lat.values
+    lon_grid_1d: np.ndarray,   # e.g., gpcp_ds.lon.values
+    *,
+    ilat_col="ilat",
+    ilon_col="ilon",
+    lon_wrap=True,
+) -> pd.DataFrame:
+    """
+    Convert (ilat, ilon) indices -> pixel-center (lat_c, lon_c), and add hemisphere label.
+
+    Works for any table that already contains ilat/ilon (daily_or, snow_days, rain_days).
+    """
+    out = df.copy()
+
+    ilat = out[ilat_col].to_numpy().astype(int)
+    ilon = out[ilon_col].to_numpy().astype(int)
+
+    out["lat_c"] = np.asarray(lat_grid_1d)[ilat]
+    out["lon_c"] = np.asarray(lon_grid_1d)[ilon]
+
+    if lon_wrap:
+        out["lon_c"] = ((out["lon_c"].to_numpy() + 180.0) % 360.0) - 180.0
+
+    out["hemi"] = np.where(out["lat_c"].to_numpy() >= 0, "NH", "SH")
+    return out
+
+# -----------------------------------------------------------------------------
+# STEP 2B: Robust xarray dim inference (Dataset or DataArray)
+# -----------------------------------------------------------------------------
+def _infer_dims(da: xr.DataArray):
+    """Infer (time_dim, lat_dim, lon_dim) from common patterns."""
+    dims = list(da.dims)
+
+    # time dim candidates
+    for cand in ["time", "valid_time", "date", "datetime"]:
+        if cand in dims:
+            tdim = cand
+            break
+    else:
+        raise ValueError(f"Could not infer time dim from dims={dims}")
+
+    # lat dim candidates
+    for cand in ["lat", "latitude", "y"]:
+        if cand in dims:
+            ydim = cand
+            break
+    else:
+        raise ValueError(f"Could not infer lat dim from dims={dims}")
+
+    # lon dim candidates
+    for cand in ["lon", "longitude", "x"]:
+        if cand in dims:
+            xdim = cand
+            break
+    else:
+        raise ValueError(f"Could not infer lon dim from dims={dims}")
+
+    return tdim, ydim, xdim
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+def _to_naive_datetime64ns(values):
+    """
+    Convert values to naive datetime64[ns] (no timezone).
+    If tz-aware, convert to UTC then drop tz.
+    """
+    s = pd.to_datetime(values, errors="coerce")
+    # tz-aware Series/Index
+    if hasattr(s, "dt") and getattr(s.dt, "tz", None) is not None:
+        s = s.dt.tz_convert("UTC").dt.tz_localize(None)
+    # tz-aware DatetimeIndex (rare path)
+    if isinstance(s, pd.DatetimeIndex) and s.tz is not None:
+        s = s.tz_convert("UTC").tz_localize(None)
+    return s.to_numpy(dtype="datetime64[ns]")
+
+
+def _ensure_datetime_coord_naive(da: xr.DataArray, tdim: str) -> xr.DataArray:
+    """
+    Ensure da[tdim] is datetime64[ns] *naive*.
+    """
+    tvals = da[tdim].values
+    # pd.to_datetime handles cftime-ish + numpy datetimes well in most cases
+    t = pd.to_datetime(tvals, errors="coerce")
+    # if tz-aware, strip it to naive
+    if isinstance(t, pd.DatetimeIndex) and t.tz is not None:
+        t = t.tz_convert("UTC").tz_localize(None)
+    t64 = t.to_numpy(dtype="datetime64[ns]")
+    return da.assign_coords({tdim: t64})
+
+
+def attach_satellite_vars(
+    df: pd.DataFrame,
+    xr_obj,                         # xr.Dataset or xr.DataArray
+    *,
+    var_map: dict,                  # {"newcol": "xr_var"} OR {"newcol": None} if xr_obj is DataArray
+    date_col="date",
+    lat_col="lat_c",
+    lon_col="lon_c",
+    lon_wrap=True,
+    method="nearest",
+    tolerance_time=None,            # e.g. np.timedelta64(12,"h")  (optional)
+    tolerance_deg=None,             # kept for API compatibility (not used unless you want to expand)
+) -> pd.DataFrame:
+    """
+    Attach values from xr_obj (Dataset or DataArray) to df rows using df's (date, lat_c, lon_c).
+
+    Fixes tz mismatch by forcing BOTH:
+      - df[date_col] to datetime64[ns] (naive)
+      - xr time coordinate to datetime64[ns] (naive)
+
+    tolerance_time applies to time dim only.
+    """
+    out = df.copy()
+
+    # --- critical fix: make df time naive datetime64[ns] ---
+    out[date_col] = _to_naive_datetime64ns(out[date_col])
+
+    # Build DataArrays to sample
+    if isinstance(xr_obj, xr.DataArray):
+        if len(var_map) < 1:
+            raise ValueError("For DataArray input, var_map must have at least one output column.")
+        only_key = next(iter(var_map.keys()))
+        das = {only_key: xr_obj}
+    elif isinstance(xr_obj, xr.Dataset):
+        das = {new_col: xr_obj[varname] for new_col, varname in var_map.items()}
+    else:
+        raise TypeError("xr_obj must be xr.Dataset or xr.DataArray")
+
+    # infer dims from first DataArray
+    da0 = next(iter(das.values()))
+    tdim, ydim, xdim = _infer_dims(da0)
+
+    # build vectorized indexers
+    latv = out[lat_col].to_numpy(dtype="float64")
+    lonv = out[lon_col].to_numpy(dtype="float64")
+    if lon_wrap:
+        lonv = ((lonv + 180.0) % 360.0) - 180.0
+
+    t_indexer = xr.DataArray(out[date_col].astype("datetime64[ns]"), dims="points")
+    y_indexer = xr.DataArray(latv, dims="points")
+    x_indexer = xr.DataArray(lonv, dims="points")
+
+    sel_kwargs = {tdim: t_indexer, ydim: y_indexer, xdim: x_indexer}
+
+    # tolerance: only apply to time (xarray takes one tolerance kwarg)
+    tol = tolerance_time if tolerance_time is not None else None
+
+    # extract
+    for new_col, da in das.items():
+        # --- critical fix: make dataset time coord naive datetime64[ns] ---
+        da = _ensure_datetime_coord_naive(da, tdim)
+
+        if tol is None:
+            vals = da.sel(sel_kwargs, method=method).values
+        else:
+            vals = da.sel(sel_kwargs, method=method, tolerance=tol).values
+
+        out[new_col] = vals
+
+    return out
+
+# -----------------------------------------------------------------------------
+# STEP 2D: Example usage (NH vs SH)
+# -----------------------------------------------------------------------------
+# Assume you already have:
+#   - snow_days, rain_days  (from your Step 1 aggregation)
+#   - gpcp_ds_v3pt2_al (or any product on the same 0.5° grid)
+# and you want to attach GPCP precip + pliq (Dataset case)
+
+def step2_attach_all_products_example(
+    snow_days: pd.DataFrame,
+    rain_days: pd.DataFrame,
+    gpcp_ds: xr.Dataset,
+    *,
+    gpcp_precip_var="precip",
+    gpcp_pliq_var="probability_liquid_phase",
+):
+    # 1) add pixel centers + hemisphere
+    snow_days2 = add_pixel_coords_and_hemi(
+        snow_days, gpcp_ds["lat"].values, gpcp_ds["lon"].values
+    )
+    rain_days2 = add_pixel_coords_and_hemi(
+        rain_days, gpcp_ds["lat"].values, gpcp_ds["lon"].values
+    )
+
+    # 2) attach satellite vars
+    snow_days2 = attach_satellite_vars(
+        snow_days2,
+        gpcp_ds,
+        var_map={"gpcp_mmday": gpcp_precip_var, "gpcp_pliq": gpcp_pliq_var},
+        date_col="date",
+        lat_col="lat_c",
+        lon_col="lon_c",
+        method="nearest",
+        tolerance_time=np.timedelta64(12, "h"),  # optional safety
+    )
+    rain_days2 = attach_satellite_vars(
+        rain_days2,
+        gpcp_ds,
+        var_map={"gpcp_mmday": gpcp_precip_var, "gpcp_pliq": gpcp_pliq_var},
+        date_col="date",
+        lat_col="lat_c",
+        lon_col="lon_c",
+        method="nearest",
+        tolerance_time=np.timedelta64(12, "h"),
+    )
+
+    # 3) split NH/SH
+    snow_NH = snow_days2[snow_days2["hemi"] == "NH"].copy()
+    snow_SH = snow_days2[snow_days2["hemi"] == "SH"].copy()
+    rain_NH = rain_days2[rain_days2["hemi"] == "NH"].copy()
+    rain_SH = rain_days2[rain_days2["hemi"] == "SH"].copy()
+
+    return snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH)
+
+
 #%% THE PLOT FUNCTIONS
 def plot_satellite_vs_groundtruth(
     df_all_regs,

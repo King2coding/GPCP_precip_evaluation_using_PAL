@@ -19,6 +19,8 @@ path_to_pal_data = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/PAL/data_unzipp
 
 moored_bouys_paf = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys'
 
+path_to_ocRain = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/OceanRain'
+
 path_to_gpcp_v3pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_3_1998_2024'
 
 path_to_gpcp_v3pt2 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_2_2000_2020'
@@ -245,7 +247,7 @@ gc.collect()
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # Load OceanRain data file
 # Load the .npz file using numpy
-ocRain = np.load(r'/ra1/pubdat/OceanRain/output/OceanRAIN_MINUTE_coordinates_and_data_Kingsley_new.npz')
+ocRain = np.load(os.path.join(path_to_ocRain, "OceanRAIN_MINUTE_coordinates_and_data_Kingsley_20260210.npz"))
 
 # Access the keys in the .npz file
 keys = ocRain.files
@@ -2129,30 +2131,37 @@ svnme = os.path.join(path_to_plots,
 fig.savefig(svnme, dpi=300)
 
 #%% OceanRain based assessment for the 45 degree poleward
-# Step0: QC of OceanRAIN data
-# do some cleaning
+
+# 0) QC
 df_qc = oceanrain_step0_qc(
     ocRain_df,
-    min_flag2=14,      # keep >=0.1 mm/h
-    prob_thr=0.9,      # high-confidence phase
-    wind_max=None      # or 15 if you want
+    min_flag2=None,   # set to 14 if you want >=0.1 mm/h (plus true_zero)
+    prob_thr=None,
+    wind_max=None
 )
 
-# Step1: Match Oceanrain to GPCP pixel 
-# df = your minute dataframe (already QC-filtered)
-ocRdf = df_qc.copy()
-ocRdf["time_utc"] = pd.to_datetime(ocRdf["time_utc"])
-ocRdf["date"] = ocRdf["time_utc"].dt.floor("D")
+# 1) Daily aggregation to GPCP pixels (includes poleward cut inside)
+daily_or, rain_days, snow_days = oceanrain_daily_aggregate_to_gpcp_v2(
+    df_qc,
+    gpcp_ds_v3pt2_al.lat.values,
+    gpcp_ds_v3pt2_al.lon.values,
+    lat_abs_min=45,
+    coverage_frac=0.10,
+    phase_frac_thr=0.20,
+    include_mixed_in_all=False,
+)
 
-ilat = _nearest_index(gpcp_ds_v3pt2_al.lat.values, ocRdf["lat"].values)
-# wrap lon to [-180, 180) first
-lon_wrapped = ((ocRdf["lon"].values + 180) % 360) - 180
-ilon = _nearest_index(gpcp_ds_v3pt2_al.lon.values, lon_wrapped)
+# NH/SH split is now easy
+snow_days_NH = snow_days[snow_days["hemi"] == "NH"]
+snow_days_SH = snow_days[snow_days["hemi"] == "SH"]
 
-ocRdf["ilat"] = ilat
-ocRdf["ilon"] = ilon
-
-
+snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH) = step2_attach_all_products_example(
+                                                                    snow_days=snow_days,
+                                                                    rain_days=rain_days,
+                                                                    gpcp_ds=gpcp_ds_v3pt2_al,
+                                                                    gpcp_precip_var="precip",
+                                                                    gpcp_pliq_var="probability_liquid_phase",
+                                                                )
 #%% Data Visaulization plots
 
 import matplotlib.pyplot as plt
