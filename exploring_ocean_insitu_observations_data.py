@@ -399,7 +399,7 @@ year_colors = {
 print("\nGenerating spatial distribution plot of in-situ observations...")
 fig = plt.figure(figsize=(18, 10))
 ax = plt.axes(projection=ccrs.PlateCarree())
-ax.set_extent([-181, 180, -30, 60], crs=ccrs.PlateCarree())
+ax.set_extent([-181, 180, -91, 90], crs=ccrs.PlateCarree())
 
 ax.add_feature(cfeature.LAND, facecolor='lightgray')
 ax.add_feature(cfeature.COASTLINE, linewidth=0.6)
@@ -504,7 +504,7 @@ if leg.get_title() is not None:
 
 # Set ticks and format them with degree symbols and N/S/E/W
 xticks = range(-180, 181, 60)
-yticks = range(-30, 61, 15)
+yticks = range(-90, 91, 30)
 ax.set_xticks(xticks, crs=ccrs.PlateCarree())
 ax.set_yticks(yticks, crs=ccrs.PlateCarree())
 

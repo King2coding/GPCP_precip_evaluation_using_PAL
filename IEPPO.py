@@ -2131,14 +2131,27 @@ svnme = os.path.join(path_to_plots,
 fig.savefig(svnme, dpi=300)
 
 #%% OceanRain based assessment for the 45 degree poleward
+# write crs and resample to gpcp resolution
+
+gpcp_32_pnt25 = resample_to_new_res(gpcp_ds_v3pt2_al['precip'],(720,1440),'lon','lat')
+gpcp_33_pnt25 = resample_to_new_res(gpcp_ds_v3pt3_al['precip'],(720,1440),'lon','lat')
+imergv7_pnt25 = resample_to_new_res(imerg_v07_al,(720,1440),'lon','lat')
+era5_pnt25 = resample_to_new_res(era5_ds_al['tp'],(720,1440),'x','y')
+mer2_pnt25 = resample_to_new_res(mer2_ds_al,(720,1440),'x','y')
+
+df_qc = oceanrain_step0_qc_v2(ocRain_df, 
+                              min_flag2=13, 
+                              keep_spurious_flag2_11=False, 
+                              qclip_hi=None)
 
 # 0) QC
-df_qc = oceanrain_step0_qc(
-    ocRain_df,
-    min_flag2=None,   # set to 14 if you want >=0.1 mm/h (plus true_zero)
-    prob_thr=None,
-    wind_max=None
-)
+# df_qc = oceanrain_step0_qc(
+#     ocRain_df,
+#     min_flag2=None,   # set to 14 if you want >=0.1 mm/h (plus true_zero)
+#     prob_thr=None,
+#     wind_max=None,
+#     qclip_hi=None, 
+# )
 
 # 1) Daily aggregation to GPCP pixels (includes poleward cut inside)
 daily_or, rain_days, snow_days = oceanrain_daily_aggregate_to_gpcp_v2(
@@ -2147,21 +2160,213 @@ daily_or, rain_days, snow_days = oceanrain_daily_aggregate_to_gpcp_v2(
     gpcp_ds_v3pt2_al.lon.values,
     lat_abs_min=45,
     coverage_frac=0.10,
-    phase_frac_thr=0.20,
+    phase_frac_thr=0.50,
     include_mixed_in_all=False,
 )
+#-------------------------------------------------------------
+# cols = ["dsd_mmday_rain", "dsd_mmday_snow"]  # add "rate_gag_mmph" if you want too
+
+# for c in cols:
+#     top3 = (
+#         snow_days[c]
+#         .dropna()
+#         .nlargest(3)
+#     )
+#     print(f"\n=== {c}: top 3 values ===")
+#     print(top3)  # shows index + value
+
+#     print("\nRows for these top values:")
+#     print(snow_days.loc[top3.index, ["time_utc", "lat", "lon", "ship", "precip_flag", "precip_flag2", c]])
+#------------------------------------------------------------
 
 # NH/SH split is now easy
 snow_days_NH = snow_days[snow_days["hemi"] == "NH"]
 snow_days_SH = snow_days[snow_days["hemi"] == "SH"]
 
-snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH) = step2_attach_all_products_example(
-                                                                    snow_days=snow_days,
-                                                                    rain_days=rain_days,
-                                                                    gpcp_ds=gpcp_ds_v3pt2_al,
-                                                                    gpcp_precip_var="precip",
-                                                                    gpcp_pliq_var="probability_liquid_phase",
-                                                                )
+products = {
+    "GPCP v3.2": (gpcp_32_pnt25, {"GPCP v3.2": None}), # , "gpcp_pliq": "probability_liquid_phase"
+    "GPCP v3.3": (gpcp_33_pnt25, {"GPCP v3.3": None}), # , "gpcp_pliq": "probability_liquid_phase"
+    "ERA5": (era5_pnt25, {"ERA5": "tp"}),
+    "IMERG": (imergv7_pnt25, {"IMERG v07": None}),
+    "MERRA2": (mer2_pnt25, {"MERRA2": None})
+}
+
+snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH) = step2_attach_and_split(
+    snow_days=snow_days,
+    rain_days=rain_days,
+    gpcp_grid_ds=gpcp_ds_v3pt2_al,
+    products=products
+)
+
+phase_based_cat_metrics_hemi = {}
+phase_based_qt_metrics_hemi  = {}
+
+phase_based_data = {"Snow": snow_days2, "Rain": rain_days2}
+
+# ensure hemi exists (recommended)
+# snow_days2 = add_pixel_coords_and_hemi(snow_days2, gpcp_ds_v3pt2_al["lat"].values, gpcp_ds_v3pt2_al["lon"].values)
+# rain_days2 = add_pixel_coords_and_hemi(rain_days2, gpcp_ds_v3pt2_al["lat"].values, gpcp_ds_v3pt2_al["lon"].values)
+phase_based_data = {"Snow": snow_days2, "Rain": rain_days2}
+
+products = ['GPCP v3.2',  'GPCP v3.3','IMERG v07', 'ERA5', 'MERRA2'] # 
+
+for hemi in ["NH", "SH"]:
+    phase_based_cat_metrics_hemi.setdefault(hemi, {})
+    phase_based_qt_metrics_hemi.setdefault(hemi, {})
+
+    for phse, phse_dat_all in phase_based_data.items():
+        phse_dat = phse_dat_all[phse_dat_all["hemi"] == hemi].copy()
+        # if phse == 'Snow':
+        #     phse_dat = phse_dat[phse_dat["gpcp_pliq"] <= 50]
+        # elif phse == 'Rain':
+        #     phse_dat = phse_dat[phse_dat["gpcp_pliq"] >= 80]
+
+        # obs_lab = "dsd_mmday_snow" if phse == "Snow" else "dsd_mmday_rain"
+        obs_lab = "dsd_mean_rain_mmph" if phse == "Snow" else "dsd_mean_snow_mmph"
+        thr = 0.5 if phse == "Rain" else 0.25
+
+        print(f"Processing Hemi={hemi} Phase={phse} (N={len(phse_dat)})")
+
+        phase_based_cat_metrics_hemi[hemi].setdefault(phse, {})
+        phase_based_qt_metrics_hemi[hemi].setdefault(phse, {})
+
+        for product in products:
+            forecast  = phse_dat[product]
+            # observed  = phse_dat[obs_lab]
+            observed  = phse_dat[obs_lab] * 24
+
+            # categorical
+            reg_cat_met = categorical_stats(forecast, observed, thr)
+
+            # quantitative
+            phse_dat_ = phse_dat.copy()
+            phse_dat_ = phse_dat_[(phse_dat_[obs_lab] >= thr) & (phse_dat_[product] >=thr)]
+            reg_qt_met  = calculate_metrics(phse_dat, obs_lab, product)
+
+            phase_based_cat_metrics_hemi[hemi][phse][product] = reg_cat_met
+            phase_based_qt_metrics_hemi[hemi][phse][product]  = reg_qt_met
+
+
+
+ylims = {
+    # "CC": (0, 0.7),
+    # set others only if you want fixed ranges
+    # "RMSE": (0, 20),
+    # "MAE": (0, 10),
+    # 'POD': (0,8)
+
+}
+
+# products = ["GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"]
+
+fig_cat = plot_hemi_phase_metrics_barpanel(
+    phase_based_cat_metrics_hemi,
+    products,
+    product_colors,
+    metrics=("POD","FAR","Bias","HSS"),
+    phases=("Rain","Snow"),
+    hemis=("SH","NH"),
+    ylims=None
+)
+
+fig_qt = plot_hemi_phase_quant_metrics_panel(
+    phase_based_qt_metrics_hemi,
+    products,
+    product_colors,
+    metrics=("CC","RMSE","MAE","Bias"),
+    phases=("Rain","Snow"),
+    hemis=("SH","NH"),
+    ylims=None
+)
+
+
+#----------------------------------------------------------------------------------
+products = ["GPCP v3.2","GPCP v3.3","ERA5","IMERG v07","MERRA2"]
+
+snow_clim = make_doy_climatology_pooled(
+    snow_days2, obs_col="dsd_mmday_snow", product_cols=products, min_pairs=1
+)
+
+rain_clim = make_doy_climatology_pooled(
+    rain_days2, obs_col="dsd_mmday_rain", product_cols=products, min_pairs=1
+)
+
+fig_snow = plot_doy_climatology_scatter_panels_with_metrics(
+    snow_clim,
+    obs_col="dsd_mmday_snow",
+    product_cols=products,
+    product_colors=product_colors,
+    title="Snow: DOY-mean climatology (pooled across years/ships) vs OceanRAIN",
+    max_val=18,
+    ticks=(0, 6, 12, 18),
+)
+
+fig_rain = plot_doy_climatology_scatter_panels_with_metrics(
+    rain_clim,
+    obs_col="dsd_mmday_rain",
+    product_cols=products,
+    product_colors=product_colors,
+    title="Rain: DOY-mean climatology (pooled across years/ships) vs OceanRAIN",
+    max_val=18,
+    ticks=(0, 6, 12, 18),
+)
+
+#----------------------------------------------------------------------------------
+import pandas as pd
+import matplotlib.pyplot as plt
+
+products = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
+
+def monthly_climatology(df, obs_col, products, hemi):
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], utc=True, errors="coerce")
+    d = d.dropna(subset=["date"])
+    d = d[d["hemi"] == hemi].copy()
+    d["month"] = d["date"].dt.month
+
+    out = {"OceanRAIN": d.groupby("month")[obs_col].mean()}
+    for p in products:
+        out[p] = d.groupby("month")[p].mean()
+
+    return pd.DataFrame(out).reindex(range(1, 13))
+
+def plot_one(ax, clim_df, title, ylabel=None):
+    # OceanRAIN bold to anchor
+    ax.plot(clim_df.index, clim_df["OceanRAIN"], lw=3, label="OceanRAIN")
+
+    # Products thinner
+    for p in products:
+        ax.plot(clim_df.index, clim_df[p], lw=1.8, label=p)
+
+    ax.set_title(title)
+    ax.set_xlabel("Month")
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(1, 12)
+
+# ---- build climatologies ----
+rain_nh = monthly_climatology(rain_days2, "dsd_mmday_rain", products, hemi="NH")
+rain_sh = monthly_climatology(rain_days2, "dsd_mmday_rain", products, hemi="SH")
+
+snow_nh = monthly_climatology(snow_days2, "dsd_mmday_snow", products, hemi="NH")
+snow_sh = monthly_climatology(snow_days2, "dsd_mmday_snow", products, hemi="SH")
+
+# ---- 2x2 plot: rows=hemi, cols=phase (Rain left, Snow right) ----
+fig, axes = plt.subplots(2, 2, figsize=(14, 6), dpi=200, sharex=True)
+
+plot_one(axes[0, 0], rain_nh, "NH Rain: monthly climatology", ylabel="Daily intensity (mm/day)")
+plot_one(axes[0, 1], snow_nh, "NH Snow: monthly climatology", ylabel="Daily intensity (mm/day)")
+plot_one(axes[1, 0], rain_sh, "SH Rain: monthly climatology", ylabel="Daily intensity (mm/day)")
+plot_one(axes[1, 1], snow_sh, "SH Snow: monthly climatology", ylabel="Daily intensity (mm/day)")
+
+# One legend for all panels (outside)
+handles, labels = axes[0, 0].get_legend_handles_labels()
+fig.legend(handles, labels, loc="lower center", ncol=6, frameon=False)
+fig.subplots_adjust(bottom=0.18, wspace=0.25, hspace=0.30)
+
+plt.show()
+# plt.show()
 #%% Data Visaulization plots
 
 import matplotlib.pyplot as plt
@@ -2215,22 +2420,31 @@ plt.show()
 
 
 #----------------------------------------------------------------------------
-import matplotlib.pyplot as plt
 
-# ---- define datasets: (name, start_year, end_year, resolution_group) ----
-datasets = [
-    ("PAL",        2010, 2021, "subhourly"),
-    ("Buoy",       1997, 2023, "hourly"),      # or "present" -> use last year in your plot
-    ("Atolls",     1983, 2023, "monthly"),
-    ("OceanRAIN",  2010, 2017, "subhourly"),   # adjust if you know exact start
-    ("GPCP v3.2",  1983, 2023, "daily"),
-    ("GPCP v3.3",  1983, 2023, "daily"),
-    ("IMERG v07",  1998, 2023, "daily"),       # depends on what you use; change as needed
-    ("ERA5",       1983, 2023, "daily"),
-    ("MERRA2",     1983, 2023, "daily"),
-]
+# %%
 
-# ---- color by native temporal resolution ----
+
+# ------------------------------------------------------------
+# Each dataset can have 1+ "segments" (start, end, resolution)
+# Plot the longest segment as the thick solid bar
+# Plot shorter segments as thinner dashed overlays on same row
+# ------------------------------------------------------------
+
+segments_by_dataset = {
+    "PAL":       [(2010, 2021, "subhourly")],
+    "Buoy":      [(1997, 2023, "hourly")],
+    "Atolls":    [(1983, 2023, "monthly")],
+    "OceanRAIN": [(2010, 2017, "subhourly")],
+
+    # Example: monthly long window + daily subset window (overlay)
+    "GPCP v3.2": [(1983, 2023, "monthly"), (2000, 2020, "daily")],
+    "GPCP v3.3": [(1983, 2023, "monthly"), (2000, 2020, "daily")],
+    "IMERG v07": [(1998, 2023, "monthly"), (2000, 2020, "daily")],  # adjust to your actual usage
+    "ERA5":      [(1983, 2023, "monthly"), (2000, 2020, "daily")],
+    "MERRA2":    [(1983, 2023, "monthly"), (2000, 2020, "daily")],
+}
+
+# color by resolution (keep your palette)
 colors = {
     "subhourly": "#7B2CBF",
     "hourly":    "#1D4ED8",
@@ -2238,47 +2452,61 @@ colors = {
     "monthly":   "#F59E0B",
 }
 
-fig, ax = plt.subplots(figsize=(12, 5), dpi=200)
-
-# y positions (top to bottom)
-names = [d[0] for d in datasets]
+# order top->bottom
+names = list(segments_by_dataset.keys())
 ypos = list(range(len(names)))[::-1]
 
-for (name, x0, x1, res), y in zip(datasets, ypos):
-    ax.hlines(y, x0, x1, lw=10, color=colors[res], alpha=0.9)
-    # optional end caps
-    ax.plot([x0, x1], [y, y], "o", ms=4, color=colors[res])
+fig, ax = plt.subplots(figsize=(12, 5), dpi=200)
+
+for name, y in zip(names, ypos):
+    segs = segments_by_dataset[name]
+
+    # sort longest first so it becomes the base bar
+    segs = sorted(segs, key=lambda t: (t[1] - t[0]), reverse=True)
+
+    # ---- base (longest) segment: thick solid ----
+    x0, x1, res = segs[0]
+    ax.hlines(y, x0, x1, lw=10, color=colors[res], alpha=0.9, zorder=1)
+    ax.plot([x0, x1], [y, y], "o", ms=4, color=colors[res], zorder=2)
+
+    # ---- overlays (shorter): thinner dashed ----
+    for x0, x1, res in segs[1:]:
+        ax.hlines(
+            y, x0, x1,
+            lw=4,
+            color=colors[res],
+            alpha=1.0,
+            linestyle=(0, (4, 2)),   # dashed
+            zorder=3
+        )
+        ax.plot([x0, x1], [y, y], "o", ms=3, color=colors[res], zorder=4)
 
 ax.set_yticks(ypos)
 ax.set_yticklabels(names, fontsize=11)
 ax.set_xlim(1983, 2023)
-ax.set_xticks(np.arange(1983,2028,5))#[1983, 1987, 1990, 1995, 2000, 2005, 2010, 2015, 2019, 2023])
-# ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+ax.set_xticks(np.arange(1983, 2028, 5))
 
-# style: only left + bottom axes
 ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 
-# Leave room at the bottom for the legend
-fig.subplots_adjust(bottom=0.3)  # increase to 0.22 if needed
+# leave room for legend
+fig.subplots_adjust(bottom=0.28)
 
-# Legend BELOW the axes (won’t overlap ticks)
-handles = [plt.Line2D([0],[0], color=colors[k], lw=10) for k in colors]
-labels  = ["Subhourly", "Hourly", "Daily", "Monthly"]
+# ---- Legend: solid = base availability, dashed = higher-res subset ----
+res_handles = [Line2D([0],[0], color=colors[k], lw=8) for k in ["subhourly","hourly","daily","monthly"]]
+res_labels  = ["Subhourly", "Hourly", "Daily", "Monthly"]
 
-fig.legend(
-    handles, labels,
-    loc="lower center",
-    bbox_to_anchor=(0.5, 0.005),   # tweak: 0.04 lower, 0.08 higher
-    ncol=4,
-    frameon=False,
-    fontsize=12,
-    handlelength=2.5,
-    columnspacing=1.8
-)
+style_handles = [
+    Line2D([0],[0], color="0.2", lw=8, linestyle="-"),
+    Line2D([0],[0], color=colors["daily"], lw=6, linestyle=(0,(4,2))),
+]
+style_labels = ["Base availability", "Subset (higher-res window)"]
 
-# --- layout: reserve space for bottom legend + top title ---
-fig.tight_layout(rect=[0.02, 0.08, 0.98, 0.92])
+# two-row legend (same bottom center location)
+fig.legend(res_handles, res_labels, loc="lower center", bbox_to_anchor=(0.5, 0.06),
+           ncol=4, frameon=False, fontsize=12, handlelength=2.5, columnspacing=1.8)
+# fig.legend(style_handles, style_labels, loc="lower center", bbox_to_anchor=(0.5, 0.01),
+#            ncol=2, frameon=False, fontsize=12, handlelength=2.5, columnspacing=2.0)
 
-# plt.tight_layout()
+fig.tight_layout(rect=[0.02, 0.15, 0.98, 0.95])
 plt.show()

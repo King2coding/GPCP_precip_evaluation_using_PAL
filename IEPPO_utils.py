@@ -17,6 +17,9 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 from matplotlib.ticker import MaxNLocator
 from matplotlib.ticker import FixedLocator, FuncFormatter
+import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
+
 
 import seaborn as sns
 from scipy.stats import linregress
@@ -1094,14 +1097,16 @@ def oceanrain_step0_qc(
     keep_cols=None,
     drop_harbor_inop=True,
     drop_spurious=True,
-    min_flag2=None,          # e.g., 14 to keep >=0.1 mm/h (keeps true_zero too unless you exclude)
+    min_flag2=13,          # e.g., 14 to keep >=0.1 mm/h (keeps true_zero too unless you exclude)
     prob_thr=None,           # e.g., 0.9 for high-confidence phase (optional)
-    wind_max=None,           # e.g., 15.0 if you want a wind limit (optional)
+    wind_max=15,           # e.g., 15.0 if you want a wind limit (optional)
     wind_col_preference=("true_wind_speed", "u10", "rel_wind_speed"),
     # sanity caps (conservative)
-    dsd_cap_mmph=400.0,
+    dsd_cap_mmph=300.0,
     gag_cap_mmph=50.0,
     odm_cap_mmph=400.0,
+    qclip_hi=None,          # e.g., 0.99 to clip top 1% (set >q to NaN); None disables
+    qclip_cols=("dsd", "gag"),  # which groups to clip: any of {"dsd","gag"}
 ) -> pd.DataFrame:
     """
     Minute-level OceanRAIN QC for your *new* extracted dataframe.
@@ -1178,7 +1183,8 @@ def oceanrain_step0_qc(
     if (min_flag2 is not None) and ("precip_flag2" in df.columns):
         min_flag2 = int(min_flag2)
         # Keep true_zero (10) always; otherwise enforce >= min_flag2
-        m &= (df["precip_flag2"].isin([10, 12]) | (df["precip_flag2"] >= min_flag2))
+        # m &= (df["precip_flag2"].isin([10, 12]) | (df["precip_flag2"] >= min_flag2))
+        m &= (df["precip_flag2"].isin([10]) | (df["precip_flag2"] >= min_flag2))
 
     # optional wind filter
     wind_col = None
@@ -1208,6 +1214,29 @@ def oceanrain_step0_qc(
         df.loc[(df["rate_gag_mmph"] < 0), "rate_gag_mmph"] = np.nan
         df.loc[np.isclose(df["rate_gag_mmph"], 99.99, atol=1e-6), "rate_gag_mmph"] = np.nan
         df.loc[df["rate_gag_mmph"] >= float(gag_cap_mmph), "rate_gag_mmph"] = np.nan
+        # ----------------------------
+    # 4b) Optional high-end quantile clipping (set extreme values to NaN)
+    #     Applied AFTER caps/QC; does not drop rows.
+    # ----------------------------
+    if qclip_hi is not None:
+        q = float(qclip_hi)
+        if not (0.0 < q < 1.0):
+            raise ValueError("qclip_hi must be between 0 and 1 (e.g., 0.99)")
+
+        # DSD columns
+        if "dsd" in qclip_cols:
+            for c in ["rate_rain_dsd_mmph", "rate_snow_dsd_mmph"]:
+                if c in df.columns:
+                    thr = df[c].quantile(q, interpolation="linear")
+                    if pd.notna(thr):
+                        df.loc[df[c] > thr, c] = np.nan
+
+        # Gauge column
+        if "gag" in qclip_cols:
+            if "rate_gag_mmph" in df.columns:
+                thr = df["rate_gag_mmph"].quantile(q, interpolation="linear")
+                if pd.notna(thr):
+                    df.loc[df["rate_gag_mmph"] > thr, "rate_gag_mmph"] = np.nan
 
     # ----------------------------
     # 5) Optional: high-confidence phase subsets via probabilities
@@ -1243,6 +1272,173 @@ def oceanrain_step0_qc(
 
     return df[keep_cols].reset_index(drop=True)
 
+
+#-------------------------------------------------------------------
+
+import numpy as np
+import pandas as pd
+from typing import Optional, Tuple
+
+def oceanrain_step0_qc_v2(
+    df: pd.DataFrame,
+    *,
+    keep_cols=None,
+
+    # core flag handling
+    drop_harbor_inop: bool = True,
+    keep_true_zero: bool = True,
+    keep_spurious_flag2_11: bool = False,
+    min_flag2: Optional[int] = 13,
+
+    # optional confidence gates
+    prob_thr: Optional[float] = None,
+    wind_max: Optional[float] = None,
+    wind_col_preference: Tuple[str, ...] = (
+        "true_wind_speed", "wind_speed_in_10m_height", "relative_wind_speed"
+    ),
+
+    # sanity caps
+    dsd_cap_mmph: float = 350.0,
+    gag_cap_mmph: float = 60.0,
+    odm_cap_mmph: float = 450.0,
+
+    # optional: quantile clipping AFTER phase-consistency
+    qclip_hi: Optional[float] = None,
+) -> pd.DataFrame:
+
+    df = df.copy()
+
+    # 1) Datetime + basics
+    if "time_utc" in df.columns:
+        df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
+    df = df.dropna(subset=[c for c in ["time_utc", "lat", "lon"] if c in df.columns])
+
+    # 2) Fill/sentinel -> NaN (expanded)
+    fill_vals = {
+        -99.9999, -99.99, -99.9, -99,
+        -999.9999, -999.99, -999.9, -999,
+        -9999, -99999,
+        -9.9, -9,
+        99.99, 999.99, 999.98999, 999.989990234375
+    }
+
+    num_cols = [
+        "rate_rain_dsd_mmph", "rate_snow_dsd_mmph", "rate_gag_mmph", "rate_odm_mmph",
+        "rain_prob", "snow_prob", "mixed_prob",
+        "true_wind_speed", "wind_speed_in_10m_height", "relative_wind_speed"
+    ]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = df[c].replace(list(fill_vals), np.nan)
+
+    # special true-zero sentinel used in some OceanRAIN-W diagnostics
+    for c in ["true_wind_speed", "relative_wind_speed"]:
+        if c in df.columns:
+            df[c] = df[c].replace([-888.88], np.nan)
+
+    # flags -> Int64 with NaNs
+    for c in ["precip_flag", "precip_flag2"]:
+        if c in df.columns:
+            df[c] = df[c].replace([9, 99, -99, -999], np.nan).astype("Int64")
+
+    # 3) Core row filters
+    m = pd.Series(True, index=df.index)
+
+    if "precip_flag" in df.columns:
+        if drop_harbor_inop:
+            m &= ~df["precip_flag"].isin([4, 5])
+        if not keep_true_zero:
+            m &= (df["precip_flag"] != 3)
+
+    if "precip_flag2" in df.columns:
+        if not keep_spurious_flag2_11:
+            m &= (df["precip_flag2"] != 11)
+
+        if min_flag2 is not None:
+            min_flag2 = int(min_flag2)
+            if keep_true_zero:
+                m &= (df["precip_flag2"] == 10) | (df["precip_flag2"] >= min_flag2)
+            else:
+                m &= (df["precip_flag2"] >= min_flag2)
+
+    # optional wind filter
+    wind_col = None
+    for wc in wind_col_preference:
+        if wc in df.columns:
+            wind_col = wc
+            break
+    if (wind_max is not None) and (wind_col is not None):
+        m &= (df[wind_col].isna() | (df[wind_col] <= float(wind_max)))
+
+    df = df.loc[m].copy()
+
+    # 4) Phase-consistent rate
+    df["rate_best_mmph"] = np.nan
+
+    if "precip_flag" in df.columns:
+        if "rate_rain_dsd_mmph" in df.columns:
+            df.loc[df["precip_flag"] == 0, "rate_best_mmph"] = df.loc[df["precip_flag"] == 0, "rate_rain_dsd_mmph"]
+
+        if "rate_snow_dsd_mmph" in df.columns:
+            df.loc[df["precip_flag"] == 1, "rate_best_mmph"] = df.loc[df["precip_flag"] == 1, "rate_snow_dsd_mmph"]
+            df.loc[df["precip_flag"] == 2, "rate_best_mmph"] = df.loc[df["precip_flag"] == 2, "rate_snow_dsd_mmph"]
+
+        df.loc[df["precip_flag"] == 3, "rate_best_mmph"] = 0.0
+
+        # null-out phase-inconsistent theoretical cols to prevent accidental use
+        if "rate_rain_dsd_mmph" in df.columns:
+            df.loc[~df["precip_flag"].isin([0, 2]), "rate_rain_dsd_mmph"] = np.nan
+        if "rate_snow_dsd_mmph" in df.columns:
+            df.loc[~df["precip_flag"].isin([1, 2]), "rate_snow_dsd_mmph"] = np.nan
+
+    # 5) Sanity caps (set junk to NaN; do not drop rows)
+    for c, cap in [
+        ("rate_rain_dsd_mmph", dsd_cap_mmph),
+        ("rate_snow_dsd_mmph", dsd_cap_mmph),
+        ("rate_odm_mmph",      odm_cap_mmph),
+        ("rate_gag_mmph",      gag_cap_mmph),
+        ("rate_best_mmph",     max(dsd_cap_mmph, odm_cap_mmph)),
+    ]:
+        if c in df.columns:
+            df.loc[(df[c] < 0) | (df[c] > float(cap)), c] = np.nan
+
+    # 6) Optional probability confidence gate
+    if prob_thr is not None and "precip_flag" in df.columns:
+        thr = float(prob_thr)
+        if "rain_prob" in df.columns:
+            df = df[~((df["precip_flag"] == 0) & df["rain_prob"].notna() & (df["rain_prob"] < thr))]
+        if "snow_prob" in df.columns:
+            df = df[~((df["precip_flag"] == 1) & df["snow_prob"].notna() & (df["snow_prob"] < thr))]
+        if "mixed_prob" in df.columns:
+            df = df[~((df["precip_flag"] == 2) & df["mixed_prob"].notna() & (df["mixed_prob"] < thr))]
+        df = df.copy()
+
+    # 7) Optional quantile clip (usually apply to rate_best only)
+    if qclip_hi is not None:
+        q = float(qclip_hi)
+        if not (0.0 < q < 1.0):
+            raise ValueError("qclip_hi must be between 0 and 1 (e.g., 0.995)")
+
+        for c in ["rate_best_mmph"]:
+            if c in df.columns:
+                thr = df[c].quantile(q, interpolation="linear")
+                if pd.notna(thr):
+                    df.loc[df[c] > thr, c] = np.nan
+
+    # 8) Keep cols
+    default_cols = [
+        "time_utc", "lat", "lon", "ship",
+        "precip_flag", "precip_flag2",
+        "rain_prob", "snow_prob", "mixed_prob",
+        "rate_best_mmph",
+        "rate_rain_dsd_mmph", "rate_snow_dsd_mmph",
+        "rate_gag_mmph", "rate_odm_mmph",
+        "true_wind_speed", "wind_speed_in_10m_height", "relative_wind_speed"
+    ]
+    if keep_cols is None:
+        keep_cols = [c for c in default_cols if c in df.columns]
+
+    return df[keep_cols].reset_index(drop=True)
 # -------------------------------------------------------------------
 # Nearest grid-index mapping (your current function is fine)
 def map_to_gpcp_idx(arr1d, values):
@@ -1443,53 +1639,92 @@ def add_pixel_coords_and_hemi(
 # STEP 2B: Robust xarray dim inference (Dataset or DataArray)
 # -----------------------------------------------------------------------------
 def _infer_dims(da: xr.DataArray):
-    """Infer (time_dim, lat_dim, lon_dim) from common patterns."""
     dims = list(da.dims)
 
-    # time dim candidates
     for cand in ["time", "valid_time", "date", "datetime"]:
         if cand in dims:
             tdim = cand
             break
     else:
-        raise ValueError(f"Could not infer time dim from dims={dims}")
+        raise ValueError(f"Could not infer time dim from {dims}")
 
-    # lat dim candidates
     for cand in ["lat", "latitude", "y"]:
         if cand in dims:
             ydim = cand
             break
     else:
-        raise ValueError(f"Could not infer lat dim from dims={dims}")
+        raise ValueError(f"Could not infer lat dim from {dims}")
 
-    # lon dim candidates
     for cand in ["lon", "longitude", "x"]:
         if cand in dims:
             xdim = cand
             break
     else:
-        raise ValueError(f"Could not infer lon dim from dims={dims}")
+        raise ValueError(f"Could not infer lon dim from {dims}")
 
     return tdim, ydim, xdim
 
-import numpy as np
-import pandas as pd
-import xarray as xr
-
-def _to_naive_datetime64ns(values):
-    """
-    Convert values to naive datetime64[ns] (no timezone).
-    If tz-aware, convert to UTC then drop tz.
-    """
-    s = pd.to_datetime(values, errors="coerce")
-    # tz-aware Series/Index
-    if hasattr(s, "dt") and getattr(s.dt, "tz", None) is not None:
-        s = s.dt.tz_convert("UTC").dt.tz_localize(None)
-    # tz-aware DatetimeIndex (rare path)
-    if isinstance(s, pd.DatetimeIndex) and s.tz is not None:
-        s = s.tz_convert("UTC").tz_localize(None)
+def _to_naive_datetime64ns(x):
+    """Convert anything datetime-like (including tz-aware) to naive UTC datetime64[ns]."""
+    s = pd.to_datetime(x, errors="coerce", utc=True)
+    # utc=True ensures tz-aware; now strip tz to make naive
+    s = s.dt.tz_convert("UTC").dt.tz_localize(None)
     return s.to_numpy(dtype="datetime64[ns]")
 
+def _ensure_xr_time_naive(da: xr.DataArray, tdim: str) -> xr.DataArray:
+    """Ensure da[tdim] is naive datetime64[ns]."""
+    t = pd.to_datetime(da[tdim].values, errors="coerce", utc=True)
+    t = t.tz_convert("UTC").tz_localize(None)
+    return da.assign_coords({tdim: t.to_numpy(dtype="datetime64[ns]")})
+
+def attach_daily_vars(
+    df: pd.DataFrame,
+    xr_obj,                       # xr.Dataset or xr.DataArray
+    *,
+    var_map: dict,                # {"new_col": "xr_varname"}; for DataArray: {"new_col": None}
+    date_col="date",
+    lat_col="lat_c",
+    lon_col="lon_c",
+    lon_wrap=True,
+    method="nearest",             # "nearest" is fine; can be "exact" if you prefer
+):
+    """
+    Attach DAILY gridded values from xr_obj onto df using (date, lat_c, lon_c).
+    Assumes products are already harmonized to GPCP grid, so coords should match.
+    """
+    out = df.copy()
+    out[date_col] = _to_naive_datetime64ns(out[date_col])
+
+    # Build DataArrays
+    if isinstance(xr_obj, xr.DataArray):
+        if len(var_map) < 1:
+            raise ValueError("For DataArray input, var_map must have at least one output column.")
+        only_key = next(iter(var_map.keys()))
+        das = {only_key: xr_obj}
+    elif isinstance(xr_obj, xr.Dataset):
+        das = {new_col: xr_obj[varname] for new_col, varname in var_map.items()}
+    else:
+        raise TypeError("xr_obj must be xr.Dataset or xr.DataArray")
+
+    da0 = next(iter(das.values()))
+    tdim, ydim, xdim = _infer_dims(da0)
+
+    # vector indexers
+    latv = out[lat_col].to_numpy(dtype="float64")
+    lonv = out[lon_col].to_numpy(dtype="float64")
+    if lon_wrap:
+        lonv = ((lonv + 180.0) % 360.0) - 180.0
+
+    t_indexer = xr.DataArray(out[date_col], dims="points")
+    y_indexer = xr.DataArray(latv, dims="points")
+    x_indexer = xr.DataArray(lonv, dims="points")
+
+    for new_col, da in das.items():
+        da = _ensure_xr_time_naive(da, tdim)
+        vals = da.sel({tdim: t_indexer, ydim: y_indexer, xdim: x_indexer}, method=method).values
+        out[new_col] = vals
+
+    return out
 
 def _ensure_datetime_coord_naive(da: xr.DataArray, tdim: str) -> xr.DataArray:
     """
@@ -1503,7 +1738,6 @@ def _ensure_datetime_coord_naive(da: xr.DataArray, tdim: str) -> xr.DataArray:
         t = t.tz_convert("UTC").tz_localize(None)
     t64 = t.to_numpy(dtype="datetime64[ns]")
     return da.assign_coords({tdim: t64})
-
 
 def attach_satellite_vars(
     df: pd.DataFrame,
@@ -1630,8 +1864,513 @@ def step2_attach_all_products_example(
 
     return snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH)
 
+def step2_attach_and_split(
+    snow_days: pd.DataFrame,
+    rain_days: pd.DataFrame,
+    *,
+    gpcp_grid_ds: xr.Dataset,            # used ONLY for lat/lon arrays
+    products: dict,                      # {"name": (xr_obj, var_map)}
+    ilat_col="ilat",
+    ilon_col="ilon",
+    date_col="date",
+):
+    """
+    products example:
+      {
+        "GPCP": (gpcp_ds, {"gpcp_mmday":"precip", "gpcp_pliq":"probability_liquid_phase"}),
+        "ERA5": (era5_ds, {"era5_mmday":"tp"}),
+        "IMERG": (imerg_da, {"imerg_mmday": None}),   # if DataArray
+      }
+    """
+    g_lat = gpcp_grid_ds["lat"].values
+    g_lon = gpcp_grid_ds["lon"].values
 
+    # add pixel coords + hemi
+    snow2 = add_pixel_coords_and_hemi(snow_days, g_lat, g_lon, ilat_col=ilat_col, ilon_col=ilon_col)
+    rain2 = add_pixel_coords_and_hemi(rain_days, g_lat, g_lon, ilat_col=ilat_col, ilon_col=ilon_col)
+
+    # attach all products
+    for _, (xr_obj, var_map) in products.items():
+        snow2 = attach_daily_vars(snow2, xr_obj, var_map=var_map, date_col=date_col, lat_col="lat_c", lon_col="lon_c")
+        rain2 = attach_daily_vars(rain2, xr_obj, var_map=var_map, date_col=date_col, lat_col="lat_c", lon_col="lon_c")
+
+    # split NH/SH
+    snow_NH = snow2[snow2["hemi"] == "NH"].copy()
+    snow_SH = snow2[snow2["hemi"] == "SH"].copy()
+    rain_NH = rain2[rain2["hemi"] == "NH"].copy()
+    rain_SH = rain2[rain2["hemi"] == "SH"].copy()
+
+    return snow2, rain2, (snow_NH, snow_SH, rain_NH, rain_SH)
+
+# -----------------------------------------------------------------------------
+
+def build_metric_table(phase_based_cat_metrics_hemi, products, metrics=("POD","FAR","Bias","HSS")):
+    tbl = {}
+    for hemi in ["SH", "NH"]:
+        tbl.setdefault(hemi, {})
+        for met in metrics:
+            tbl[hemi].setdefault(met, {"Rain": {}, "Snow": {}})
+
+    for hemi in ["NH", "SH"]:
+        for phse in ["Rain", "Snow"]:
+            for product in products:
+                d = phase_based_cat_metrics_hemi[hemi][phse][product]
+                for met in metrics:
+                    tbl[hemi][met][phse][product] = d.get(met, np.nan)
+    return tbl
+
+
+# -----------------------------------------------------------------------------
+
+def make_doy_climatology_pooled(
+    df_daily: pd.DataFrame,
+    *,
+    date_col: str = "date",
+    obs_col: str,
+    product_cols: list,
+    min_pairs: int = 1,           # <-- set to 1 (or 2/3) for your sparse ship sampling
+    drop_feb29: bool = True,
+    shift_leap_after_feb28: bool = True,
+    reindex_365: bool = False,    # if True -> returns 365 rows (NaNs where missing)
+):
+    d = df_daily.copy()
+    d[date_col] = pd.to_datetime(d[date_col], errors="coerce")
+    d = d[d[date_col].notna()].copy()
+
+    # DOY with leap-handling
+    doy = d[date_col].dt.dayofyear
+    is_leap = d[date_col].dt.is_leap_year
+    feb29 = (d[date_col].dt.month == 2) & (d[date_col].dt.day == 29)
+
+    if drop_feb29:
+        d = d.loc[~feb29].copy()
+        doy = doy.loc[~feb29]
+
+    if shift_leap_after_feb28 and drop_feb29:
+        after_feb28 = (d[date_col].dt.month > 2) & is_leap.loc[d.index]
+        doy = doy.copy()
+        doy.loc[after_feb28] = doy.loc[after_feb28] - 1
+
+    d["doy"] = doy.astype(int)
+
+    # Means per DOY (pooled across ships/years/hemis)
+    mean_cols = [obs_col] + product_cols
+    clim = d.groupby("doy", as_index=False)[mean_cols].mean()
+
+    # Enforce minimum sample count per DOY based on obs availability
+    n_obs = d.groupby("doy")[obs_col].apply(lambda s: s.notna().sum()).rename("n_obs").reset_index()
+    clim = clim.merge(n_obs, on="doy", how="left")
+    clim = clim[clim["n_obs"] >= min_pairs].drop(columns=["n_obs"]).copy()
+
+    # Optional: force 365 rows
+    if reindex_365:
+        clim = clim.set_index("doy").reindex(range(1, 366)).reset_index()
+
+    return clim
 #%% THE PLOT FUNCTIONS
+def build_metric_table(phase_based_cat_metrics_hemi, products, metrics=("POD","FAR","Bias","HSS")):
+    tbl = {}
+    for hemi in ["SH", "NH"]:
+        tbl.setdefault(hemi, {})
+        for met in metrics:
+            tbl[hemi].setdefault(met, {"Rain": {}, "Snow": {}})
+
+    for hemi in ["NH", "SH"]:
+        for phse in ["Rain", "Snow"]:
+            for product in products:
+                d = phase_based_cat_metrics_hemi[hemi][phse][product]
+                for met in metrics:
+                    tbl[hemi][met][phse][product] = d.get(met, np.nan)
+    return tbl
+# -----------------------------------------------------------------------------
+def split_metrics_by_hemi(df_phase, phase_name, products, obs_col, thr_mmday=1.0):
+    """
+    Returns:
+      cat_hemi[hemi][product] -> cat metric dict
+      qt_hemi[hemi][product]  -> quant metric dict
+    Requires:
+      df_phase has columns: ['hemi', obs_col] + product columns
+      categorical_stats(forecast, observed, thr)
+      calculate_metrics(df, obs_col, product)
+    """
+    cat_hemi = {h: {} for h in ["SH", "NH"]}
+    qt_hemi  = {h: {} for h in ["SH", "NH"]}
+
+    for hemi in ["SH", "NH"]:
+        dH = df_phase[df_phase["hemi"] == hemi].copy()
+
+        for product in products:
+            f = dH[product]
+            o = dH[obs_col]
+
+            cat_hemi[hemi][product] = categorical_stats(f, o, thr_mmday)
+            qt_hemi[hemi][product]  = calculate_metrics(dH, obs_col, product)
+
+    return cat_hemi, qt_hemi
+
+# -----------------------------------------------------------------------------
+
+def plot_phase_cat_metrics_NH_SH(
+    cat_hemi,
+    products,
+    product_colors,
+    *,
+    phase_label="Rain",
+    metrics=("POD", "FAR", "Bias", "HSS"),
+    hemis=("SH", "NH"),
+    figsize=(12, 10),
+    legend_ncol=None
+):
+    """
+    cat_hemi[hemi][product][metric] -> value
+    Produces: rows=metrics, cols=hemis, x=products
+    """
+    if legend_ncol is None:
+        legend_ncol = len(products)
+
+    fig, axes = plt.subplots(
+        nrows=len(metrics), ncols=len(hemis),
+        figsize=figsize, sharex=True
+    )
+
+    if len(metrics) == 1 and len(hemis) == 1:
+        axes = np.array([[axes]])
+    elif len(metrics) == 1:
+        axes = np.array([axes])
+    elif len(hemis) == 1:
+        axes = np.array([[ax] for ax in axes])
+
+    x = np.arange(len(products))
+    width = 0.75  # single bars per product
+
+    for c, hemi in enumerate(hemis):
+        for r, met in enumerate(metrics):
+            ax = axes[r, c]
+
+            vals = [cat_hemi.get(hemi, {}).get(p, {}).get(met, np.nan) for p in products]
+            colors = [product_colors.get(p, None) for p in products]
+
+            ax.bar(x, vals, width=width, color=colors)
+
+            ax.set_ylabel(met)
+            ax.grid(True, axis="y", alpha=0.3)
+
+            if r == 0:
+                ax.set_title(f"{phase_label} – {hemi}")
+
+            if r == len(metrics) - 1:
+                ax.set_xticks(x)
+                ax.set_xticklabels(products, rotation=25, ha="right")
+
+    # Legend once (top)
+    handles = [plt.Rectangle((0, 0), 1, 1, color=product_colors.get(p, None)) for p in products]
+    fig.legend(handles, products, loc="upper center", ncol=legend_ncol, frameon=False)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    return fig
+# -----------------------------------------------------------------------------
+
+# def plot_hemi_phase_metrics_barpanel(
+#     phase_based_cat_metrics_hemi,
+#     products,
+#     product_colors,
+#     *,
+#     metrics=("POD", "FAR", "Bias", "HSS"),
+#     phases=("Rain", "Snow"),
+#     hemis=("SH", "NH"),
+# ):
+#     tbl = build_metric_table(phase_based_cat_metrics_hemi, products, metrics=metrics)
+
+#     fig, axes = plt.subplots(
+#         nrows=len(metrics), ncols=len(hemis),
+#         figsize=(12, 10),
+#         sharex=True
+#     )
+
+#     x = np.arange(len(phases))
+#     width = 0.14
+#     offsets = (np.arange(len(products)) - (len(products) - 1) / 2) * width
+
+#     for c, hemi in enumerate(hemis):
+#         for r, met in enumerate(metrics):
+#             ax = axes[r, c]
+
+#             for j, product in enumerate(products):
+#                 vals = [tbl[hemi][met][ph][product] for ph in phases]
+#                 ax.bar(
+#                     x + offsets[j],
+#                     vals,
+#                     width=width,
+#                     label=product,
+#                     color=product_colors.get(product, None)  # <- uses your mapping
+#                 )
+
+#             ax.set_ylabel(met)
+#             ax.grid(True, axis="y", alpha=0.3)
+
+#             if r == 0:
+#                 ax.set_title(f"{hemi} metrics")
+
+#             if r == len(metrics) - 1:
+#                 ax.set_xticks(x)
+#                 ax.set_xticklabels(phases)
+
+#     # One legend for whole figure (keep your product order)
+#     handles, labels = axes[0, 0].get_legend_handles_labels()
+#     fig.legend(handles, labels, loc="upper center", ncol=len(products), frameon=False)
+
+#     fig.tight_layout(rect=[0, 0, 1, 0.95])
+#     return fig
+
+#-----------------------------------------------------------------------------
+
+
+def plot_hemi_phase_metrics_barpanel(
+    phase_based_cat_metrics_hemi,
+    products,
+    product_colors,
+    *,
+    metrics=("POD", "FAR", "Bias", "HSS"),
+    phases=("Rain", "Snow"),
+    hemis=("SH", "NH"),
+    figsize=(12, 10),
+    ylims=None,
+):
+    """
+    Layout:
+      - columns = phases (Rain, Snow)
+      - rows    = metrics
+      - x-axis  = products
+      - bars    = hemispheres (SH vs NH) for each product
+
+    Requires build_metric_table(...) -> tbl[hemi][metric][phase][product] -> value
+    """
+
+    # Hemisphere styling (same product color, different appearance)
+    hemi_style = {
+        "SH": {"alpha": 0.95, "hatch": None},
+        "NH": {"alpha": 0.55, "hatch": "///"},
+    }
+
+    tbl = build_metric_table(phase_based_cat_metrics_hemi, products, metrics=metrics)
+
+    fig, axes = plt.subplots(
+        nrows=len(metrics), ncols=len(phases),
+        figsize=figsize,
+        sharex=True
+    )
+
+    # ensure 2D axes array
+    if len(metrics) == 1 and len(phases) == 1:
+        axes = np.array([[axes]])
+    elif len(metrics) == 1:
+        axes = np.array([axes])
+    elif len(phases) == 1:
+        axes = np.array([[ax] for ax in axes])
+
+    x = np.arange(len(products))  # products on x
+    width = 0.35                  # enough for 2 hemis
+    offsets = (np.arange(len(hemis)) - (len(hemis) - 1) / 2) * width  # [-w/2, +w/2]
+
+    for c, ph in enumerate(phases):         # columns = phases
+        for r, met in enumerate(metrics):   # rows = metrics
+            ax = axes[r, c]
+
+            # ---- plot BOTH hemispheres (this must be inside the loop) ----
+            for j, hemi in enumerate(hemis):
+                vals = [tbl[hemi][met][ph][p] for p in products]
+                style = hemi_style.get(hemi, {"alpha": 0.9, "hatch": None})
+
+                ax.bar(
+                    x + offsets[j],
+                    vals,
+                    width=width,
+                    color=[product_colors.get(p, None) for p in products],
+                    alpha=style["alpha"],
+                    hatch=style["hatch"],
+                    edgecolor="k" if style["hatch"] else "none",
+                    linewidth=0.3 if style["hatch"] else 0.0,
+                )
+
+            ax.set_ylabel(met, fontsize=14)
+            ax.grid(True, axis="y", alpha=0.3)
+
+            if ylims is not None and met in ylims:
+                ax.set_ylim(*ylims[met])
+
+            if r == 0:
+                ax.set_title(ph)
+
+            if r == len(metrics) - 1:
+                ax.set_xticks(x)
+                ax.set_xticklabels(products, rotation=25, ha="right")
+
+    # ---- Product legend (colors) ----
+    prod_handles = [
+        mpatches.Patch(facecolor=product_colors.get(p, "0.7"), label=p)
+        for p in products
+    ]
+    fig.legend(
+        handles=prod_handles,
+        labels=products,
+        loc="upper center",
+        ncol=len(products),
+        frameon=False,
+        fontsize=12
+    )
+
+    # ---- Hemisphere legend (style) ----
+    hemi_handles = [
+        mpatches.Patch(facecolor="0.3",
+                       alpha=hemi_style["SH"]["alpha"],
+                       hatch=hemi_style["SH"]["hatch"],
+                       label="SH"),
+        mpatches.Patch(facecolor="0.3",
+                       alpha=hemi_style["NH"]["alpha"],
+                       hatch=hemi_style["NH"]["hatch"],
+                       label="NH"),
+    ]
+    axes[0, 1].legend(
+        handles=hemi_handles,
+        title="Hemi",
+        loc="upper left",
+        frameon=False
+    )
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    return fig
+#-----------------------------------------------------------------------------
+
+
+def plot_hemi_phase_quant_metrics_panel(
+    phase_based_qt_metrics_hemi: dict,
+    products: list,
+    product_colors: dict,
+    *,
+    metrics=("CC", "RMSE", "MAE", "Bias"),
+    phases=("Rain", "Snow"),
+    hemis=("SH", "NH"),
+    figsize=(12, 10),
+    sharex=True,
+    ylims=None,
+    ylabel_map=None,
+):
+    """
+    Layout:
+      - columns = phases
+      - rows    = metrics
+      - x-axis  = products
+      - bars    = hemis (SH/NH) for each product
+
+    Expected:
+      phase_based_qt_metrics_hemi[hemi][phase][product] -> dict with keys in metrics
+    """
+    hemi_style = {
+    "SH": {"alpha": 0.95, "hatch": None},
+    "NH": {"alpha": 0.55, "hatch": "///"},
+    }
+
+    if ylabel_map is None:
+        ylabel_map = {
+            "CC": "CC",
+            "RMSE": "RMSE \n[mm day$^{-1}$]",
+            "MAE":  "MAE \n[mm day$^{-1}$]",
+            "Bias": "Bias"
+        }
+
+    fig, axes = plt.subplots(
+        nrows=len(metrics), ncols=len(phases),
+        figsize=figsize,
+        sharex=sharex
+    )
+
+    if len(metrics) == 1 and len(phases) == 1:
+        axes = np.array([[axes]])
+    elif len(metrics) == 1:
+        axes = np.array([axes])
+    elif len(phases) == 1:
+        axes = np.array([[ax] for ax in axes])
+
+    x = np.arange(len(products))
+    width = 0.35
+    offsets = (np.arange(len(hemis)) - (len(hemis)-1)/2) * width
+
+    for c, ph in enumerate(phases):
+        for r, met in enumerate(metrics):
+            ax = axes[r, c]
+
+            for j, hemi in enumerate(hemis):
+                vals = []
+                for p in products:
+                    d = phase_based_qt_metrics_hemi.get(hemi, {}).get(ph, {}).get(p, {})
+                    vals.append(d.get(met, np.nan))
+
+                style = hemi_style[hemi]  # hemi loop variable
+                ax.bar(
+                    x + offsets[j],
+                    vals,
+                    width=width,
+                    color=[product_colors.get(p, None) for p in products],
+                    alpha=style["alpha"],
+                    hatch=style["hatch"],
+                    edgecolor="k" if style["hatch"] else "none",
+                    linewidth=0.0 if style["hatch"] is None else 0.3,
+                )
+
+            ax.set_ylabel(ylabel_map.get(met, met), fontsize=14)
+            ax.grid(True, axis="y", alpha=0.3)
+
+            if ylims is not None and met in ylims:
+                ax.set_ylim(*ylims[met])
+
+            if r == 0:
+                ax.set_title(f"{ph}")
+
+            if r == len(metrics) - 1:
+                ax.set_xticks(x)
+                ax.set_xticklabels(products, rotation=25, ha="right")
+
+    # apply alpha split for hemis
+    for c, ph in enumerate(phases):
+        for r, met in enumerate(metrics):
+            ax = axes[r, c]
+            bars = ax.patches
+            nP = len(products)
+            for j, hemi in enumerate(hemis):
+                for iP in range(nP):
+                    b = bars[j*nP + iP]
+                    b.set_alpha(0.9 if hemi == hemis[0] else 0.45)
+
+    # product legend at top
+    prod_handles = [plt.Rectangle((0, 0), 1, 1, color=product_colors.get(p, None)) for p in products]
+    fig.legend(prod_handles, products, loc="upper center", 
+               ncol=len(products), frameon=False, fontsize=14)
+
+    # hemi legend (alpha-based proxy)
+    # axes[0, 0].legend(
+    #     handles=[plt.Rectangle((0, 0), 1, 1, facecolor="0.6", alpha=0.9),
+    #              plt.Rectangle((0, 0), 1, 1, facecolor="0.6", alpha=0.45)],
+    #     labels=[hemis[0], hemis[1]],
+    #     loc="upper left",
+    #     frameon=False,
+    #     title="Hemi"
+    # )
+    
+
+    hemi_handles = [
+        mpatches.Patch(facecolor="0.2", alpha=hemi_style["SH"]["alpha"],
+                    hatch=hemi_style["SH"]["hatch"], label="SH"),
+        mpatches.Patch(facecolor="0.2", alpha=hemi_style["NH"]["alpha"],
+                    hatch=hemi_style["NH"]["hatch"], label="NH"),
+    ]
+
+    # Put it inside top-left axis (or wherever you like)
+    axes[0, 1].legend(handles=hemi_handles, title="Hemi", loc="upper left", frameon=False)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    return fig
+
+
 def plot_satellite_vs_groundtruth(
     df_all_regs,
     truth_col,
@@ -2084,6 +2823,94 @@ def plot_monthly_climatology_stack(
 
 
 #%%
+
+
+def plot_doy_climatology_scatter_panels_with_metrics(
+    clim_df: pd.DataFrame,
+    *,
+    obs_col: str,                 # x-axis (OceanRAIN DOY mean)
+    product_cols: list,           # y-axis products
+    product_colors: dict = None,
+    title: str = "",
+    max_val: float = 18,
+    ticks=(0, 6, 12, 18),
+):
+    d = clim_df.copy()
+
+    n_prod = len(product_cols)
+    ncols = min(3, n_prod)
+    nrows = math.ceil(n_prod / ncols)
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(6 * ncols, 5 * nrows),
+        squeeze=False,
+        dpi=200
+    )
+    axes = axes.flatten()
+
+    for i, prod in enumerate(product_cols):
+        ax = axes[i]
+
+        dd = d[[obs_col, prod]].dropna()
+        x = dd[obs_col].to_numpy()
+        y = dd[prod].to_numpy()
+
+        ax.scatter(
+            x, y,
+            s=70,
+            alpha=0.9,
+            edgecolor="k",
+            linewidth=0.6,
+            color=(product_colors.get(prod, None) if product_colors else None)
+        )
+
+        # 1:1 line and axes
+        lim = (0, max_val)
+        ax.plot(lim, lim, "--", color="gray", lw=1.2)
+        ax.set_xlim(lim)
+        ax.set_ylim(lim)
+        if ticks is not None:
+            ax.set_xticks(ticks)
+            ax.set_yticks(ticks)
+
+        ax.grid(True, linestyle="--", linewidth=0.7, alpha=0.6)
+
+        ax.set_xlabel("OceanRAIN DOY mean [mm day$^{-1}$]", fontsize=14, fontweight="bold")
+        ax.set_ylabel(f"{prod} DOY mean [mm day$^{-1}$]", fontsize=14, fontweight="bold")
+        ax.set_title(prod, fontsize=15, fontweight="bold")
+
+        # metrics annotation (CC, RMSE, Bias)
+        if len(dd) >= 2:
+            m = calculate_metrics(dd, obs_col, prod)
+            ax.text(
+                0.05, 0.97,
+                f'RB: {m["Bias"]:.2f}%\nRMSE: {m["RMSE"]:.2f} mm/day\nCC: {m["CC"]:.2f}',
+                transform=ax.transAxes,
+                fontsize=13,
+                fontweight="bold",
+                va="top"
+            )
+        else:
+            ax.text(
+                0.05, 0.97,
+                "n<2",
+                transform=ax.transAxes,
+                fontsize=13,
+                fontweight="bold",
+                va="top"
+            )
+
+        for tick in ax.get_xticklabels() + ax.get_yticklabels():
+            tick.set_fontweight("bold")
+
+    # remove unused panels
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    fig.suptitle(title, y=0.98, fontsize=16, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    return fig
 # additional analysis functions
 def _prob_from_hist(x, bin_edges, eps=1e-12):
     """Histogram -> probability mass per bin (sums to 1)."""
@@ -2979,9 +3806,7 @@ def plot_interannual_variability_2x2(
 # -----------------------------
 # 2x2 interannual plot (gap-aware trend/CI)
 # -----------------------------
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
+
 
 def add_trend_summary_box(ax, out, ci=95, units="mm day$^{-1}$ yr$^{-1}$"):
     """Bottom-right text box with slope + CI + significance flag."""
@@ -3355,3 +4180,70 @@ def plot_2x2_annual_rm13_with_trends(
     #              fontsize=15, fontweight="bold", y=0.99)
     fig.tight_layout(rect=[0, 0.06, 1, 0.96])
     return fig
+
+
+#----------------------------------------------------------------------------
+from rasterio.enums import Resampling
+import xarray as xr
+
+def resample_to_new_res(obj, new_shape, xdim="lon", ydim="lat", crs="EPSG:4326",
+                        keep_vars=None, drop_nonspatial=True):
+    """
+    Resample/reproject (in same CRS) to a new pixel shape using average resampling.
+    Works for xarray.DataArray or xarray.Dataset.
+
+    - If Dataset: reprojects only vars that have (ydim, xdim) dims.
+      Non-spatial vars (e.g., time_bnds) are preserved by default.
+    """
+
+    def _prep(o):
+        # rename to x/y for rioxarray
+        if xdim in o.dims and ydim in o.dims:
+            o = o.rename({xdim: "x", ydim: "y"})
+        # write CRS + spatial dims
+        o = o.rio.write_crs(crs, inplace=False)
+        o = o.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=False)
+        return o
+
+    # -------- DataArray case --------
+    if isinstance(obj, xr.DataArray):
+        da = _prep(obj)
+        da = da.rio.reproject(da.rio.crs, shape=new_shape, resampling=Resampling.bilinear)
+        return da.rename({"y": ydim, "x": xdim})
+
+    # -------- Dataset case --------
+    if not isinstance(obj, xr.Dataset):
+        raise TypeError("Input must be an xarray.DataArray or xarray.Dataset")
+
+    ds = obj
+
+    # choose which vars to resample
+    if keep_vars is not None:
+        spatial_vars = [v for v in keep_vars if v in ds.data_vars]
+    else:
+        # only vars that truly have spatial dims
+        spatial_vars = [v for v in ds.data_vars if (xdim in ds[v].dims and ydim in ds[v].dims)]
+
+    if len(spatial_vars) == 0:
+        raise ValueError(f"No variables found with dims ({ydim}, {xdim}).")
+
+    # keep non-spatial vars (like time_bnds) aside
+    nonspatial_vars = [v for v in ds.data_vars if v not in spatial_vars]
+    ds_nonspatial = ds[nonspatial_vars] if (drop_nonspatial is False and nonspatial_vars) else None
+
+    # reproject spatial vars only
+    out_vars = {}
+    for v in spatial_vars:
+        da = _prep(ds[v])
+        da = da.rio.reproject(da.rio.crs, shape=new_shape, resampling=Resampling.bilinear)
+        out_vars[v] = da.rename({"y": ydim, "x": xdim})
+
+    ds_out = xr.Dataset(out_vars, coords={c: ds[c] for c in ds.coords if c in ["time", ydim, xdim] or c in ds.coords})
+
+    # add back non-spatial vars if requested
+    if ds_nonspatial is not None:
+        ds_out = xr.merge([ds_out, ds_nonspatial])
+
+    # keep attrs
+    ds_out.attrs = ds.attrs
+    return ds_out
