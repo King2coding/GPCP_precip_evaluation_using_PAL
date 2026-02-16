@@ -1077,7 +1077,7 @@ fig.savefig(svnme, dpi=300)
 #%%
 print('Starting buoy-based assessment...')
 # THE BUOY BASED ASSESSMENT
-buoy_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_mean_from_all_regions_and_all_IDs_20260206.pkl'))  
+buoy_sate_daily_mean_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_mean_from_all_regions_and_all_IDs_20260216.pkl'))  
 
 # Create scatter plots for Buoy vs satellite products
 scatter_fig_buoy = plot_satellite_vs_groundtruth(buoy_sate_daily_mean_df,
@@ -1101,7 +1101,7 @@ gc.collect()
 #%%
 print('Starting monthly timeseries analysis...')
 # MONTHLY TIMESERIES ANALYSIS
-buoy_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260206.pkl'))
+buoy_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260216.pkl'))
 
 df = buoy_sate_daily_rainfall_colasped_df.copy()
 
