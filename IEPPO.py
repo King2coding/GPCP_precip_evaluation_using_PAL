@@ -2130,6 +2130,112 @@ svnme = os.path.join(path_to_plots,
                      f'Buoy_Satellite_PDF_Comparison_{cde_run_dte}.png')
 fig.savefig(svnme, dpi=300)
 
+#%% A regional pdf analysis based on Buoy data
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year.astype(int)
+
+# df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+
+# Ensure datetime
+df['date'] = pd.to_datetime(df['date'])
+
+# Year–month
+df['year_month'] = df['date'].dt.to_period('M')
+
+
+monthly_by_region = {}
+
+for region in list(Buoy_region_markers.keys()):
+    dfr = df[df['region'] == region].copy()
+
+    monthly = (
+        dfr
+        .groupby('year_month')[products]
+        .mean()
+        .reset_index()
+    )
+
+    # Period → Timestamp
+    monthly['year_month'] = monthly['year_month'].dt.to_timestamp()
+
+    # ---- NEW: enforce continuous monthly index ----
+    full_index = pd.date_range(
+        start=monthly['year_month'].min(),
+        end=monthly['year_month'].max(),
+        freq='MS'   # Month Start
+    )
+
+    monthly = (
+        monthly
+        .set_index('year_month')
+        .reindex(full_index)
+        .rename_axis('year_month')
+        .reset_index()
+    )
+
+    # set the region column back 
+    monthly['region'] = region
+
+    monthly_by_region[region] = monthly
+
+df_monthly = pd.concat(monthly_by_region, ignore_index=True)
+
+fig, axes = plot_global_and_regional_pdfs_regioncol(
+    df_monthly,
+    region_name="ENP",
+    product_cols=("rain_rate", "GPCP v3.3"),
+    colors=("black", "red"),
+)
+
+fig, axes = plot_global_and_regional_pdfs_regioncol(
+    df_monthly,
+    region_name="ENP",
+    product_cols=("rain_rate", "GPCP v3.2"),
+    colors=("black", "blue"),
+)
+
+fig, axes = plot_global_and_regional_pdfs_regioncol(
+    df_monthly,
+    region_name="ENP",
+    product_cols=("rain_rate", "ERA5"),
+    colors=("black", "lime"),
+)
+
+fig, axes = plot_global_and_regional_pdfs_regioncol(
+    df_monthly,
+    region_name="WNP",
+    product_cols=("rain_rate", "GPCP v3.3", ),
+    colors=("black", "red", ),
+)
+
+fig, axes = plot_global_and_regional_pdfs_regioncol(
+    df_monthly,
+    region_name="WNP",
+    product_cols=("rain_rate", "GPCP v3.2", ),
+    colors=("black", "blue", ),
+)
+
+fig, axes = plot_global_and_regional_pdfs_regioncol(
+    df_monthly,
+    region_name="WNP",
+    product_cols=("rain_rate", "ERA5", ),
+    colors=("black", "lime", ),
+)
+
+fig, axes = plot_global_and_regional_pdfs_insitu_hist_only(
+    df,
+    region_name="ENP",
+    insitu_col="rain_rate",
+    line_cols=("rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5"),
+    line_colors=("black", "blue", "red", "lime", ),
+    bins=np.arange(0, 15.5, 0.5),
+    smooth_window=3
+)
+
+# "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"
+# "red", "lime", "orange", "purple"
 #%% OceanRain based assessment for the 45 degree poleward
 # write crs and resample to gpcp resolution
 
@@ -2184,11 +2290,11 @@ snow_days_NH = snow_days[snow_days["hemi"] == "NH"]
 snow_days_SH = snow_days[snow_days["hemi"] == "SH"]
 
 products = {
-    "GPCP v3.2": (gpcp_32_pnt25, {"GPCP v3.2": None}), # , "gpcp_pliq": "probability_liquid_phase"
-    "GPCP v3.3": (gpcp_33_pnt25, {"GPCP v3.3": None}), # , "gpcp_pliq": "probability_liquid_phase"
-    "ERA5": (era5_pnt25, {"ERA5": "tp"}),
-    "IMERG": (imergv7_pnt25, {"IMERG v07": None}),
-    "MERRA2": (mer2_pnt25, {"MERRA2": None})
+    "GPCP v3.2": (gpcp_ds_v3pt2_al, {"GPCP v3.2": 'precip'}), # , "gpcp_pliq": "probability_liquid_phase"
+    "GPCP v3.3": (gpcp_ds_v3pt3_al, {"GPCP v3.3": 'precip'}), # , "gpcp_pliq": "probability_liquid_phase"
+    "ERA5": (era5_ds_al, {"ERA5": "tp"}),
+    "IMERG": (imerg_v07_al, {"IMERG v07": None}),
+    "MERRA2": (mer2_ds_al, {"MERRA2": None})
 }
 
 snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH) = step2_attach_and_split(
@@ -2417,8 +2523,6 @@ for spine in ax.spines.values():
 
 plt.tight_layout()
 plt.show()
-
-
 #----------------------------------------------------------------------------
 
 # %%
@@ -2510,3 +2614,4 @@ fig.legend(res_handles, res_labels, loc="lower center", bbox_to_anchor=(0.5, 0.0
 
 fig.tight_layout(rect=[0.02, 0.15, 0.98, 0.95])
 plt.show()
+

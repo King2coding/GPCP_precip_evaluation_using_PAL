@@ -19,7 +19,7 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.ticker import FixedLocator, FuncFormatter
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
-
+from matplotlib.patches import Patch
 
 import seaborn as sns
 from scipy.stats import linregress
@@ -4247,3 +4247,192 @@ def resample_to_new_res(obj, new_shape, xdim="lon", ydim="lat", crs="EPSG:4326",
     # keep attrs
     ds_out.attrs = ds.attrs
     return ds_out
+
+
+
+def compute_pdf_hist_1d(values, bins, weights=None, smooth_window=3):
+    x = np.asarray(values, dtype=float)
+    m = np.isfinite(x)
+    x = x[m]
+
+    w = None
+    if weights is not None:
+        w = np.asarray(weights, dtype=float)
+        w = w[m]
+        m2 = np.isfinite(w)
+        x = x[m2]
+        w = w[m2]
+
+    hist_counts, bin_edges = np.histogram(x, bins=bins, weights=w, density=False)
+
+    bin_widths = np.diff(bin_edges)
+    total = np.sum(hist_counts)
+    hist_density = hist_counts / (total * bin_widths) if total > 0 else np.zeros_like(hist_counts, dtype=float)
+
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    if smooth_window and smooth_window > 1:
+        k = int(smooth_window)
+        kernel = np.ones(k) / k
+        hist_line = np.convolve(hist_density, kernel, mode="same")
+    else:
+        hist_line = hist_density.copy()
+
+    return {
+        "bin_edges": bin_edges,
+        "bin_centers": bin_centers,
+        "hist_bars": hist_density,
+        "hist_line": hist_line,
+        "hist_counts": hist_counts,
+    }
+
+def plot_pdf_from_pdfdict(ax, pdf, label, color, alpha_bar=0.18, lw=4):
+    edges = pdf["bin_edges"]
+    centers = pdf["bin_centers"]
+    widths = np.diff(edges)
+
+    ax.bar(centers, pdf["hist_bars"], width=widths, align="center",
+           alpha=alpha_bar, edgecolor="none", color=color)
+    ax.plot(centers, pdf["hist_line"], color=color, lw=lw, label=label)
+
+def plot_global_and_regional_pdfs_regioncol(
+    df,
+    region_name,
+    region_col="region",
+    product_cols=("rain_rate", "GPCP v3.3"),
+    colors=("black", "red"),
+    bins=np.arange(0, 15.5, 0.5),
+    smooth_window=3,
+    weights_col=None,
+    figsize=(14, 4.8),
+    dpi=160,
+):
+    # ---- Global: use everything ----
+    df_g = df
+
+    # ---- Regional: subset by region ----
+    df_r = df[df[region_col] == region_name]
+
+    w_g = df_g[weights_col].values if weights_col is not None else None
+    w_r = df_r[weights_col].values if weights_col is not None else None
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi)
+    ax0, ax1 = axes
+
+    ax0.set_title("Global PDF", fontweight="bold")
+    for col, c in zip(product_cols, colors):
+        lbl = "Buoy" if col == "rain_rate" else col
+        pdf = compute_pdf_hist_1d(df_g[col].values, bins=bins, weights=w_g, smooth_window=smooth_window)
+        plot_pdf_from_pdfdict(ax0, pdf, label=lbl, color=c)
+    ax0.set_xlabel("Precipitation (mm/day)")
+    ax0.set_ylabel("Density")
+    ax0.legend(frameon=False, loc="upper right")
+
+    region_name_ = Buoy_REGION_NAMES.get(region_name, region_name)
+
+    ax1.set_title(f"Regional PDF: {region_name_}", fontweight="bold")
+    for col, c in zip(product_cols, colors):
+        lbl = "Buoy" if col == "rain_rate" else col
+        pdf = compute_pdf_hist_1d(df_r[col].values, bins=bins, weights=w_r, smooth_window=smooth_window)
+        plot_pdf_from_pdfdict(ax1, pdf, label=lbl, color=c)
+    ax1.set_xlabel("Precipitation (mm/day)")
+    ax1.set_ylabel("Density")
+    ax1.legend(frameon=False, loc="upper right")
+
+    plt.tight_layout()
+    return fig, axes
+
+
+#-----------------------------------------------------------------------------
+def _plot_hist_only(ax, pdf, color="0.6", alpha=0.25, label=None):
+    edges = pdf["bin_edges"]
+    centers = pdf["bin_centers"]
+    widths = np.diff(edges)
+    ax.bar(
+        centers, pdf["hist_bars"],
+        width=widths, align="center",
+        alpha=alpha, edgecolor="none", color=color,
+        label=label
+    )
+
+def _plot_line_only(ax, pdf, label, color, lw=4):
+    ax.plot(pdf["bin_centers"], pdf["hist_line"], color=color, lw=lw, label=label)
+
+def plot_global_and_regional_pdfs_insitu_hist_only(
+    df,
+    region_name,
+    region_col="region",
+    insitu_col="rain_rate",
+    line_cols=("rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5"),
+    line_colors=("black", "blue", "red", "lime"),
+    bins=np.arange(0, 15.5, 0.5),
+    smooth_window=3,
+    weights_col=None,
+    hist_color="0.7",
+    hist_alpha=0.25,
+    figsize=(14, 4.8),
+    dpi=160,
+    legend_loc="upper right",
+):
+    """
+    Global: uses full df
+    Regional: df[df[region_col] == region_name]
+
+    Bars: ONLY insitu_col
+    Lines: all in line_cols (can include insitu_col too)
+    Legend: includes a patch indicating bars are insitu histogram
+    """
+    df_g = df
+    df_r = df[df[region_col] == region_name]
+
+    w_g = df_g[weights_col].values if weights_col is not None else None
+    w_r = df_r[weights_col].values if weights_col is not None else None
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=figsize, dpi=dpi)
+
+    lbl = "Buoy" if insitu_col == "rain_rate" else insitu_col
+
+    # ---------------- Global panel ----------------
+    ax0.set_title("Global PDF", fontweight="bold")
+
+    # insitu bars
+    pdf_insitu_g = compute_pdf_hist_1d(df_g[insitu_col].values, bins=bins, weights=w_g, smooth_window=1)
+    _plot_hist_only(ax0, pdf_insitu_g, color=hist_color, alpha=hist_alpha)
+
+    # lines
+    line_handles_g = []
+    for col, c in zip(line_cols, line_colors):
+        pdf_line = compute_pdf_hist_1d(df_g[col].values, bins=bins, weights=w_g, smooth_window=smooth_window)
+        h = ax0.plot(pdf_line["bin_centers"], pdf_line["hist_line"], color=c, lw=4, label=col)[0]
+        line_handles_g.append(h)
+
+    ax0.set_xlabel("Precipitation (mm/day)")
+    ax0.set_ylabel("Density")
+
+    # legend with explicit patch for histogram
+    hist_patch = Patch(facecolor=hist_color, alpha=hist_alpha, edgecolor="none",
+                       label=f"{lbl} histogram")
+    ax0.legend(handles=[hist_patch] + line_handles_g, frameon=False, loc=legend_loc)
+
+    # ---------------- Regional panel ----------------
+    region_name_ = Buoy_REGION_NAMES.get(region_name, region_name)
+    ax1.set_title(f"Regional PDF: {region_name_}", fontweight="bold")
+
+    pdf_insitu_r = compute_pdf_hist_1d(df_r[insitu_col].values, bins=bins, weights=w_r, smooth_window=1)
+    _plot_hist_only(ax1, pdf_insitu_r, color=hist_color, alpha=hist_alpha)
+
+    line_handles_r = []
+    for col, c in zip(line_cols, line_colors):
+        pdf_line = compute_pdf_hist_1d(df_r[col].values, bins=bins, weights=w_r, smooth_window=smooth_window)
+        h = ax1.plot(pdf_line["bin_centers"], pdf_line["hist_line"], color=c, lw=4, label=col)[0]
+        line_handles_r.append(h)
+
+    ax1.set_xlabel("Precipitation (mm/day)")
+    ax1.set_ylabel("Density")
+
+    hist_patch_r = Patch(facecolor=hist_color, alpha=hist_alpha, edgecolor="none",
+                         label=f"{lbl} histogram")
+    ax1.legend(handles=[hist_patch_r] + line_handles_r, frameon=False, loc=legend_loc)
+
+    plt.tight_layout()
+    return fig, (ax0, ax1)
