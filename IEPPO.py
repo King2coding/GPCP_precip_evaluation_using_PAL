@@ -25,7 +25,7 @@ path_to_gpcp_v3pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_
 
 path_to_gpcp_v3pt2 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_2_2000_2020'
 
-path_to_imerg_v06 = r'/ra1/pubdat/AVHRR_CloudSat_proj/IMERG/IMERGV6/DataV6'
+path_to_imerg_v06 = r'/ra1/pubdat/GPM/imerg6'
 
 path_to_imerg_v07 = r'/ra1/pubdat/AVHRR_CloudSat_proj/IMERG/IMERGV7/Data_V7_daily_1998-2025'
 
@@ -145,13 +145,15 @@ gc.collect()
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # ALIGN ALL DATASETS IN TIME
-mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
+# mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
+mindate,maxdate = imerg_v06_ds_xr.time.min().values, imerg_v06_ds_xr.time.max().values
 
 # select time range for all datasets
 gpcp_ds_v3pt2_al = gpcp_ds_v3pt2_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
 gpcp_ds_v3pt3_al = gpcp_ds_v3pt3_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
 era5_ds_al = era5_ds_xr.sel(valid_time=slice(mindate, maxdate))#.compute()#.chunk({'valid_time': -1})
 imerg_v07_al = imerg_v07_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chunk({'time': -1})
+imerg_v06_al = imerg_v06_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chunk({'time': -1})
 mer2_ds_al = mer2_ds_xr.sel(time=slice(mindate, maxdate))#.chunk({'time': -1})
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
@@ -632,6 +634,26 @@ for region_name, buoy_files in buoy_files_by_region.items():
             imerg_v07_df['date'] = imerg_v07_df['time'].dt.date
         
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -    
+        imerg_v06_df = extract_point_timeseries_to_df(
+                imerg_v06_al,
+                b_lat,
+                b_lon,
+                df_t_min,
+                df_t_max,
+                varnames=None,          # <- can be "precip" or ["precip"] or ("precip", "probability_liquid_phase")
+                method="nearest",
+                time_name="time",
+                lat_name="lat",
+                lon_name="lon",
+            )
+        if imerg_v06_df.empty:
+            print("Warning: Failed to extract IMERG v06 data, creating empty dataframe")
+            imerg_v06_df = pd.DataFrame(columns=['date', 'IMERG v06'])
+        else:
+            imerg_v06_df = imerg_v06_df[['time','precipitation']].copy()
+            imerg_v06_df.columns = ['time', 'IMERG v06']
+            imerg_v06_df['date'] = imerg_v06_df['time'].dt.date
+        #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
         # Process MERRA2 data with Buoy - Memory efficient version
         # merra2_df = extract_buoy_satellite_data_memory_efficient(
@@ -711,6 +733,18 @@ for region_name, buoy_files in buoy_files_by_region.items():
         b_df_combined_rain.drop(columns=[i for i in b_df_combined_rain.columns if i in \
                                                 ['IMERG v07_IMERG v07', 'date_IMERG v07']], 
                                                 inplace=True)
+        
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+        # merge IMERG data - merge on 'date' column instead of index
+        b_df_combined_rain = b_df_combined_rain.merge(
+            imerg_v06_df[['date', 'IMERG v06']], 
+            left_index=True, right_index=True, how='left', suffixes=('', '_IMERG v06')
+        )
+        # Remove any duplicate columns from previous merges
+        b_df_combined_rain.drop(columns=[i for i in b_df_combined_rain.columns if i in \
+                                                ['IMERG v06_IMERG v06', 'date_IMERG v06']], 
+                                                inplace=True)
 
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         # merge MERRA2 data
@@ -749,7 +783,7 @@ for region_name, buoy_files in buoy_files_by_region.items():
     region_buoy_sate_df_daily_mean = region_buoy_sate_df.groupby(['ID'])[['rain_rate',                                                                          
                                                                         'GPCP v3.2', 
                                                                         'GPCP v3.3', 
-                                                                        # 'IMERG_v06',
+                                                                        'IMERG_v06',
                                                                         'IMERG v07',
                                                                         'ERA5',
                                                                         'MERRA2']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()

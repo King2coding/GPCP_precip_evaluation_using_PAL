@@ -365,7 +365,7 @@ def process_imerg_file(args):
     imerg_precip_data = xr.open_dataset(file_path,engine='netcdf4')
 
     if version == 'v06':
-        precip_aray = imerg_precip_data.precipitationCal.data    
+        precip_aray = imerg_precip_data.HQprecipitation.data    
         imerg_time = pd.to_datetime(imerg_precip_data.attrs['BeginDate'], format='%Y-%m-%d')
         
     elif version == 'v07':
