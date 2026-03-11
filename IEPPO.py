@@ -146,7 +146,7 @@ gc.collect()
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # ALIGN ALL DATASETS IN TIME
 # mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
-mindate,maxdate = imerg_v06_ds_xr.time.min().values, imerg_v06_ds_xr.time.max().values
+mindate,maxdate = imerg_v06_ds_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
 
 # select time range for all datasets
 gpcp_ds_v3pt2_al = gpcp_ds_v3pt2_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
@@ -783,7 +783,7 @@ for region_name, buoy_files in buoy_files_by_region.items():
     region_buoy_sate_df_daily_mean = region_buoy_sate_df.groupby(['ID'])[['rain_rate',                                                                          
                                                                         'GPCP v3.2', 
                                                                         'GPCP v3.3', 
-                                                                        'IMERG_v06',
+                                                                        'IMERG v06',
                                                                         'IMERG v07',
                                                                         'ERA5',
                                                                         'MERRA2']].mean().reset_index()  # , 'IMERG'IMERG']].mean().reset_index()
