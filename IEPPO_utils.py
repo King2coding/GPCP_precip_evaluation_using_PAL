@@ -7,6 +7,7 @@ warnings.filterwarnings("ignore")
 
 import gc
 import os
+from typing import Optional, Tuple, Sequence
 
 from datetime import date
 import numpy as np
@@ -1275,10 +1276,6 @@ def oceanrain_step0_qc(
 
 #-------------------------------------------------------------------
 
-import numpy as np
-import pandas as pd
-from typing import Optional, Tuple
-
 def oceanrain_step0_qc_v2(
     df: pd.DataFrame,
     *,
@@ -1440,6 +1437,308 @@ def oceanrain_step0_qc_v2(
 
     return df[keep_cols].reset_index(drop=True)
 # -------------------------------------------------------------------
+
+
+def oceanrain_step0_qc_precip_main(
+    df: pd.DataFrame,
+    *,
+    keep_cols: Optional[Sequence[str]] = None,
+
+    # core row filtering
+    drop_harbor_inop: bool = True,
+    drop_spurious_flag2_11: bool = True,
+    keep_true_zero: bool = True,
+
+    # whether to keep flag2=12 (precipitation minutes with 0.00 mm/h)
+    # useful choice depends on analysis:
+    #   True  -> keeps borderline/light precip occurrence minutes
+    #   False -> stricter for quantitative rate validation
+    keep_flag2_12_zero_precip: bool = False,
+
+    # optional minimum flag2 threshold for positive precipitation classes
+    # None: no extra threshold
+    # 13 : keep 0.01-0.09 and above (plus true-zero if keep_true_zero=True)
+    # 14 : keep 0.1 and above     (plus true-zero if keep_true_zero=True)
+    min_flag2_positive: Optional[int] = 13,
+
+    # optional confidence gate by phase probabilities
+    # not recommended as default for total-precip use
+    prob_thr: Optional[float] = None,
+
+    # optional wind sensitivity filter (not core QC)
+    wind_max: Optional[float] = None,
+    wind_col_preference: Tuple[str, ...] = (
+        "true_wind_speed",
+        "wind_speed_in_10m_height",
+        "relative_wind_speed",
+        "u10",
+        "rel_wind_speed",
+    ),
+
+    # conservative physical caps (set bad values to NaN; do not drop rows)
+    dsd_cap_mmph: float = 350.0,
+    gag_cap_mmph: float = 60.0,
+    odm_cap_mmph: float = 400.0,
+
+    # optional upper-tail clipping (off by default)
+    qclip_hi: Optional[float] = None,
+):
+    """
+    OceanRAIN minute-level QC for the current study goal:
+    use OceanRAIN's main precipitation variable directly as the primary reference,
+    without splitting rain vs snow for the main analysis.
+
+    Expected columns (subset okay):
+      time_utc, lat, lon, ship,
+      precip_flag, precip_flag2,
+      rate_odm_mmph,
+      rate_rain_dsd_mmph, rate_snow_dsd_mmph, rate_gag_mmph,
+      rain_prob, snow_prob, mixed_prob,
+      true_wind_speed / wind_speed_in_10m_height / relative_wind_speed / u10 / rel_wind_speed
+
+    Returns:
+      dataframe with:
+        - main variable: rate_main_mmph   (QC'd ODM precipitation rate)
+        - optional diagnostic: rate_phasebest_mmph
+        - original selected columns for traceability
+    """
+
+    df = df.copy()
+
+    # --------------------------------------------------
+    # 1) Datetime / geolocation basics
+    # --------------------------------------------------
+    if "time_utc" in df.columns:
+        df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
+
+    needed = [c for c in ["time_utc", "lat", "lon"] if c in df.columns]
+    if needed:
+        df = df.dropna(subset=needed).copy()
+
+    # --------------------------------------------------
+    # 2) Replace common sentinel / fill values with NaN
+    # --------------------------------------------------
+    fill_vals = {
+        -99.9999, -99.99, -99.9, -99,
+        -999.9999, -999.99, -999.9, -999,
+        -9999, -99999,
+        -9.9, -9,
+        99.99, 999.99, 999.98999, 999.989990234375,
+    }
+
+    num_cols = [
+        "rate_odm_mmph",
+        "rate_rain_dsd_mmph",
+        "rate_snow_dsd_mmph",
+        "rate_gag_mmph",
+        "rain_prob",
+        "snow_prob",
+        "mixed_prob",
+        "true_wind_speed",
+        "wind_speed_in_10m_height",
+        "relative_wind_speed",
+        "u10",
+        "rel_wind_speed",
+    ]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = df[c].replace(list(fill_vals), np.nan)
+
+    # In OceanRAIN-W, true-zero minutes can use -888.88 for some ODM diagnostics
+    for c in ["true_wind_speed", "relative_wind_speed", "rel_wind_speed"]:
+        if c in df.columns:
+            df[c] = df[c].replace([-888.88], np.nan)
+
+    # flags -> nullable integer
+    for c in ["precip_flag", "precip_flag2"]:
+        if c in df.columns:
+            df[c] = df[c].replace([9, 99, -99, -999], np.nan).astype("Int64")
+
+    # --------------------------------------------------
+    # 3) Core row filtering based on official flags
+    # --------------------------------------------------
+    m = pd.Series(True, index=df.index)
+
+    # precip_flag:
+    # 0 rain, 1 snow, 2 mixed, 3 true-zero, 4 inoperative, 5 harbor
+    if "precip_flag" in df.columns:
+        if drop_harbor_inop:
+            m &= ~df["precip_flag"].isin([4, 5])
+
+        if not keep_true_zero:
+            m &= (df["precip_flag"] != 3)
+
+    # precip_flag2:
+    # 10 true-zero, 11 spurious, 12 precip but 0.00 mm/h, 13..17 increasing positive intensity
+    if "precip_flag2" in df.columns:
+        if drop_spurious_flag2_11:
+            m &= (df["precip_flag2"] != 11)
+
+        allowed_flag2 = pd.Series(False, index=df.index)
+
+        if keep_true_zero:
+            allowed_flag2 |= (df["precip_flag2"] == 10)
+
+        if keep_flag2_12_zero_precip:
+            allowed_flag2 |= (df["precip_flag2"] == 12)
+
+        if min_flag2_positive is None:
+            # no extra threshold: allow all non-spurious positive/intensity classes
+            allowed_flag2 |= df["precip_flag2"].isin([13, 14, 15, 16, 17])
+        else:
+            min_flag2_positive = int(min_flag2_positive)
+            allowed_flag2 |= (df["precip_flag2"] >= min_flag2_positive)
+
+        m &= allowed_flag2
+
+    # optional wind filter
+    wind_col = None
+    for wc in wind_col_preference:
+        if wc in df.columns:
+            wind_col = wc
+            break
+
+    if (wind_max is not None) and (wind_col is not None):
+        m &= (df[wind_col].isna() | (df[wind_col] <= float(wind_max)))
+
+    df = df.loc[m].copy()
+
+    # --------------------------------------------------
+    # 4) Build main precipitation variable
+    # --------------------------------------------------
+    # Main variable = QC'd ODM precipitation rate
+    # For true-zero minutes, force to 0.0
+    df["rate_main_mmph"] = np.nan
+
+    if "rate_odm_mmph" in df.columns:
+        df["rate_main_mmph"] = df["rate_odm_mmph"]
+
+    if "precip_flag" in df.columns:
+        df.loc[df["precip_flag"] == 3, "rate_main_mmph"] = 0.0
+
+    # --------------------------------------------------
+    # 5) Keep optional diagnostic phase-based rate
+    # --------------------------------------------------
+    # This is NOT the main variable for the current study.
+    # It is kept only for later checks / sensitivity / interpretation.
+    df["rate_phasebest_mmph"] = np.nan
+
+    if "precip_flag" in df.columns:
+        if "rate_rain_dsd_mmph" in df.columns:
+            df.loc[df["precip_flag"] == 0, "rate_phasebest_mmph"] = df.loc[
+                df["precip_flag"] == 0, "rate_rain_dsd_mmph"
+            ]
+
+        if "rate_snow_dsd_mmph" in df.columns:
+            df.loc[df["precip_flag"] == 1, "rate_phasebest_mmph"] = df.loc[
+                df["precip_flag"] == 1, "rate_snow_dsd_mmph"
+            ]
+
+            # OceanRAIN paper notes mixed-phase currently uses snowfall intensity
+            df.loc[df["precip_flag"] == 2, "rate_phasebest_mmph"] = df.loc[
+                df["precip_flag"] == 2, "rate_snow_dsd_mmph"
+            ]
+
+        df.loc[df["precip_flag"] == 3, "rate_phasebest_mmph"] = 0.0
+
+    # --------------------------------------------------
+    # 6) Sanity caps (set impossible values to NaN)
+    # --------------------------------------------------
+    for c, cap in [
+        ("rate_odm_mmph", odm_cap_mmph),
+        ("rate_main_mmph", odm_cap_mmph),
+        ("rate_rain_dsd_mmph", dsd_cap_mmph),
+        ("rate_snow_dsd_mmph", dsd_cap_mmph),
+        ("rate_phasebest_mmph", dsd_cap_mmph),
+        ("rate_gag_mmph", gag_cap_mmph),
+    ]:
+        if c in df.columns:
+            df.loc[(df[c] < 0) | (df[c] > float(cap)), c] = np.nan
+
+    # re-impose true-zero after caps, just in case
+    if "precip_flag" in df.columns:
+        df.loc[df["precip_flag"] == 3, "rate_main_mmph"] = 0.0
+        df.loc[df["precip_flag"] == 3, "rate_phasebest_mmph"] = 0.0
+
+    # --------------------------------------------------
+    # 7) Optional probability confidence filter
+    # --------------------------------------------------
+    # Mostly useful as a sensitivity test, not default production QC.
+    if (prob_thr is not None) and ("precip_flag" in df.columns):
+        thr = float(prob_thr)
+
+        if "rain_prob" in df.columns:
+            df = df[
+                ~(
+                    (df["precip_flag"] == 0)
+                    & df["rain_prob"].notna()
+                    & (df["rain_prob"] < thr)
+                )
+            ]
+
+        if "snow_prob" in df.columns:
+            df = df[
+                ~(
+                    (df["precip_flag"] == 1)
+                    & df["snow_prob"].notna()
+                    & (df["snow_prob"] < thr)
+                )
+            ]
+
+        if "mixed_prob" in df.columns:
+            df = df[
+                ~(
+                    (df["precip_flag"] == 2)
+                    & df["mixed_prob"].notna()
+                    & (df["mixed_prob"] < thr)
+                )
+            ]
+
+        df = df.copy()
+
+    # --------------------------------------------------
+    # 8) Optional upper-tail clip
+    # --------------------------------------------------
+    if qclip_hi is not None:
+        q = float(qclip_hi)
+        if not (0.0 < q < 1.0):
+            raise ValueError("qclip_hi must be between 0 and 1, e.g. 0.995")
+
+        for c in ["rate_main_mmph", "rate_phasebest_mmph"]:
+            if c in df.columns:
+                thr = df[c].quantile(q, interpolation="linear")
+                if pd.notna(thr):
+                    df.loc[df[c] > thr, c] = np.nan
+
+        # again preserve true-zero explicitly
+        if "precip_flag" in df.columns:
+            df.loc[df["precip_flag"] == 3, "rate_main_mmph"] = 0.0
+            df.loc[df["precip_flag"] == 3, "rate_phasebest_mmph"] = 0.0
+
+    # --------------------------------------------------
+    # 9) Keep output columns
+    # --------------------------------------------------
+    default_cols = [
+        "time_utc", "lat", "lon", "ship",
+        "precip_flag", "precip_flag2",
+        "rain_prob", "snow_prob", "mixed_prob",
+        "rate_main_mmph",          # <-- recommended primary variable
+        "rate_phasebest_mmph",     # diagnostic only
+        "rate_odm_mmph",
+        "rate_rain_dsd_mmph",
+        "rate_snow_dsd_mmph",
+        "rate_gag_mmph",
+        "true_wind_speed",
+        "wind_speed_in_10m_height",
+        "relative_wind_speed",
+        "u10",
+        "rel_wind_speed",
+    ]
+    if keep_cols is None:
+        keep_cols = [c for c in default_cols if c in df.columns]
+
+    return df[keep_cols].reset_index(drop=True)
+#-------------------------------------------------------------------
 # Nearest grid-index mapping (your current function is fine)
 def map_to_gpcp_idx(arr1d, values):
     a = np.asarray(arr1d)
@@ -1605,6 +1904,207 @@ def oceanrain_daily_aggregate_to_gpcp_v2(
     return daily_or, rain_days, snow_days
 
 # -----------------------------------------------------------------------------
+# ------------------------------------------------------------
+# helper: minute-rate series (mm/h) -> daily accumulation (mm/day)
+# ------------------------------------------------------------
+def _mmday_from_mmph(series):
+    # OceanRAIN-W is 1-minute data:
+    # accumulation over a minute = (mm/h) * (1/60 h)
+    # daily total = sum(rate_mmph / 60)
+    x = pd.to_numeric(series, errors="coerce").to_numpy(dtype="float64")
+    return np.nansum(x) / 60.0
+
+
+# ------------------------------------------------------------
+# daily aggregation using the new OceanRAIN main precip variable
+# ------------------------------------------------------------
+def oceanrain_daily_aggregate_to_gpcp_main(
+    oc_df_minute: pd.DataFrame,
+    gpcp_lat_1d,
+    gpcp_lon_1d,
+    *,
+    lat_abs_min=45.0,
+    coverage_frac=0.10,      # e.g. 10% of day = 144 minutes
+    wind_mean_col_preference=("true_wind_speed", "u10", "rel_wind_speed"),
+    keep_only_usable_days=False,
+):
+    """
+    Aggregate QC'd OceanRAIN minute data to daily ship+GPCP-pixel values.
+
+    Intended for the *new* OceanRAIN workflow:
+      - primary minute-level precip variable is `rate_main_mmph`
+      - `rate_phasebest_mmph` is kept only as a diagnostic
+      - phase fractions are retained for interpretation, not primary screening
+
+    Required columns in oc_df_minute:
+      time_utc, lat, lon, ship, precip_flag, rate_main_mmph
+
+    Optional useful columns:
+      precip_flag2, rate_phasebest_mmph, rate_odm_mmph, rate_gag_mmph,
+      true_wind_speed / u10 / rel_wind_speed,
+      rain_prob, snow_prob, mixed_prob
+
+    Returns
+    -------
+    daily_all : pd.DataFrame
+        Daily ship+pixel aggregates with coverage, phase fractions, totals, etc.
+    usable_days : pd.DataFrame
+        Subset passing minimum daily coverage threshold.
+    """
+
+    df = oc_df_minute.copy()
+
+    # --------------------------------------------------------
+    # 1) basic cleaning / datetime
+    # --------------------------------------------------------
+    df["time_utc"] = pd.to_datetime(df["time_utc"], utc=True, errors="coerce")
+    df = df.dropna(subset=["time_utc", "lat", "lon", "ship"]).copy()
+
+    if "rate_main_mmph" not in df.columns:
+        raise ValueError("Input dataframe must contain 'rate_main_mmph'.")
+
+    df["date"] = df["time_utc"].dt.floor("D")
+
+    # poleward subset if desired
+    if lat_abs_min is not None:
+        df = df[df["lat"].abs() >= float(lat_abs_min)].copy()
+
+    if df.empty:
+        empty = pd.DataFrame()
+        return empty, empty
+
+    # --------------------------------------------------------
+    # 2) map each minute to nearest GPCP pixel
+    # --------------------------------------------------------
+    lon_wrapped = ((df["lon"].to_numpy(dtype="float64") + 180.0) % 360.0) - 180.0
+    df["ilat"] = map_to_gpcp_idx(np.asarray(gpcp_lat_1d), df["lat"].to_numpy(dtype="float64"))
+    df["ilon"] = map_to_gpcp_idx(np.asarray(gpcp_lon_1d), lon_wrapped)
+
+    # --------------------------------------------------------
+    # 3) choose wind column if available
+    # --------------------------------------------------------
+    wind_col = None
+    for wc in wind_mean_col_preference:
+        if wc in df.columns:
+            wind_col = wc
+            break
+
+    grp_keys = ["date", "ilat", "ilon", "ship"]
+
+    # --------------------------------------------------------
+    # 4) minute coverage / phase composition diagnostics
+    # --------------------------------------------------------
+    # precip_flag meaning:
+    # 0 rain, 1 snow, 2 mixed, 3 true-zero, 4 inoperative, 5 harbor
+    # step0 QC should already have removed 4 and 5
+    daily_cov = (
+        df.groupby(grp_keys, as_index=False)
+          .agg(
+              n_min_total=("precip_flag", "size"),
+              n_min_valid_rate=("rate_main_mmph", lambda s: np.sum(np.isfinite(pd.to_numeric(s, errors="coerce")))),
+              n_min_zero=("precip_flag", lambda s: np.sum(s.to_numpy() == 3)),
+              n_min_rain=("precip_flag", lambda s: np.sum(s.to_numpy() == 0)),
+              n_min_snow=("precip_flag", lambda s: np.sum(s.to_numpy() == 1)),
+              n_min_mixed=("precip_flag", lambda s: np.sum(s.to_numpy() == 2)),
+              frac_zero=("precip_flag", lambda s: np.mean(s.to_numpy() == 3)),
+              frac_rain=("precip_flag", lambda s: np.mean(s.to_numpy() == 0)),
+              frac_snow=("precip_flag", lambda s: np.mean(s.to_numpy() == 1)),
+              frac_mixed=("precip_flag", lambda s: np.mean(s.to_numpy() == 2)),
+              lat_mean=("lat", "mean"),
+              lon_mean=("lon", "mean"),
+              wind_mean=(wind_col, "mean") if wind_col is not None else ("lat", "mean"),
+          )
+    )
+
+    # coverage relative to a full day
+    daily_cov["coverage_frac_day"] = daily_cov["n_min_total"] / 1440.0
+
+    # --------------------------------------------------------
+    # 5) daily precipitation metrics
+    # --------------------------------------------------------
+    agg_dict = {
+        "main_mean_mmph": ("rate_main_mmph", "mean"),
+        "main_median_mmph": ("rate_main_mmph", "median"),
+        "main_max_mmph": ("rate_main_mmph", "max"),
+        "main_mmday": ("rate_main_mmph", _mmday_from_mmph),
+    }
+
+    if "rate_phasebest_mmph" in df.columns:
+        agg_dict.update({
+            "phasebest_mean_mmph": ("rate_phasebest_mmph", "mean"),
+            "phasebest_mmday": ("rate_phasebest_mmph", _mmday_from_mmph),
+        })
+
+    if "rate_odm_mmph" in df.columns:
+        agg_dict.update({
+            "odm_mean_mmph": ("rate_odm_mmph", "mean"),
+            "odm_mmday": ("rate_odm_mmph", _mmday_from_mmph),
+        })
+
+    if "rate_gag_mmph" in df.columns:
+        agg_dict.update({
+            "gag_mean_mmph": ("rate_gag_mmph", "mean"),
+            "gag_mmday": ("rate_gag_mmph", _mmday_from_mmph),
+        })
+
+    if "rain_prob" in df.columns:
+        agg_dict["rain_prob_mean"] = ("rain_prob", "mean")
+    if "snow_prob" in df.columns:
+        agg_dict["snow_prob_mean"] = ("snow_prob", "mean")
+    if "mixed_prob" in df.columns:
+        agg_dict["mixed_prob_mean"] = ("mixed_prob", "mean")
+
+    daily_rates = (
+        df.groupby(grp_keys, as_index=False)
+          .agg(**agg_dict)
+    )
+
+    # --------------------------------------------------------
+    # 6) merge coverage + rates
+    # --------------------------------------------------------
+    daily_all = daily_cov.merge(daily_rates, on=grp_keys, how="left")
+
+    # --------------------------------------------------------
+    # 7) attach target grid-cell centers and hemisphere label
+    # --------------------------------------------------------
+    g_lat = np.asarray(gpcp_lat_1d)
+    g_lon = np.asarray(gpcp_lon_1d)
+
+    daily_all["lat_c"] = g_lat[daily_all["ilat"].to_numpy()]
+    daily_all["lon_c"] = g_lon[daily_all["ilon"].to_numpy()]
+    daily_all["hemi"] = np.where(daily_all["lat_c"] >= 0, "NH", "SH")
+
+    # --------------------------------------------------------
+    # 8) optional convenience diagnostics
+    # --------------------------------------------------------
+    # "precip-present" minutes = non-zero phase minutes
+    daily_all["n_min_precip_phase"] = (
+        daily_all["n_min_rain"] + daily_all["n_min_snow"] + daily_all["n_min_mixed"]
+    )
+    daily_all["frac_precip_phase"] = (
+        daily_all["frac_rain"] + daily_all["frac_snow"] + daily_all["frac_mixed"]
+    )
+
+    # some users like a dominant phase tag for interpretation only
+    phase_cols = ["frac_rain", "frac_snow", "frac_mixed", "frac_zero"]
+    phase_names = ["rain", "snow", "mixed", "zero"]
+
+    phase_arr = daily_all[phase_cols].to_numpy(dtype="float64")
+    phase_idx = np.nanargmax(phase_arr, axis=1)
+    daily_all["dominant_phase"] = np.array(phase_names, dtype=object)[phase_idx]
+
+    # --------------------------------------------------------
+    # 9) usable-day filter based on minimum coverage
+    # --------------------------------------------------------
+    min_minutes = float(coverage_frac) * 1440.0
+    usable_days = daily_all[daily_all["n_min_total"] >= min_minutes].copy()
+
+    if keep_only_usable_days:
+        daily_all = usable_days.copy()
+
+    return daily_all, usable_days
+
+# -----------------------------------------------------------------------------
 # STEP 2A: Add pixel-center coordinates + hemisphere from ilat/ilon
 # -----------------------------------------------------------------------------
 def add_pixel_coords_and_hemi(
@@ -1677,6 +2177,33 @@ def _ensure_xr_time_naive(da: xr.DataArray, tdim: str) -> xr.DataArray:
     t = t.tz_convert("UTC").tz_localize(None)
     return da.assign_coords({tdim: t.to_numpy(dtype="datetime64[ns]")})
 
+#-----------------------------------------------------------------------------
+def ensure_pixel_coords_and_hemi(
+    df: pd.DataFrame,
+    gpcp_lat_1d,
+    gpcp_lon_1d,
+    *,
+    ilat_col="ilat",
+    ilon_col="ilon",
+    latc_col="lat_c",
+    lonc_col="lon_c",
+    hemi_col="hemi",
+):
+    out = df.copy()
+
+    g_lat = np.asarray(gpcp_lat_1d)
+    g_lon = np.asarray(gpcp_lon_1d)
+
+    if latc_col not in out.columns:
+        out[latc_col] = g_lat[out[ilat_col].to_numpy()]
+    if lonc_col not in out.columns:
+        out[lonc_col] = g_lon[out[ilon_col].to_numpy()]
+    if hemi_col not in out.columns:
+        out[hemi_col] = np.where(out[latc_col] >= 0, "NH", "SH")
+
+    return out
+
+#-----------------------------------------------------------------------------
 def attach_daily_vars(
     df: pd.DataFrame,
     xr_obj,                       # xr.Dataset or xr.DataArray
@@ -1739,76 +2266,138 @@ def _ensure_datetime_coord_naive(da: xr.DataArray, tdim: str) -> xr.DataArray:
     t64 = t.to_numpy(dtype="datetime64[ns]")
     return da.assign_coords({tdim: t64})
 
+#----------------------------------------------------------------------------
 def attach_satellite_vars(
     df: pd.DataFrame,
-    xr_obj,                         # xr.Dataset or xr.DataArray
+    xr_obj,
     *,
-    var_map: dict,                  # {"newcol": "xr_var"} OR {"newcol": None} if xr_obj is DataArray
+    var_map: dict,
     date_col="date",
     lat_col="lat_c",
     lon_col="lon_c",
     lon_wrap=True,
     method="nearest",
-    tolerance_time=None,            # e.g. np.timedelta64(12,"h")  (optional)
-    tolerance_deg=None,             # kept for API compatibility (not used unless you want to expand)
+    tolerance_time=None,
 ) -> pd.DataFrame:
     """
-    Attach values from xr_obj (Dataset or DataArray) to df rows using df's (date, lat_c, lon_c).
+    Attach values from xr_obj to df rows using (date, lat_c, lon_c).
 
-    Fixes tz mismatch by forcing BOTH:
-      - df[date_col] to datetime64[ns] (naive)
-      - xr time coordinate to datetime64[ns] (naive)
-
-    tolerance_time applies to time dim only.
+    Robust behavior:
+    - time tolerance applied only to time dimension
+    - rows with unmatched times get NaN instead of crashing
     """
-    out = df.copy()
 
-    # --- critical fix: make df time naive datetime64[ns] ---
+    out = df.copy()
     out[date_col] = _to_naive_datetime64ns(out[date_col])
 
-    # Build DataArrays to sample
     if isinstance(xr_obj, xr.DataArray):
         if len(var_map) < 1:
             raise ValueError("For DataArray input, var_map must have at least one output column.")
         only_key = next(iter(var_map.keys()))
         das = {only_key: xr_obj}
     elif isinstance(xr_obj, xr.Dataset):
-        das = {new_col: xr_obj[varname] for new_col, varname in var_map.items()}
+        das = {}
+        for new_col, varname in var_map.items():
+            if varname is None:
+                if len(xr_obj.data_vars) != 1:
+                    raise ValueError(
+                        f"For Dataset input with var_map[{new_col}] = None, dataset must have exactly one data variable."
+                    )
+                only_var = list(xr_obj.data_vars)[0]
+                das[new_col] = xr_obj[only_var]
+            else:
+                das[new_col] = xr_obj[varname]
     else:
         raise TypeError("xr_obj must be xr.Dataset or xr.DataArray")
 
-    # infer dims from first DataArray
     da0 = next(iter(das.values()))
     tdim, ydim, xdim = _infer_dims(da0)
 
-    # build vectorized indexers
     latv = out[lat_col].to_numpy(dtype="float64")
     lonv = out[lon_col].to_numpy(dtype="float64")
     if lon_wrap:
         lonv = ((lonv + 180.0) % 360.0) - 180.0
 
-    t_indexer = xr.DataArray(out[date_col].astype("datetime64[ns]"), dims="points")
-    y_indexer = xr.DataArray(latv, dims="points")
-    x_indexer = xr.DataArray(lonv, dims="points")
-
-    sel_kwargs = {tdim: t_indexer, ydim: y_indexer, xdim: x_indexer}
-
-    # tolerance: only apply to time (xarray takes one tolerance kwarg)
-    tol = tolerance_time if tolerance_time is not None else None
-
-    # extract
     for new_col, da in das.items():
-        # --- critical fix: make dataset time coord naive datetime64[ns] ---
         da = _ensure_datetime_coord_naive(da, tdim)
 
-        if tol is None:
-            vals = da.sel(sel_kwargs, method=method).values
-        else:
-            vals = da.sel(sel_kwargs, method=method, tolerance=tol).values
+        # initialize output with NaN
+        vals_out = np.full(len(out), np.nan, dtype="float64")
 
-        out[new_col] = vals
+        # determine which rows fall inside product time range
+        tcoord = pd.to_datetime(da[tdim].values, errors="coerce")
+        tmin = tcoord.min().to_datetime64()
+        tmax = tcoord.max().to_datetime64()
+
+        valid_time_mask = (out[date_col].to_numpy() >= tmin) & (out[date_col].to_numpy() <= tmax)
+
+        if valid_time_mask.any():
+            sub = out.loc[valid_time_mask].copy()
+
+            t_indexer = xr.DataArray(sub[date_col].to_numpy().astype("datetime64[ns]"), dims="points")
+            y_indexer = xr.DataArray(sub[lat_col].to_numpy(dtype="float64"), dims="points")
+            xvals = sub[lon_col].to_numpy(dtype="float64")
+            if lon_wrap:
+                xvals = ((xvals + 180.0) % 360.0) - 180.0
+            x_indexer = xr.DataArray(xvals, dims="points")
+
+            try:
+                # time selection first
+                if tolerance_time is None:
+                    da_t = da.sel({tdim: t_indexer}, method=method)
+                else:
+                    da_t = da.sel({tdim: t_indexer}, method=method, tolerance=tolerance_time)
+
+                # then space
+                vals = da_t.sel({ydim: y_indexer, xdim: x_indexer}, method=method).values
+
+                vals_out[valid_time_mask] = np.asarray(vals).reshape(-1)
+
+            except KeyError:
+                # fallback: leave unmatched rows as NaN
+                pass
+
+        out[new_col] = vals_out
 
     return out
+
+#-----------------------------------------------------------------------------
+def subset_to_common_time_range(
+    df: pd.DataFrame,
+    products: dict,
+    *,
+    date_col="date",
+):
+    out = df.copy()
+    out[date_col] = pd.to_datetime(out[date_col], errors="coerce").values.astype("datetime64[ns]")
+
+    prod_mins = []
+    prod_maxs = []
+
+    for name, (xr_obj, var_map) in products.items():
+        if isinstance(xr_obj, xr.DataArray):
+            da0 = xr_obj
+        else:
+            # pick first mapped variable with a real variable name
+            first_var = next(iter(var_map.values()))
+            if first_var is None:
+                # fallback: first data var in dataset
+                first_var = list(xr_obj.data_vars)[0]
+            da0 = xr_obj[first_var]
+
+        tdim, _, _ = _infer_dims(da0)
+        t = pd.to_datetime(da0[tdim].values, errors="coerce")
+        t = pd.DatetimeIndex(t).tz_localize(None) if getattr(t, "tz", None) is not None else pd.DatetimeIndex(t)
+
+        prod_mins.append(t.min().to_datetime64())
+        prod_maxs.append(t.max().to_datetime64())
+
+    common_start = max(prod_mins)
+    common_end = min(prod_maxs)
+
+    out = out[(out[date_col] >= common_start) & (out[date_col] <= common_end)].copy()
+
+    return out, common_start, common_end
 
 # -----------------------------------------------------------------------------
 # STEP 2D: Example usage (NH vs SH)
@@ -1903,7 +2492,96 @@ def step2_attach_and_split(
     return snow2, rain2, (snow_NH, snow_SH, rain_NH, rain_SH)
 
 # -----------------------------------------------------------------------------
+def step2_attach_products_oceanrain(
+    daily_or_df: pd.DataFrame,
+    *,
+    gpcp_grid_ds: xr.Dataset,
+    products,
+    date_col="date",
+    ilat_col="ilat",
+    ilon_col="ilon",
+    lat_col="lat_c",
+    lon_col="lon_c",
+    ref_col="main_mmday",
+    method="nearest",
+    tolerance_time=None,
+):
+    out = daily_or_df.copy()
 
+    print("INSIDE function - type(products):", type(products))
+
+    if ref_col not in out.columns:
+        raise ValueError(f"Expected OceanRAIN reference column '{ref_col}' not found.")
+
+    out = ensure_pixel_coords_and_hemi(
+        out,
+        gpcp_grid_ds["lat"].values,
+        gpcp_grid_ds["lon"].values,
+        ilat_col=ilat_col,
+        ilon_col=ilon_col,
+        latc_col=lat_col,
+        lonc_col=lon_col,
+        hemi_col="hemi",
+    )
+
+    # robust iteration
+    if isinstance(products, dict):
+        iterable = products.items()
+    elif isinstance(products, list):
+        iterable = products
+    else:
+        raise TypeError(f"`products` must be dict or list, got {type(products)}")
+
+    for item in iterable:
+        if isinstance(products, dict):
+            name, (xr_obj, var_map) = item
+        else:
+            name, xr_obj, var_map = item
+
+        print("Attaching:", name)
+
+        out = attach_satellite_vars(
+            out,
+            xr_obj,
+            var_map=var_map,
+            date_col=date_col,
+            lat_col=lat_col,
+            lon_col=lon_col,
+            method=method,
+            tolerance_time=tolerance_time,
+        )
+
+    return out
+
+#-----------------------------------------------------------------------------
+def split_oceanrain_attached_by_hemi(
+    df: pd.DataFrame,
+    *,
+    hemi_col="hemi",
+):
+    df_nh = df[df[hemi_col] == "NH"].copy()
+    df_sh = df[df[hemi_col] == "SH"].copy()
+    return df_nh, df_sh 
+
+# -----------------------------------------------------------------------------
+def subset_valid_pairs(
+    df: pd.DataFrame,
+    *,
+    ref_col="main_mmday",
+    product_cols=None,
+):
+    out = df.copy()
+
+    if product_cols is None:
+        product_cols = []
+
+    needed = [ref_col] + list(product_cols)
+    for c in needed:
+        if c not in out.columns:
+            raise ValueError(f"Column '{c}' not found in dataframe.")
+
+    return out.dropna(subset=needed).copy()
+#-----------------------------------------------------------------------------
 def build_metric_table(phase_based_cat_metrics_hemi, products, metrics=("POD","FAR","Bias","HSS")):
     tbl = {}
     for hemi in ["SH", "NH"]:
@@ -1919,9 +2597,332 @@ def build_metric_table(phase_based_cat_metrics_hemi, products, metrics=("POD","F
                     tbl[hemi][met][phse][product] = d.get(met, np.nan)
     return tbl
 
+#-----------------------------------------------------------------------------
+
+def build_oceanrain_ship_year_month_means(
+    df: pd.DataFrame,
+    *,
+    obs_col="main_mmday",
+    product_cols=None,
+    date_col="date",
+    hemi_col="hemi",
+    ship_col="ship",
+    min_days_per_month=1,
+):
+    """
+    Build monthly mean daily rainfall from daily collocations.
+
+    Each output row = one (hemi, ship, year, month) point.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Usually daily_or_attached.
+    obs_col : str
+        OceanRAIN reference column, e.g. 'main_mmday'.
+    product_cols : list[str]
+        Product columns to average.
+    min_days_per_month : int
+        Minimum number of valid OceanRAIN daily values required in a ship-year-month bin.
+    """
+
+    out = df.copy()
+    out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
+    out = out.dropna(subset=[date_col, hemi_col, ship_col, obs_col]).copy()
+
+    out["year"] = out[date_col].dt.year
+    out["month"] = out[date_col].dt.month
+
+    if product_cols is None:
+        product_cols = []
+
+    grp = [hemi_col, ship_col, "year", "month"]
+
+    agg_dict = {
+        obs_col: (obs_col, "mean"),
+        "n_days_obs": (obs_col, lambda s: np.sum(np.isfinite(pd.to_numeric(s, errors="coerce")))),
+    }
+
+    for p in product_cols:
+        if p in out.columns:
+            agg_dict[p] = (p, "mean")
+            agg_dict[f"n_days_{p}"] = (p, lambda s: np.sum(np.isfinite(pd.to_numeric(s, errors="coerce"))))
+
+    monthly = out.groupby(grp, as_index=False).agg(**agg_dict)
+
+    monthly = monthly[monthly["n_days_obs"] >= int(min_days_per_month)].copy()
+
+    month_map = {
+        1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
+        5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
+        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
+    }
+    monthly["month_name"] = monthly["month"].map(month_map)
+
+    # nice label if you want to annotate later
+    monthly["year_month"] = monthly["year"].astype(str) + "-" + monthly["month"].astype(str).str.zfill(2)
+
+    return monthly.sort_values([hemi_col, ship_col, "year", "month"]).reset_index(drop=True)
+#-----------------------------------------------------------------------------
+def build_oceanrain_ship_month_climatology(
+    df: pd.DataFrame,
+    *,
+    obs_col="main_mmday",
+    product_cols=None,
+    min_days_per_ship_month=10,
+    date_col="date",
+    hemi_col="hemi",
+    ship_col="ship",
+):
+    """
+    Build multi-year mean monthly daily-rainfall climatology by ship.
+
+    Each output row = one (hemi, ship, month) climatological point.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Usually daily_or_attached.
+    obs_col : str
+        OceanRAIN reference column, e.g. 'main_mmday'.
+    product_cols : list[str]
+        Satellite/reanalysis columns to average alongside OceanRAIN.
+    min_days_per_ship_month : int
+        Minimum number of valid daily collocations required for a ship-month bin.
+    """
+
+    out = df.copy()
+    out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
+    out = out.dropna(subset=[date_col, hemi_col, ship_col, obs_col]).copy()
+    out["month"] = out[date_col].dt.month
+
+    if product_cols is None:
+        product_cols = []
+
+    # only keep needed cols
+    use_cols = [date_col, hemi_col, ship_col, "month", obs_col] + product_cols
+    use_cols = [c for c in use_cols if c in out.columns]
+    out = out[use_cols].copy()
+
+    # helper to compute valid-day counts per product
+    grp = [hemi_col, ship_col, "month"]
+
+    # OceanRAIN count
+    obs_count = (
+        out.groupby(grp, as_index=False)
+           .agg(n_days_obs=(obs_col, lambda s: np.sum(np.isfinite(pd.to_numeric(s, errors="coerce")))))
+    )
+
+    # mean OceanRAIN climatology
+    obs_mean = (
+        out.groupby(grp, as_index=False)
+           .agg(**{obs_col: (obs_col, "mean")})
+    )
+
+    # product means + valid counts
+    prod_frames = []
+    for p in product_cols:
+        if p not in out.columns:
+            continue
+
+        tmp = (
+            out.groupby(grp, as_index=False)
+               .agg(
+                   **{
+                       p: (p, "mean"),
+                       f"n_days_{p}": (p, lambda s: np.sum(np.isfinite(pd.to_numeric(s, errors="coerce"))))
+                   }
+               )
+        )
+        prod_frames.append(tmp)
+
+    # merge all pieces
+    clim = obs_mean.merge(obs_count, on=grp, how="left")
+
+    for tmp in prod_frames:
+        clim = clim.merge(tmp, on=grp, how="left")
+
+    # retain only ship-month bins with enough OceanRAIN days
+    clim = clim[clim["n_days_obs"] >= int(min_days_per_ship_month)].copy()
+
+    # month labels
+    month_map = {
+        1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
+        5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
+        9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"
+    }
+    clim["month_name"] = clim["month"].map(month_map)
+
+    # optional: total valid pairs across all years for each ship-month
+    # this helps later for annotation / filtering
+    return clim.sort_values([hemi_col, ship_col, "month"]).reset_index(drop=True)
+# -----------------------------------------------------------------------------
+def compute_metrics_from_ship_month_climatology(
+    ship_month_clim: pd.DataFrame,
+    *,
+    products,
+    obs_col="main_mmday",
+    hemis=("NH", "SH"),
+):
+    """
+    Compute quantitative metrics using ship-month climatology points.
+    """
+
+    metrics_hemi = {}
+
+    for hemi in hemis:
+        dfh = ship_month_clim[ship_month_clim["hemi"] == hemi].copy()
+        metrics_hemi[hemi] = {}
+
+        print(f"\nHemisphere = {hemi}, total ship-month points = {len(dfh)}")
+
+        for p in products:
+            sub = dfh[[obs_col, p]].replace([np.inf, -np.inf], np.nan).dropna().copy()
+            print(f"  {p}: N = {len(sub)}")
+
+            if len(sub) == 0:
+                metrics_hemi[hemi][p] = {
+                    "CC": np.nan,
+                    "RMSE": np.nan,
+                    "MAE": np.nan,
+                    "Bias": np.nan,
+                    "RB": np.nan,
+                    "N": 0,
+                }
+                continue
+
+            qt = calculate_metrics(sub, obs_col, p)
+
+            # add relative bias if your calculate_metrics does not already
+            if isinstance(qt, dict):
+                if "RB" not in qt:
+                    obs_mean = sub[obs_col].mean()
+                    pred_mean = sub[p].mean()
+                    qt["RB"] = np.nan if obs_mean == 0 else 100.0 * (pred_mean - obs_mean) / obs_mean
+                qt["N"] = len(sub)
+
+            metrics_hemi[hemi][p] = qt
+
+    return metrics_hemi
+# ------------------------------------------------------------
+def compute_metrics_from_ship_year_month_means(
+    monthly_df: pd.DataFrame,
+    *,
+    products,
+    obs_col="main_mmday",
+    hemis=("NH", "SH"),
+):
+    metrics_hemi = {}
+
+    for hemi in hemis:
+        dfh = monthly_df[monthly_df["hemi"] == hemi].copy()
+        metrics_hemi[hemi] = {}
+
+        print(f"\nHemisphere = {hemi}, total monthly points = {len(dfh)}")
+
+        for p in products:
+            sub = dfh[[obs_col, p]].replace([np.inf, -np.inf], np.nan).dropna().copy()
+            print(f"  {p}: N = {len(sub)}")
+
+            if len(sub) == 0:
+                metrics_hemi[hemi][p] = {
+                    "CC": np.nan,
+                    "RMSE": np.nan,
+                    "MAE": np.nan,
+                    "Bias": np.nan,
+                    "RB": np.nan,
+                    "N": 0,
+                }
+                continue
+
+            qt = calculate_metrics(sub, obs_col, p)
+
+            if isinstance(qt, dict):
+                if "RB" not in qt:
+                    obs_mean = sub[obs_col].mean()
+                    pred_mean = sub[p].mean()
+                    qt["RB"] = np.nan if obs_mean == 0 else 100.0 * (pred_mean - obs_mean) / obs_mean
+                qt["N"] = len(sub)
+
+            metrics_hemi[hemi][p] = qt
+
+    return metrics_hemi
+# ------------------------------------------------------------
+# 1) Build monthly-climatology-based anomalies for each region
+# ------------------------------------------------------------
+def make_region_monthly_anomaly_df(
+    df,
+    products,
+    region_col="region",
+    date_col="date",
+):
+    """
+    Create anomaly columns for each product using region-specific monthly climatology:
+        anomaly = daily value - region/month mean
+
+    Returns
+    -------
+    df_anom : DataFrame
+        Original df plus columns like:
+        rain_rate_anom, GPCP v3.2_anom, ...
+    """
+    d = df.copy()
+    d[date_col] = pd.to_datetime(d[date_col])
+    d["month"] = d[date_col].dt.month
+
+    # region-month climatology for each product
+    clim = (
+        d.groupby([region_col, "month"])[products]
+         .mean()
+         .reset_index()
+    )
+
+    # merge climatology back
+    d = d.merge(
+        clim,
+        on=[region_col, "month"],
+        suffixes=("", "_clim"),
+        how="left"
+    )
+
+    # create anomaly columns
+    for p in products:
+        d[f"{p}_anom"] = d[p] - d[f"{p}_clim"]
+
+    return d
 
 # -----------------------------------------------------------------------------
+def make_monthly_region_series(df, products, date_col="date", region_col="region"):
+    d = df.copy()
+    d[date_col] = pd.to_datetime(d[date_col])
+    d["month_start"] = d[date_col].dt.to_period("M").dt.to_timestamp()
 
+    out = (
+        d.groupby([region_col, "month_start"])[products]
+         .mean()
+         .reset_index()
+         .sort_values([region_col, "month_start"])
+    )
+    return out
+
+# -----------------------------------------------------------------------------
+def deseasonalize_monthly(df_monthly, products, time_col="month_start", region_col="region"):
+    d = df_monthly.copy()
+    d["month"] = pd.to_datetime(d[time_col]).dt.month
+
+    clim = (
+        d.groupby([region_col, "month"])[products]
+         .mean()
+         .reset_index()
+    )
+
+    d = d.merge(clim, on=[region_col, "month"], suffixes=("", "_clim"))
+
+    for p in products:
+        d[f"{p}_anom"] = d[p] - d[f"{p}_clim"]
+
+    return d
+#-----------------------------------------------------------------------------
 def make_doy_climatology_pooled(
     df_daily: pd.DataFrame,
     *,
@@ -2069,7 +3070,112 @@ def plot_phase_cat_metrics_NH_SH(
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     return fig
 # -----------------------------------------------------------------------------
+import matplotlib.pyplot as plt
+import numpy as np
 
+def plot_oceanrain_monthly_ship_scatter_by_hemi(
+    monthly_df: pd.DataFrame,
+    *,
+    hemi,
+    products,
+    obs_col="main_mmday",
+    ship_col="ship",
+    ship_colors=None,
+    ship_markers=None,
+    figsize=(15, 7.5),
+    xylim=(0, 20),
+    ncols=3,
+    add_titles=False,
+):
+    ships = sorted(monthly_df[ship_col].dropna().unique())
+
+    if ship_colors is None:
+        cmap = plt.get_cmap("tab10")
+        ship_colors = {s: cmap(i % 10) for i, s in enumerate(ships)}
+
+    if ship_markers is None:
+        marker_list = ["o", "s", "^", "D", "P", "X", "v", "*"]
+        ship_markers = {s: marker_list[i % len(marker_list)] for i, s in enumerate(ships)}
+
+    sub_hemi = monthly_df[monthly_df["hemi"] == hemi].copy()
+
+    n = len(products)
+    nrows = int(np.ceil(n / ncols))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    axes = axes.ravel()
+
+    xmin, xmax = xylim
+    ymin, ymax = xylim
+
+    for i, product in enumerate(products):
+        ax = axes[i]
+
+        sub = sub_hemi[[obs_col, product, ship_col, "year_month"]].replace([np.inf, -np.inf], np.nan).dropna()
+
+        for ship in ships:
+            ss = sub[sub[ship_col] == ship]
+            if len(ss) == 0:
+                continue
+
+            ax.scatter(
+                ss[obs_col], ss[product],
+                color=ship_colors[ship],
+                marker=ship_markers[ship],
+                s=70,
+                edgecolor="k",
+                linewidth=0.45,
+                alpha=0.9,
+                label=ship
+            )
+
+        ax.plot([xmin, xmax], [ymin, ymax], "--", color="0.55", lw=1)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+
+        if len(sub) > 0:
+            met = calculate_metrics(sub, obs_col, product)
+
+            txt = (
+                f"RB: {met['Bias']:.1f}%\n"
+                f"RMSE: {met['RMSE']:.2f} mm/day\n"
+                f"CC: {met['CC']:.2f}\n"
+                f"N: {len(sub)}"
+            )
+
+            ax.text(
+                0.04, 0.94, txt,
+                transform=ax.transAxes,
+                ha="left", va="top",
+                fontsize=11, fontweight="bold"
+            )
+
+        if add_titles:
+            ax.set_title(product, fontsize=16)
+
+        ax.set_xlabel("OceanRAIN monthly mean [mm day$^{-1}$]", fontsize=13)
+        ax.set_ylabel(f"{product} [mm day$^{-1}$]", fontsize=13)
+        ax.grid(True, alpha=0.28)
+
+    for j in range(len(products), len(axes)):
+        axes[j].axis("off")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+    fig.legend(
+        by_label.values(),
+        by_label.keys(),
+        loc="upper center",
+        ncol=min(len(by_label), 5),
+        frameon=False,
+        fontsize=13,
+        handletextpad=0.5,
+        columnspacing=1.5
+    )
+
+    fig.tight_layout(rect=[0, 0, 1, 0.92])
+    return fig
+#-----------------------------------------------------------------------------
 # def plot_hemi_phase_metrics_barpanel(
 #     phase_based_cat_metrics_hemi,
 #     products,
@@ -2240,7 +3346,141 @@ def plot_hemi_phase_metrics_barpanel(
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     return fig
 #-----------------------------------------------------------------------------
+import matplotlib.pyplot as plt
 
+def plot_oceanrain_ship_month_scatter(
+    ship_month_clim: pd.DataFrame,
+    *,
+    products,
+    obs_col="main_mmday",
+    hemis=("NH", "SH"),
+    ship_colors=None,
+    ship_markers=None,
+    figsize=(14, 10),
+    xlim=None,
+    ylim=None,
+):
+    """
+    Multi-panel scatter:
+      rows/cols over products
+      columns show products
+      within each panel: NH and SH combined? No.
+    
+    Here we do:
+      one subplot per product
+      points colored/marked by ship
+      NH and SH shown in separate rows
+    """
+
+    nprod = len(products)
+    ncols = 3
+    nrows = int(np.ceil(nprod / ncols))
+
+    fig, axes = plt.subplots(
+        nrows=nrows * len(hemis),
+        ncols=ncols,
+        figsize=figsize,
+        squeeze=False
+    )
+
+    ships = sorted(ship_month_clim["ship"].dropna().unique())
+
+    if ship_colors is None:
+        cmap = plt.get_cmap("tab10")
+        ship_colors = {s: cmap(i % 10) for i, s in enumerate(ships)}
+
+    if ship_markers is None:
+        marker_list = ["o", "s", "^", "D", "P", "X", "v", "*"]
+        ship_markers = {s: marker_list[i % len(marker_list)] for i, s in enumerate(ships)}
+
+    for h, hemi in enumerate(hemis):
+        dfh = ship_month_clim[ship_month_clim["hemi"] == hemi].copy()
+
+        for i, product in enumerate(products):
+            rr = h * nrows + (i // ncols)
+            cc = i % ncols
+            ax = axes[rr, cc]
+
+            sub = dfh[[obs_col, product, "ship", "month"]].replace([np.inf, -np.inf], np.nan).dropna().copy()
+
+            for ship in ships:
+                ss = sub[sub["ship"] == ship]
+                if len(ss) == 0:
+                    continue
+
+                ax.scatter(
+                    ss[obs_col],
+                    ss[product],
+                    s=55,
+                    color=ship_colors.get(ship, None),
+                    marker=ship_markers.get(ship, "o"),
+                    edgecolor="k",
+                    linewidth=0.4,
+                    alpha=0.85,
+                    label=ship if (i == 0 and h == 0) else None,
+                )
+
+            # 1:1 line
+            xymax = np.nanmax([
+                sub[obs_col].max() if len(sub) else np.nan,
+                sub[product].max() if len(sub) else np.nan
+            ])
+            if np.isfinite(xymax):
+                lim_max = xymax * 1.05
+                ax.plot([0, lim_max], [0, lim_max], "--", color="0.5", lw=1)
+
+                if xlim is None:
+                    ax.set_xlim(0, lim_max)
+                else:
+                    ax.set_xlim(*xlim)
+
+                if ylim is None:
+                    ax.set_ylim(0, lim_max)
+                else:
+                    ax.set_ylim(*ylim)
+
+            # metrics
+            if len(sub) >= 2:
+                obs = sub[obs_col]
+                pred = sub[product]
+                rb = 100 * (pred.mean() - obs.mean()) / obs.mean() if obs.mean() != 0 else np.nan
+                rmse = np.sqrt(np.mean((pred - obs) ** 2))
+                ccv = np.corrcoef(obs, pred)[0, 1] if len(sub) > 1 else np.nan
+
+                txt = f"RB: {rb:.2f}%\nRMSE: {rmse:.2f} mm/day\nCC: {ccv:.2f}\nN: {len(sub)}"
+                ax.text(0.05, 0.95, txt, transform=ax.transAxes,
+                        ha="left", va="top", fontsize=10, fontweight="bold")
+
+            ax.set_title(f"{product} ({hemi})", fontsize=13)
+            ax.set_xlabel("OceanRAIN ship-month climatology [mm day$^{-1}$]")
+            ax.set_ylabel(f"{product} [mm day$^{-1}$]")
+            ax.grid(True, alpha=0.3)
+
+    # turn off unused axes
+    total_axes = axes.shape[0] * axes.shape[1]
+    used_axes = len(hemis) * len(products)
+    for k in range(used_axes, total_axes):
+        rr = k // axes.shape[1]
+        cc = k % axes.shape[1]
+        axes[rr, cc].axis("off")
+
+    # legend
+    handles = [
+        plt.Line2D([0], [0],
+                   marker=ship_markers[s],
+                   color="w",
+                   markerfacecolor=ship_colors[s],
+                   markeredgecolor="k",
+                   markersize=8,
+                   linestyle="None",
+                   label=s)
+        for s in ships
+    ]
+    fig.legend(handles=handles, labels=ships, loc="upper center", ncol=min(len(ships), 5), frameon=False)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    return fig
+#-----------------------------------------------------------------------------
 
 def plot_hemi_phase_quant_metrics_panel(
     phase_based_qt_metrics_hemi: dict,
@@ -2369,6 +3609,279 @@ def plot_hemi_phase_quant_metrics_panel(
 
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     return fig
+
+#------------------------------------------------------------------------------
+import numpy as np
+import pandas as pd
+
+def compute_hemi_metrics_oceanrain(
+    daily_or_attached: pd.DataFrame,
+    *,
+    products,
+    obs_col="main_mmday",
+    hemis=("NH", "SH"),
+    cat_thr=0.1,   # mm/day threshold for rain occurrence
+):
+    """
+    Compute hemisphere-based categorical and quantitative metrics.
+
+    Expected:
+      daily_or_attached contains:
+        - hemi
+        - obs_col (OceanRAIN daily precipitation)
+        - one column per product
+
+    Returns
+    -------
+    cat_metrics_hemi : dict
+        cat_metrics_hemi[hemi][product] -> dict
+    qt_metrics_hemi : dict
+        qt_metrics_hemi[hemi][product] -> dict
+    """
+
+    cat_metrics_hemi = {}
+    qt_metrics_hemi = {}
+
+    for hemi in hemis:
+        dfh = daily_or_attached[daily_or_attached["hemi"] == hemi].copy()
+
+        cat_metrics_hemi.setdefault(hemi, {})
+        qt_metrics_hemi.setdefault(hemi, {})
+
+        print(f"\nProcessing hemisphere = {hemi}, N_total = {len(dfh)}")
+
+        for product in products:
+            sub = dfh[[obs_col, product]].copy()
+            sub = sub.replace([np.inf, -np.inf], np.nan).dropna()
+
+            print(f"  {product}: N_valid = {len(sub)}")
+
+            if len(sub) == 0:
+                cat_metrics_hemi[hemi][product] = {}
+                qt_metrics_hemi[hemi][product] = {}
+                continue
+
+            observed = sub[obs_col]
+            forecast = sub[product]
+
+            # categorical metrics on all valid pairs
+            cat_metrics_hemi[hemi][product] = categorical_stats(
+                forecast, observed, cat_thr
+            )
+
+            # quantitative metrics:
+            # usually more meaningful on precip-present pairs
+            sub_qt = sub[(sub[obs_col] >= cat_thr) & (sub[product] >= cat_thr)].copy()
+
+            if len(sub_qt) == 0:
+                qt_metrics_hemi[hemi][product] = {
+                    "CC": np.nan,
+                    "RMSE": np.nan,
+                    "MAE": np.nan,
+                    "Bias": np.nan,
+                    "N": 0,
+                }
+            else:
+                qt = calculate_metrics(sub_qt, obs_col, product)
+
+                # optionally attach N
+                if isinstance(qt, dict):
+                    qt["N"] = len(sub_qt)
+
+                qt_metrics_hemi[hemi][product] = qt
+
+    return cat_metrics_hemi, qt_metrics_hemi
+
+#------------------------------------------------------------------------------
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import numpy as np
+
+def plot_hemi_cat_metrics_barpanel(
+    cat_metrics_hemi,
+    products,
+    product_colors,
+    *,
+    metrics=("POD", "FAR", "Bias", "HSS"),
+    hemis=("SH", "NH"),
+    figsize=(10, 10),
+    ylims=None,
+):
+    """
+    Rows = metrics
+    X-axis = products
+    Bars = hemispheres
+    """
+
+    hemi_style = {
+        "SH": {"alpha": 0.95, "hatch": None},
+        "NH": {"alpha": 0.55, "hatch": "///"},
+    }
+
+    fig, axes = plt.subplots(
+        nrows=len(metrics), ncols=1,
+        figsize=figsize, sharex=True
+    )
+
+    if len(metrics) == 1:
+        axes = np.array([axes])
+
+    x = np.arange(len(products))
+    width = 0.35
+    offsets = (np.arange(len(hemis)) - (len(hemis) - 1) / 2) * width
+
+    for r, met in enumerate(metrics):
+        ax = axes[r]
+
+        for j, hemi in enumerate(hemis):
+            vals = []
+            for p in products:
+                d = cat_metrics_hemi.get(hemi, {}).get(p, {})
+                vals.append(d.get(met, np.nan) if isinstance(d, dict) else np.nan)
+
+            style = hemi_style[hemi]
+
+            ax.bar(
+                x + offsets[j],
+                vals,
+                width=width,
+                color=[product_colors.get(p, None) for p in products],
+                alpha=style["alpha"],
+                hatch=style["hatch"],
+                edgecolor="k" if style["hatch"] else "none",
+                linewidth=0.3 if style["hatch"] else 0.0,
+            )
+
+        ax.set_ylabel(met, fontsize=13)
+        ax.grid(True, axis="y", alpha=0.3)
+
+        if ylims is not None and met in ylims:
+            ax.set_ylim(*ylims[met])
+
+    axes[-1].set_xticks(x)
+    axes[-1].set_xticklabels(products, rotation=25, ha="right")
+
+    prod_handles = [
+        mpatches.Patch(facecolor=product_colors.get(p, "0.7"), label=p)
+        for p in products
+    ]
+    fig.legend(
+        handles=prod_handles,
+        labels=products,
+        loc="upper center",
+        ncol=len(products),
+        frameon=False,
+        fontsize=11
+    )
+
+    hemi_handles = [
+        mpatches.Patch(facecolor="0.2", alpha=hemi_style["SH"]["alpha"],
+                       hatch=hemi_style["SH"]["hatch"], label="SH"),
+        mpatches.Patch(facecolor="0.2", alpha=hemi_style["NH"]["alpha"],
+                       hatch=hemi_style["NH"]["hatch"], label="NH"),
+    ]
+    axes[0].legend(handles=hemi_handles, title="Hemi", loc="upper left", frameon=False)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    return fig
+#------------------------------------------------------------------------------
+def plot_hemi_quant_metrics_barpanel(
+    qt_metrics_hemi,
+    products,
+    product_colors,
+    *,
+    metrics=("CC", "RMSE", "MAE", "Bias"),
+    hemis=("SH", "NH"),
+    figsize=(10, 10),
+    ylims=None,
+    ylabel_map=None,
+):
+    """
+    Rows = metrics
+    X-axis = products
+    Bars = hemispheres
+    """
+
+    hemi_style = {
+        "SH": {"alpha": 0.95, "hatch": None},
+        "NH": {"alpha": 0.55, "hatch": "///"},
+    }
+
+    if ylabel_map is None:
+        ylabel_map = {
+            "CC": "CC",
+            "RMSE": "RMSE\n[mm day$^{-1}$]",
+            "MAE": "MAE\n[mm day$^{-1}$]",
+            "Bias": "Bias"
+        }
+
+    fig, axes = plt.subplots(
+        nrows=len(metrics), ncols=1,
+        figsize=figsize, sharex=True
+    )
+
+    if len(metrics) == 1:
+        axes = np.array([axes])
+
+    x = np.arange(len(products))
+    width = 0.35
+    offsets = (np.arange(len(hemis)) - (len(hemis) - 1) / 2) * width
+
+    for r, met in enumerate(metrics):
+        ax = axes[r]
+
+        for j, hemi in enumerate(hemis):
+            vals = []
+            for p in products:
+                d = qt_metrics_hemi.get(hemi, {}).get(p, {})
+                vals.append(d.get(met, np.nan) if isinstance(d, dict) else np.nan)
+
+            style = hemi_style[hemi]
+
+            ax.bar(
+                x + offsets[j],
+                vals,
+                width=width,
+                color=[product_colors.get(p, None) for p in products],
+                alpha=style["alpha"],
+                hatch=style["hatch"],
+                edgecolor="k" if style["hatch"] else "none",
+                linewidth=0.3 if style["hatch"] else 0.0,
+            )
+
+        ax.set_ylabel(ylabel_map.get(met, met), fontsize=13)
+        ax.grid(True, axis="y", alpha=0.3)
+
+        if ylims is not None and met in ylims:
+            ax.set_ylim(*ylims[met])
+
+    axes[-1].set_xticks(x)
+    axes[-1].set_xticklabels(products, rotation=25, ha="right")
+
+    prod_handles = [
+        mpatches.Patch(facecolor=product_colors.get(p, "0.7"), label=p)
+        for p in products
+    ]
+    fig.legend(
+        handles=prod_handles,
+        labels=products,
+        loc="upper center",
+        ncol=len(products),
+        frameon=False,
+        fontsize=11
+    )
+
+    hemi_handles = [
+        mpatches.Patch(facecolor="0.2", alpha=hemi_style["SH"]["alpha"],
+                       hatch=hemi_style["SH"]["hatch"], label="SH"),
+        mpatches.Patch(facecolor="0.2", alpha=hemi_style["NH"]["alpha"],
+                       hatch=hemi_style["NH"]["hatch"], label="NH"),
+    ]
+    axes[0].legend(handles=hemi_handles, title="Hemi", loc="upper left", frameon=False)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    return fig
+#-------------------------------------------------------------------------------
 
 
 def plot_satellite_vs_groundtruth(
@@ -3723,6 +5236,59 @@ def contiguous_year_segments(years, max_gap=1):
             segs.append([y])
     return [np.array(s, dtype=int) for s in segs]
 
+#------------------------------------------------------------------
+def reindex_monthly_full(df, date_col="date"):
+    """
+    Reindex a monthly dataframe to a full monthly timeline so missing months
+    remain explicit as NaN and plots show gaps rather than artificial continuity.
+    """
+    d = df.copy()
+    d[date_col] = pd.to_datetime(d[date_col])
+
+    if d.empty:
+        return d
+
+    full_idx = pd.date_range(
+        d[date_col].min(),
+        d[date_col].max(),
+        freq="MS"
+    )
+
+    d = (
+        d.set_index(date_col)
+         .reindex(full_idx)
+         .rename_axis(date_col)
+         .reset_index()
+    )
+    return d
+
+#------------------------------------------------------------------
+def longest_contiguous_month_block(dates, max_gap_months=1):
+    """
+    Find the longest contiguous block in a monthly datetime series.
+    dates: array-like of monthly timestamps
+    returns: DatetimeIndex of the longest block
+    """
+    dt = pd.to_datetime(pd.Series(dates).dropna().unique())
+    dt = pd.DatetimeIndex(dt).sort_values()
+
+    if len(dt) == 0:
+        return pd.DatetimeIndex([])
+
+    segs = [[dt[0]]]
+
+    for t in dt[1:]:
+        prev = segs[-1][-1]
+        month_diff = (t.year - prev.year) * 12 + (t.month - prev.month)
+
+        if month_diff <= max_gap_months:
+            segs[-1].append(t)
+        else:
+            segs.append([t])
+
+    segs = [pd.DatetimeIndex(s) for s in segs]
+    return max(segs, key=len)
+
 #-----------------------------------------------------------------------------
 def plot_interannual_variability_2x2(
     annual_df,
@@ -3842,9 +5408,10 @@ def plot_interannual_variability_2x2_gapaware(
     max_gap_years=1,
     min_days_ref=365,
     require_all_products=False,
-    legend_ncol=4,
-    legend_fontsize=10,
+    legend_ncol=6,
+    legend_fontsize=12,
     show_product_slopes=True,   # NEW
+    region_names=Buoy_REGION_NAMES,
 ):
     fig, axes = plt.subplots(2, 2, figsize=figsize, dpi=300)
     axes = axes.flatten()
@@ -3903,80 +5470,80 @@ def plot_interannual_variability_2x2_gapaware(
                         color=product_colors[p], label=p)
 
         # ---- compute buoy trend band on longest contiguous observed segment ----
-        buoy_out = None
-        if add_trend_band and ref in dfr.columns:
-            y_buoy = dfr[ref].values.astype(float)
-            m = np.isfinite(y_buoy) & np.isfinite(years.astype(float))
-            years_obs = years[m]
-            buoy_obs  = y_buoy[m]
+        # buoy_out = None
+        # if add_trend_band and ref in dfr.columns:
+        #     y_buoy = dfr[ref].values.astype(float)
+        #     m = np.isfinite(y_buoy) & np.isfinite(years.astype(float))
+        #     years_obs = years[m]
+        #     buoy_obs  = y_buoy[m]
 
-            segs_obs = contiguous_segments(years_obs, max_gap=max_gap_years)
-            if len(segs_obs) > 0:
-                main_seg_obs = max(segs_obs, key=len)
-                seg_mask = np.isin(years_obs, main_seg_obs)
-                xs = years_obs[seg_mask].astype(float)
-                ys = buoy_obs[seg_mask]
+        #     segs_obs = contiguous_segments(years_obs, max_gap=max_gap_years)
+        #     if len(segs_obs) > 0:
+        #         main_seg_obs = max(segs_obs, key=len)
+        #         seg_mask = np.isin(years_obs, main_seg_obs)
+        #         xs = years_obs[seg_mask].astype(float)
+        #         ys = buoy_obs[seg_mask]
 
-                buoy_out = bootstrap_trend_band(xs, ys, n_boot=n_boot, ci=ci, seed=42)
-                if buoy_out is not None:
-                    line_label = "Buoy trend" if k == 0 else None
-                    band_label = f"Buoy trend ({ci}% bootstrap CI)" if k == 0 else None
-                    ax.plot(buoy_out["xgrid"], buoy_out["mid"], "k--", lw=2.0, label=line_label)
-                    ax.fill_between(buoy_out["xgrid"], buoy_out["lo"], buoy_out["hi"],
-                                    alpha=0.15, label=band_label)
+        #         buoy_out = bootstrap_trend_band(xs, ys, n_boot=n_boot, ci=ci, seed=42)
+        #         if buoy_out is not None:
+        #             line_label = "Buoy trend" if k == 0 else None
+        #             band_label = f"Buoy trend ({ci}% bootstrap CI)" if k == 0 else None
+        #             ax.plot(buoy_out["xgrid"], buoy_out["mid"], "k--", lw=2.0, label=line_label)
+        #             ax.fill_between(buoy_out["xgrid"], buoy_out["lo"], buoy_out["hi"],
+        #                             alpha=0.15, label=band_label)
 
-        # ---- slopes text stack (Buoy + products) ----
-        if show_product_slopes:
-            slope_dict = {}
+        # # ---- slopes text stack (Buoy + products) ----
+        # if show_product_slopes:
+        #     slope_dict = {}
 
-            # buoy slope: use bootstrap mean if available; otherwise OLS
-            if buoy_out is not None:
-                slope_dict["Buoy"] = buoy_out["slope_mean"]
-            else:
-                slope_dict["Buoy"] = slope_only_on_common_years(dfr, "year", ref)
+        #     # buoy slope: use bootstrap mean if available; otherwise OLS
+        #     if buoy_out is not None:
+        #         slope_dict["Buoy"] = buoy_out["slope_mean"]
+        #     else:
+        #         slope_dict["Buoy"] = slope_only_on_common_years(dfr, "year", ref)
 
-            # product slopes: compute on the SAME years where buoy is finite+coverage
-            # (within the already-trimmed dfr)
-            ok_mask_local = np.isfinite(dfr[ref].values.astype(float))
-            ncol_local = f"n_{ref}"
-            if ncol_local in dfr.columns:
-                ok_mask_local &= (dfr[ncol_local].values.astype(float) >= float(min_days_ref))
+        #     # product slopes: compute on the SAME years where buoy is finite+coverage
+        #     # (within the already-trimmed dfr)
+        #     ok_mask_local = np.isfinite(dfr[ref].values.astype(float))
+        #     ncol_local = f"n_{ref}"
+        #     if ncol_local in dfr.columns:
+        #         ok_mask_local &= (dfr[ncol_local].values.astype(float) >= float(min_days_ref))
 
-            for p in products:
-                if p == ref:
-                    continue
-                if p in dfr.columns:
-                    slope_dict[p] = slope_only_on_common_years(
-                        dfr, "year", p, ok_mask=ok_mask_local
-                    )
+        #     for p in products:
+        #         if p == ref:
+        #             continue
+        #         if p in dfr.columns:
+        #             slope_dict[p] = slope_only_on_common_years(
+        #                 dfr, "year", p, ok_mask=ok_mask_local
+        #             )
 
-            color_dict = {"Buoy": "b"}
-            color_dict.update({p: product_colors[p] for p in products if p != ref})
+        #     color_dict = {"Buoy": "b"}
+        #     color_dict.update({p: product_colors[p] for p in products if p != ref})
 
-            add_slope_stack(
-                ax,
-                slope_dict=slope_dict,
-                color_dict=color_dict,
-                x=0.02, y=0.96, dy=0.055,
-                fmt="{name}: {slope:+.3f}",
-                units=" mm day$^{-1}$ yr$^{-1}$",
-                fontsize=10,
-                title="Slope (OLS):" if buoy_out is None else "Slope:"
-            )
+        #     add_slope_stack(
+        #         ax,
+        #         slope_dict=slope_dict,
+        #         color_dict=color_dict,
+        #         x=0.02, y=0.96, dy=0.055,
+        #         fmt="{name}: {slope:+.3f}",
+        #         units=" mm day$^{-1}$ yr$^{-1}$",
+        #         fontsize=10,
+        #         title="Slope (OLS):" if buoy_out is None else "Slope:"
+        #     )
 
-            # optional: add buoy CI line only (one extra line, not too messy)
-            if buoy_out is not None:
-                ax.text(
-                    0.02, 0.96 - 0.055*(len(slope_dict)+0.3),
-                    f"Buoy {ci}% CI: [{buoy_out['slope_lo']:+.3f}, {buoy_out['slope_hi']:+.3f}]",
-                    transform=ax.transAxes, ha="left", va="top",
-                    fontsize=9, color="b"
-                )
+        #     # optional: add buoy CI line only (one extra line, not too messy)
+        #     if buoy_out is not None:
+        #         ax.text(
+        #             0.02, 0.96 - 0.055*(len(slope_dict)+0.3),
+        #             f"Buoy {ci}% CI: [{buoy_out['slope_lo']:+.3f}, {buoy_out['slope_hi']:+.3f}]",
+        #             transform=ax.transAxes, ha="left", va="top",
+        #             fontsize=9, color="b"
+        #         )
 
         # ---- cosmetics ----
-        ax.set_title(region, fontsize=13, fontweight="bold")
-        ax.set_xlabel("Year", fontsize=11, fontweight="bold")
-        ax.set_ylabel("Annual mean rainfall (mm day$^{-1}$)", fontsize=11, fontweight="bold")
+        ax.set_title(region_names.get(region, region), fontsize=13, fontweight="bold")
+        ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+        ax.set_ylabel("[mm day$^{-1}$]", fontsize=12, fontweight="bold")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.tick_params(labelsize=10)
 
@@ -4024,7 +5591,7 @@ def plot_2x2_annual_rm13_with_trends(
     ci=95,
     n_boot=2000,
     xtick_step=2,           # show every other year
-    legend_ncol=4,
+    legend_ncol=6,
     legend_fontsize=12,
 ):
     region_names = region_names or {}
@@ -4082,85 +5649,85 @@ def plot_2x2_annual_rm13_with_trends(
             ypad = 0.08 * (y_all.max() - y_all.min() + 1e-6)
             ax.set_ylim(y_all.min() - ypad, y_all.max() + ypad)
 
-        # 5) buoy trend + (optional) CI (gap-aware on annual years)
-        yb = ann[ref + "_rm13"].values.astype(float)
-        ok = np.isfinite(yb)
-        years_ok = years[ok]
+        # # 5) buoy trend + (optional) CI (gap-aware on annual years)
+        # yb = ann[ref + "_rm13"].values.astype(float)
+        # ok = np.isfinite(yb)
+        # years_ok = years[ok]
 
-        out = None
-        if len(years_ok) >= 3:
-            segs = contiguous_year_segments(years_ok, max_gap=1)
-            main_seg = max(segs, key=len) if len(segs) else years_ok
-            mask_main = np.isin(years, main_seg)
-            years_main = years[mask_main]
-            buoy_main  = yb[mask_main]
+        # out = None
+        # if len(years_ok) >= 3:
+        #     segs = contiguous_year_segments(years_ok, max_gap=1)
+        #     main_seg = max(segs, key=len) if len(segs) else years_ok
+        #     mask_main = np.isin(years, main_seg)
+        #     years_main = years[mask_main]
+        #     buoy_main  = yb[mask_main]
 
-            out = bootstrap_trend_band_years(years_main, buoy_main, n_boot=n_boot, ci=ci, seed=42)
-            if out is not None:
-                ax.plot(out["xgrid"], out["mid"], "k--", lw=2.0, label="Buoy trend" if k == 0 else None)
-                if show_ci_band:
-                    ax.fill_between(out["xgrid"], out["lo"], out["hi"], alpha=0.15,
-                                    label=f"Buoy trend ({ci}% bootstrap CI)" if k == 0 else None)
+        #     out = bootstrap_trend_band_years(years_main, buoy_main, n_boot=n_boot, ci=ci, seed=42)
+        #     if out is not None:
+        #         ax.plot(out["xgrid"], out["mid"], "k--", lw=2.0, label="Buoy trend" if k == 0 else None)
+        #         if show_ci_band:
+        #             ax.fill_between(out["xgrid"], out["lo"], out["hi"], alpha=0.15,
+        #                             label=f"Buoy trend ({ci}% bootstrap CI)" if k == 0 else None)
 
-        # 6) trend stats text (colored) — per decade
-        # --- trend stats text: 2 stacked groups (same x, different y bands) ---
-        x_text = 0.01
+        # # 6) trend stats text (colored) — per decade
+        # # --- trend stats text: 2 stacked groups (same x, different y bands) ---
+        # x_text = 0.01
 
-        top_group = [ref, "GPCP v3.2", "GPCP v3.3"]          # keep up
-        low_group = ["ERA5", "IMERG v07", "MERRA2"]          # push down
+        # top_group = [ref, "GPCP v3.2", "GPCP v3.3"]          # keep up
+        # low_group = ["ERA5", "IMERG v07", "MERRA2"]          # push down
 
-        # (optional) keep only those present in your products list
-        top_group = [p for p in top_group if p in products]
-        low_group = [p for p in low_group if p in products]
+        # # (optional) keep only those present in your products list
+        # top_group = [p for p in top_group if p in products]
+        # low_group = [p for p in low_group if p in products]
 
-        # y locations in Axes fraction
-        y_top0 = 0.97
-        y_low0 = 0.2          # <-- move this up/down to taste
-        dy_top = 0.075
-        dy_low = 0.075
+        # # y locations in Axes fraction
+        # y_top0 = 0.97
+        # y_low0 = 0.2          # <-- move this up/down to taste
+        # dy_top = 0.075
+        # dy_low = 0.075
 
-        def _fmt(name, s):
-            return f"{name}: Trend={s['slope_dec']:+.3f}, p={s['p']:.3f}, Std={s['std']:.3f}"
+        # def _fmt(name, s):
+        #     return f"{name}: Trend={s['slope_dec']:+.3f}, p={s['p']:.3f}, Std={s['std']:.3f}"
 
-        # --- top band ---
-        y = y_top0
-        for p in top_group:
-            yvals = ann[p + "_rm13"].values.astype(float)
-            s = trend_stats_yearly(years, yvals)
-            if s is None:
-                continue
-            ax.text(
-                x_text, y, _fmt("Buoy" if p == ref else p, s),
-                transform=ax.transAxes, ha="left", va="top",
-                fontsize=12,
-                color=("b" if p == ref else product_colors[p]),
-                fontweight=("bold" if p == ref else "normal"),
-                bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=1.2)
-            )
-            y -= dy_top
+        # # --- top band ---
+        # y = y_top0
+        # for p in top_group:
+        #     yvals = ann[p + "_rm13"].values.astype(float)
+        #     s = trend_stats_yearly(years, yvals)
+        #     if s is None:
+        #         continue
+        #     ax.text(
+        #         x_text, y, _fmt("Buoy" if p == ref else p, s),
+        #         transform=ax.transAxes, ha="left", va="top",
+        #         fontsize=12,
+        #         color=("b" if p == ref else product_colors[p]),
+        #         fontweight=("bold" if p == ref else "normal"),
+        #         bbox=dict(facecolor="white", alpha=0.65, edgecolor="none", pad=1.2)
+        #     )
+        #     y -= dy_top
 
-        # --- lower band ---
-        y = y_low0
-        for p in low_group:
-            yvals = ann[p + "_rm13"].values.astype(float)
-            s = trend_stats_yearly(years, yvals)
-            if s is None:
-                continue
-            ax.text(
-                x_text, y, _fmt(p, s),
-                transform=ax.transAxes, ha="left", va="top",
-                fontsize=12, color=product_colors[p],
-                bbox=dict(facecolor="white", alpha=0.55, edgecolor="none", pad=1.2)
-            )
-            y -= dy_low
+        # # --- lower band ---
+        # y = y_low0
+        # for p in low_group:
+        #     yvals = ann[p + "_rm13"].values.astype(float)
+        #     s = trend_stats_yearly(years, yvals)
+        #     if s is None:
+        #         continue
+        #     ax.text(
+        #         x_text, y, _fmt(p, s),
+        #         transform=ax.transAxes, ha="left", va="top",
+        #         fontsize=12, color=product_colors[p],
+        #         bbox=dict(facecolor="white", alpha=0.55, edgecolor="none", pad=1.2)
+        #     )
+        #     y -= dy_low
 
         # cosmetics
         ax.set_title(region_names.get(reg, reg), fontsize=13, fontweight="bold")
-        ax.set_xlabel("Year", fontsize=11, fontweight="bold")
-        ax.set_ylabel("Annual mean rainfall (mm day$^{-1}$)",
-                      fontsize=11, fontweight="bold")
+        ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+        ax.set_ylabel("[mm day$^{-1}$]",
+                      fontsize=12, fontweight="bold") # "Annual mean rainfall (mm day$^{-1}$)"
         ax.grid(True, linestyle="--", alpha=0.5)
-        ax.tick_params(labelsize=10)
+        ax.tick_params(labelsize=11)
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
         xmin, xmax = int(years.min()), int(years.max())
@@ -4179,7 +5746,7 @@ def plot_2x2_annual_rm13_with_trends(
     # fig.suptitle("Interannual variability (annual mean of 13-month smoothed monthly means): Buoy vs products",
     #              fontsize=15, fontweight="bold", y=0.99)
     fig.tight_layout(rect=[0, 0.06, 1, 0.96])
-    return fig
+    return fig, monthly
 
 
 #----------------------------------------------------------------------------
@@ -4436,3 +6003,1163 @@ def plot_global_and_regional_pdfs_insitu_hist_only(
 
     plt.tight_layout()
     return fig, (ax0, ax1)
+
+# -----------------------------------------------------------------------------
+# ------------------------------------------------------------
+# 2) Panel scatter plot: rows=regions, cols=products
+# ------------------------------------------------------------
+def plot_anomaly_scatter_by_region_product(
+    df,
+    regions,
+    ref_col="rain_rate",
+    product_cols=("GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"),
+    region_labels=None,
+    product_colors=None,
+    date_col="date",
+    region_col="region",
+    use_monthly_clim_anoms=True,
+    figsize=(22, 14),
+    marker_size=18,
+    point_alpha=0.75,
+    reg_line_color="red",
+    one_to_one_color="black",
+    zero_line_color="k",
+    xlim=None,
+    ylim=None,
+    equal_axes=True,
+    savepath=None,
+):
+    """
+    Make scatter panels in anomaly space:
+        x = ref anomaly
+        y = product anomaly
+
+    Layout:
+        rows = regions
+        cols = products
+
+    Metrics shown in each panel:
+        slope, std dev of residuals, correlation
+    """
+
+    d = df.copy()
+    d[date_col] = pd.to_datetime(d[date_col])
+
+    all_cols = [ref_col] + list(product_cols)
+
+    # Create anomaly columns
+    if use_monthly_clim_anoms:
+        d = make_region_monthly_anomaly_df(
+            d,
+            products=all_cols,
+            region_col=region_col,
+            date_col=date_col,
+        )
+    else:
+        # simple mean anomalies by region
+        for c in all_cols:
+            d[f"{c}_anom"] = d[c] - d.groupby(region_col)[c].transform("mean")
+
+    nrows = len(regions)
+    ncols = len(product_cols)
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=figsize,
+        dpi=250,
+        squeeze=False
+    )
+
+    for i, region in enumerate(regions):
+        dfr = d[d[region_col] == region].copy()
+
+        region_title = region_labels.get(region, region) if region_labels else region
+
+        for j, prod in enumerate(product_cols):
+            ax = axes[i, j]
+
+            xcol = f"{ref_col}_anom"
+            ycol = f"{prod}_anom"
+
+            dd = dfr[[xcol, ycol]].dropna().copy()
+            x = dd[xcol].values.astype(float)
+            y = dd[ycol].values.astype(float)
+
+            # scatter
+            ax.scatter(
+                x, y,
+                s=marker_size,
+                alpha=point_alpha,
+                color=product_colors.get(prod, "0.35") if product_colors else "0.35",
+                edgecolor="none"
+            )
+
+            # 1:1 line and regression line
+            if len(dd) >= 2:
+                xmin_ = np.nanmin(x)
+                xmax_ = np.nanmax(x)
+                ymin_ = np.nanmin(y)
+                ymax_ = np.nanmax(y)
+
+                if equal_axes:
+                    lim0 = np.nanmin([xmin_, ymin_])
+                    lim1 = np.nanmax([xmax_, ymax_])
+                    xrng = (lim0, lim1)
+                    yrng = (lim0, lim1)
+                else:
+                    xrng = (xmin_, xmax_)
+                    yrng = (ymin_, ymax_)
+
+                # allow manual override
+                if xlim is not None:
+                    xrng = xlim
+                if ylim is not None:
+                    yrng = ylim
+
+                # zero lines
+                ax.axhline(0, color=zero_line_color, lw=1.0, ls=(0, (2, 4)), alpha=0.8)
+                ax.axvline(0, color=zero_line_color, lw=1.0, ls=(0, (2, 4)), alpha=0.8)
+
+                # 1:1 line
+                lo = min(xrng[0], yrng[0])
+                hi = max(xrng[1], yrng[1])
+                ax.plot([lo, hi], [lo, hi], color=one_to_one_color, lw=1.2)
+
+                # regression line
+                slope, intercept = np.polyfit(x, y, 1)
+                xx = np.linspace(lo, hi, 200)
+                yy = slope * xx + intercept
+                ax.plot(xx, yy, color=reg_line_color, lw=1.5)
+
+                # stats
+                corr = np.corrcoef(x, y)[0, 1]
+
+                # "Std Dev" similar to attached figure:
+                # std of residuals around regression line
+                resid = y - (slope * x + intercept)
+                std_dev = np.std(resid, ddof=1) if len(resid) > 1 else np.nan
+
+                ax.text(
+                    0.05, 0.94,
+                    f"Slope: {slope:.2f}\nStd Dev: {std_dev:.2f}",
+                    transform=ax.transAxes,
+                    ha="left", va="top",
+                    fontsize=12,
+                    color="red",
+                    fontweight="bold"
+                )
+
+                ax.text(
+                    0.95, 0.06,
+                    f"Correlation: {corr:.2f}",
+                    transform=ax.transAxes,
+                    ha="right", va="bottom",
+                    fontsize=12,
+                    color="black",
+                    fontweight="bold"
+                )
+
+                ax.set_xlim(xrng)
+                ax.set_ylim(yrng)
+
+            else:
+                ax.text(
+                    0.5, 0.5, "Insufficient data",
+                    transform=ax.transAxes,
+                    ha="center", va="center",
+                    fontsize=11, fontweight="bold"
+                )
+
+            # titles
+            if i == 0:
+                ax.set_title(prod, fontsize=15, fontweight="bold")
+
+            if j == 0:
+                ax.set_ylabel(
+                    f"{region_title}\n{prod} anomaly\n(mm day$^{{-1}}$)",
+                    fontsize=13,
+                    fontweight="bold"
+                )
+            else:
+                ax.set_ylabel("")
+
+            if i == nrows - 1:
+                ax.set_xlabel(
+                    "Buoy anomaly (mm day$^{-1}$)",
+                    fontsize=13,
+                    fontweight="bold"
+                )
+            else:
+                ax.set_xlabel("")
+
+            ax.tick_params(axis="both", labelsize=11, width=1.2)
+            ax.minorticks_on()
+
+    plt.tight_layout()
+
+    if savepath:
+        fig.savefig(savepath, dpi=400, bbox_inches="tight")
+
+    return fig
+
+#-----------------------------------------------------------------------------
+def plot_deseasonalized_anomaly_scatter(
+    df_anom,
+    regions,
+    ref_col="rain_rate",
+    product_cols=("GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"),
+    region_labels=None,
+    product_colors=None,
+    region_col="region",
+    figsize=(20, 12),
+    savepath=None,
+):
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    nrows = len(regions)
+    ncols = len(product_cols)
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, dpi=250, squeeze=False)
+
+    for i, region in enumerate(regions):
+        dfr = df_anom[df_anom[region_col] == region].copy()
+
+        for j, prod in enumerate(product_cols):
+            ax = axes[i, j]
+
+            xcol = f"{ref_col}_anom"
+            ycol = f"{prod}_anom"
+
+            dd = dfr[[xcol, ycol]].dropna()
+            x = dd[xcol].values
+            y = dd[ycol].values
+
+            if len(dd) < 2:
+                ax.text(0.5, 0.5, "Insufficient data",
+                        ha="center", va="center", transform=ax.transAxes)
+                continue
+
+            # scatter
+            ax.scatter(
+                x, y,
+                s=18,
+                alpha=0.75,
+                color= 'k',
+                edgecolor="none"
+            ) # product_colors.get(prod, "0.4") if product_colors else "0.4"
+
+            # symmetric limits around zero
+            lim = 5#np.nanmax(np.abs(np.r_[x, y]))
+            lim = np.ceil(lim * 1.05)
+
+            ax.set_xlim(-lim, lim)
+            ax.set_ylim(-lim, lim)
+
+            # zero lines
+            ax.axhline(0, color="k", lw=1.0, ls=(0, (2, 4)))
+            ax.axvline(0, color="k", lw=1.0, ls=(0, (2, 4)))
+
+            # 1:1 line
+            ax.plot([-lim, lim], [-lim, lim], color="k", lw=1.2)
+
+            # regression
+            slope, intercept = np.polyfit(x, y, 1)
+            xx = np.linspace(-lim, lim, 200)
+            ax.plot(xx, slope * xx + intercept, color="red", lw=1.4)
+
+            # metrics
+            corr = np.corrcoef(x, y)[0, 1]
+            resid = y - (slope * x + intercept)
+            std_dev = np.std(resid, ddof=1)
+
+            ax.text(
+                0.04, 0.96,
+                f"Slope: {slope:.2f}\nStd Dev: {std_dev:.2f}",
+                transform=ax.transAxes,
+                ha="left", va="top",
+                fontsize=14, color="k", fontweight="bold"
+            )
+
+            ax.text(
+                0.96, 0.05,
+                f"CC: {corr:.2f}",
+                transform=ax.transAxes,
+                ha="right", va="bottom",
+                fontsize=14, color="black", fontweight="bold"
+            )
+
+            if i == 0:
+                ax.set_title(prod, fontsize=14, fontweight="bold")
+
+            if j == 0:
+                reglbl = region_labels.get(region, region) if region_labels else region
+                ax.set_ylabel(f"{reglbl}\nProduct anomaly\n[mm day$^{{-1}}$]",
+                              fontsize=13, fontweight="bold")
+
+            if i == nrows - 1:
+                ax.set_xlabel("Buoy anomaly [mm day$^{-1}$]",
+                              fontsize=13, fontweight="bold")
+
+            ax.tick_params(labelsize=10)
+
+    plt.tight_layout()
+
+    if savepath:
+        fig.savefig(savepath, dpi=400, bbox_inches="tight")
+
+    return fig
+
+
+#-----------------------------------------------------------------------------
+def plot_region_monthly_anomalies_rm13(
+    df_raw,
+    regions,
+    products,
+    product_colors,
+    ref="rain_rate",
+    region_col="region",
+    date_col="date",
+    region_names=None,
+    min_days_month=20,
+    min_days_month_ref=25,
+    apply_rm13=True,
+    figsize=(14, 9),
+    sharex=True,
+    sharey=False,
+    linewidth_ref=2.8,
+    linewidth_prod=2.0,
+    alpha=0.95,
+    savepath=None,
+):
+    """
+    Plot deseasonalized regional monthly precipitation anomalies,
+    optionally smoothed with a 13-month centered running mean.
+
+    Workflow per region:
+      raw daily -> regional daily mean -> monthly mean -> deseasonalize -> rm13
+
+    Parameters
+    ----------
+    df_raw : pd.DataFrame
+        Daily matched dataframe with columns [date, region, rain_rate, products...]
+    regions : list
+        Region names to plot, e.g. ["ENP","WNP","IND","ATL"]
+    products : list
+        Includes reference column, e.g.
+        ["rain_rate","GPCP v3.2","GPCP v3.3","ERA5","IMERG v07","MERRA2"]
+    product_colors : dict
+        Color mapping for products
+    ref : str
+        Reference/in situ column
+    region_names : dict or None
+        Pretty names for regions
+    """
+
+    region_names = region_names or {}
+
+    nreg = len(regions)
+    ncols = 2 if nreg > 1 else 1
+    nrows = int(np.ceil(nreg / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=figsize,
+        dpi=300,
+        sharex=sharex,
+        sharey=sharey,
+        squeeze=False
+    )
+    axes = axes.flatten()
+
+    for i, region in enumerate(regions):
+        ax = axes[i]
+
+        # --------------------------------------------------
+        # Step 1: collapse raw daily to one daily value/region
+        # --------------------------------------------------
+        daily_reg = daily_region_mean(
+            df_raw,
+            products=products,
+            date_col=date_col,
+            region_col=region_col
+        )
+
+        # --------------------------------------------------
+        # Step 2: monthly means with coverage
+        # --------------------------------------------------
+        monthly = monthly_mean_with_day_coverage(
+            daily_reg,
+            products=products,
+            region=region,
+            min_days=min_days_month,
+            ref=ref,
+            min_days_ref=min_days_month_ref,
+            date_col=date_col,
+            region_col=region_col
+        )
+
+        if monthly.empty:
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
+                    ha="center", va="center", fontsize=12, fontweight="bold")
+            ax.set_title(region_names.get(region, region), fontweight="bold")
+            continue
+
+        # --------------------------------------------------
+        # Step 3: deseasonalize monthly series
+        # --------------------------------------------------
+        monthly_anom = deseasonalize_monthly(
+            df_monthly=monthly,
+            products=products,
+            time_col="date",
+            region_col=region_col
+        )
+
+        # --------------------------------------------------
+        # Step 4: optional 13-month running mean on anomalies
+        # --------------------------------------------------
+        anom_cols = [f"{p}_anom" for p in products]
+
+        plot_df = monthly_anom[["date"] + anom_cols].copy()
+
+        if apply_rm13:
+            plot_df = add_rm13_monthly(
+                plot_df,
+                products=anom_cols,
+                date_col="date"
+            )
+            cols_to_plot = [f"{c}_rm13" for c in anom_cols]
+        else:
+            cols_to_plot = anom_cols
+
+        # --------------------------------------------------
+        # Step 5: plot
+        # --------------------------------------------------
+        t = pd.to_datetime(plot_df["date"])
+
+        # reference
+        ref_plot_col = f"{ref}_anom" + ("_rm13" if apply_rm13 else "")
+        ax.plot(
+            t,
+            plot_df[ref_plot_col],
+            lw=linewidth_ref,
+            color="k",
+            alpha=alpha,
+            label="Buoy"
+        )
+
+        # products
+        for p in products:
+            if p == ref:
+                continue
+            pcol = f"{p}_anom" + ("_rm13" if apply_rm13 else "")
+            ax.plot(
+                t,
+                plot_df[pcol],
+                lw=linewidth_prod,
+                color=product_colors.get(p, None),
+                alpha=alpha,
+                label=p
+            )
+
+        ax.axhline(0, color="0.6", lw=1.0, ls=(0, (4, 4)))
+        ax.grid(True, linestyle="--", alpha=0.35)
+
+        ax.set_title(region_names.get(region, region), fontsize=14, fontweight="bold")
+        ax.set_ylabel("Precipitation anomaly\n(mm day$^{-1}$)", fontsize=12, fontweight="bold")
+        ax.tick_params(axis="both", labelsize=10)
+
+        # optional correlations placed in panel
+        y0 = 0.06
+        dy = 0.07
+        for k, p in enumerate(products):
+            if p == ref:
+                continue
+
+            pcol = f"{p}_anom" + ("_rm13" if apply_rm13 else "")
+            dd = plot_df[[ref_plot_col, pcol]].dropna()
+
+            if len(dd) >= 2:
+                cc = np.corrcoef(dd[ref_plot_col], dd[pcol])[0, 1]
+                ax.text(
+                    0.02 + (k % 2) * 0.42,
+                    y0 + (k // 2) * dy,
+                    f"Buoy vs {p}: ({cc:.2f})",
+                    transform=ax.transAxes,
+                    fontsize=9,
+                    color=product_colors.get(p, "k"),
+                    fontweight="bold"
+                )
+
+        if i >= len(regions) - ncols:
+            ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+
+    # turn off unused axes
+    for j in range(len(regions), len(axes)):
+        axes[j].axis("off")
+
+    # shared legend
+    handles, labels = axes[0].get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+
+    fig.legend(
+        uniq.values(),
+        uniq.keys(),
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=3,
+        frameon=False,
+        fontsize=11
+    )
+
+    title_txt = "Monthly domain-mean precipitation anomalies"
+    if apply_rm13:
+        title_txt = "Monthly (13-month-running-mean) domain-mean precipitation anomalies"
+
+    fig.suptitle(title_txt, fontsize=17, fontweight="bold", y=0.98)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    if savepath:
+        fig.savefig(savepath, dpi=400, bbox_inches="tight")
+
+    return fig
+
+#--------------------------------------------------------------
+def plot_region_monthly_anomalies_rm13_gapaware(
+    df_raw,
+    regions,
+    products,
+    product_colors,
+    ref="rain_rate",
+    region_col="region",
+    date_col="date",
+    region_names=None,
+    min_days_month=20,
+    min_days_month_ref=25,
+    apply_rm13=True,
+    figsize=(14, 9),
+    sharex=False,
+    sharey=False,
+    linewidth_ref=2.8,
+    linewidth_prod=2.0,
+    alpha=0.95,
+    comparison_mode="buoy",   # "buoy" or "common"
+    max_gap_months=1,
+    legend_ncol=3,
+    savepath=None,
+):
+    """
+    Gap-aware 2x2 plot of deseasonalized monthly anomalies with optional 13-mo RM.
+
+    comparison_mode:
+      - "buoy"  -> define valid plotting window from buoy only
+      - "common" -> define valid plotting window from months where all products are available
+    """
+
+    region_names = region_names or {}
+
+    nreg = len(regions)
+    ncols = 2 if nreg > 1 else 1
+    nrows = int(np.ceil(nreg / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=figsize,
+        dpi=300,
+        sharex=sharex,
+        sharey=sharey,
+        squeeze=False
+    )
+    axes = axes.flatten()
+
+    # collapse once outside the loop
+    daily_reg_all = daily_region_mean(
+        df_raw,
+        products=products,
+        date_col=date_col,
+        region_col=region_col
+    )
+
+    for i, region in enumerate(regions):
+        ax = axes[i]
+
+        # -------------------------------
+        # region monthly mean with coverage
+        # -------------------------------
+        monthly = monthly_mean_with_day_coverage(
+            daily_reg_all,
+            products=products,
+            region=region,
+            min_days=min_days_month,
+            ref=ref,
+            min_days_ref=min_days_month_ref,
+            date_col=date_col,
+            region_col=region_col
+        )
+
+        if monthly.empty:
+            ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
+                    ha="center", va="center", fontsize=12, fontweight="bold")
+            ax.set_title(region_names.get(region, region), fontweight="bold")
+            continue
+
+        # -------------------------------
+        # deseasonalize
+        # -------------------------------
+        monthly_anom = deseasonalize_monthly(
+            df_monthly=monthly,
+            products=products,
+            time_col="date",
+            region_col=region_col
+        )
+
+        anom_cols = [f"{p}_anom" for p in products]
+        plot_df = monthly_anom[["date"] + anom_cols].copy()
+
+        # -------------------------------
+        # full monthly reindex for gap-aware plotting
+        # -------------------------------
+        plot_df = reindex_monthly_full(plot_df, date_col="date")
+
+        # -------------------------------
+        # 13-month running mean
+        # -------------------------------
+        if apply_rm13:
+            plot_df = add_rm13_monthly(
+                plot_df,
+                products=anom_cols,
+                date_col="date"
+            )
+            plot_cols = {p: f"{p}_anom_rm13" for p in products}
+        else:
+            plot_cols = {p: f"{p}_anom" for p in products}
+
+        # -------------------------------
+        # choose comparison window
+        # -------------------------------
+        if comparison_mode == "common":
+            valid_mask = np.ones(len(plot_df), dtype=bool)
+            for p in products:
+                valid_mask &= np.isfinite(plot_df[plot_cols[p]].values)
+        else:
+            valid_mask = np.isfinite(plot_df[plot_cols[ref]].values)
+
+        valid_dates = plot_df.loc[valid_mask, "date"]
+
+        if len(valid_dates) == 0:
+            ax.text(0.5, 0.5, "No valid anomaly period", transform=ax.transAxes,
+                    ha="center", va="center", fontsize=12, fontweight="bold")
+            ax.set_title(region_names.get(region, region), fontweight="bold")
+            continue
+
+        main_block = longest_contiguous_month_block(valid_dates, max_gap_months=max_gap_months)
+
+        if len(main_block) > 0:
+            t0, t1 = main_block.min(), main_block.max()
+            plot_df = plot_df[(plot_df["date"] >= t0) & (plot_df["date"] <= t1)].copy()
+
+        # -------------------------------
+        # plotting
+        # -------------------------------
+        t = pd.to_datetime(plot_df["date"])
+
+        ref_plot_col = plot_cols[ref]
+        ax.plot(
+            t, plot_df[ref_plot_col],
+            lw=linewidth_ref, color="k", alpha=alpha, label="Buoy"
+        )
+
+        for p in products:
+            if p == ref:
+                continue
+            ax.plot(
+                t, plot_df[plot_cols[p]],
+                lw=linewidth_prod,
+                color=product_colors.get(p, None),
+                alpha=alpha,
+                label=p
+            )
+
+        ax.axhline(0, color="0.6", lw=1.0, ls=(0, (4, 4)))
+        ax.grid(True, linestyle="--", alpha=0.35)
+
+        # correlations inside panel
+        y0 = 0.06
+        dy = 0.07
+        ktxt = 0
+        for p in products:
+            if p == ref:
+                continue
+            dd = plot_df[[ref_plot_col, plot_cols[p]]].dropna()
+            if len(dd) >= 2:
+                cc = np.corrcoef(dd[ref_plot_col], dd[plot_cols[p]])[0, 1]
+                ax.text(
+                    0.03 + (ktxt % 2) * 0.42,
+                    y0 + (ktxt // 2) * dy,
+                    f"Buoy vs {p}: ({cc:.2f})",
+                    transform=ax.transAxes,
+                    fontsize=9,
+                    color=product_colors.get(p, "k"),
+                    fontweight="bold"
+                )
+                ktxt += 1
+
+        ax.set_title(region_names.get(region, region), fontsize=14, fontweight="bold")
+        ax.set_ylabel("Precipitation anomaly\n(mm day$^{-1}$)", fontsize=12, fontweight="bold")
+        ax.tick_params(axis="both", labelsize=10)
+
+        if i >= len(regions) - ncols:
+            ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+
+    # turn off unused
+    for j in range(len(regions), len(axes)):
+        axes[j].axis("off")
+
+    # shared legend
+    handles, labels = axes[0].get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+
+    title_txt = "Monthly domain-mean precipitation anomalies"
+    if apply_rm13:
+        title_txt = "Monthly (13-month-running-mean) domain-mean precipitation anomalies"
+
+    fig.suptitle(title_txt, fontsize=17, fontweight="bold", y=0.98)
+
+    fig.legend(
+        uniq.values(),
+        uniq.keys(),
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=legend_ncol,
+        frameon=False,
+        fontsize=11
+    )
+
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    if savepath:
+        fig.savefig(savepath, dpi=400, bbox_inches="tight")
+
+    return fig
+
+
+#----------------------------------------------------------------------------
+def plot_region_monthly_anomalies_rm13_gapaware_v2(
+    df_raw,
+    regions,
+    products,
+    product_colors,
+    ref="rain_rate",
+    region_col="region",
+    date_col="date",
+    region_names=None,
+    min_days_month=20,
+    min_days_month_ref=25,
+    apply_rm13=True,
+    figsize=(14, 9),
+    sharex=False,
+    sharey=False,
+    linewidth_ref=2.8,
+    linewidth_prod=2.0,
+    alpha=0.95,
+    reindex_full=True,
+    year_min=None,
+    year_max=None,
+    legend_ncol=3,
+    savepath=None,
+):
+    """
+    Gap-aware monthly anomaly plot using the SAME philosophy as earlier plots:
+      - preserve each region's natural valid period
+      - do not trim to longest contiguous block
+      - missing months remain NaN and appear as gaps
+    """
+
+    region_names = region_names or {}
+
+    nreg = len(regions)
+    ncols = 2 if nreg > 1 else 1
+    nrows = int(np.ceil(nreg / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=figsize,
+        dpi=300,
+        sharex=sharex,
+        sharey=sharey,
+        squeeze=False
+    )
+    axes = axes.flatten()
+
+    # collapse once, same as your earlier workflow style
+    daily_reg_all = daily_region_mean(
+        df_raw,
+        products=products,
+        date_col=date_col,
+        region_col=region_col
+    )
+
+    for i, region in enumerate(regions):
+        ax = axes[i]
+
+        # ----------------------------------------
+        # 1) monthly means with coverage by region
+        # ----------------------------------------
+        monthly = monthly_mean_with_day_coverage(
+            daily_reg_all,
+            products=products,
+            region=region,
+            min_days=min_days_month,
+            ref=ref,
+            min_days_ref=min_days_month_ref,
+            date_col=date_col,
+            region_col=region_col
+        )
+
+        if monthly.empty:
+            ax.text(
+                0.5, 0.5, "No data",
+                transform=ax.transAxes,
+                ha="center", va="center",
+                fontsize=12, fontweight="bold"
+            )
+            ax.set_title(region_names.get(region, region), fontweight="bold")
+            continue
+
+        # ----------------------------------------
+        # 2) deseasonalize monthly series
+        # ----------------------------------------
+        monthly_anom = deseasonalize_monthly(
+            df_monthly=monthly,
+            products=products,
+            time_col="date",
+            region_col=region_col
+        )
+
+        anom_cols = [f"{p}_anom" for p in products]
+        plot_df = monthly_anom[["date"] + anom_cols].copy()
+
+        # ----------------------------------------
+        # 3) preserve full monthly timeline (gaps explicit)
+        # ----------------------------------------
+        if reindex_full:
+            plot_df = reindex_monthly_full(plot_df, date_col="date")
+
+        # ----------------------------------------
+        # 4) optional year clipping (light touch only)
+        # ----------------------------------------
+        plot_df["date"] = pd.to_datetime(plot_df["date"])
+        if year_min is not None:
+            plot_df = plot_df[plot_df["date"].dt.year >= year_min]
+        if year_max is not None:
+            plot_df = plot_df[plot_df["date"].dt.year <= year_max]
+
+        # ----------------------------------------
+        # 5) 13-month running mean
+        # ----------------------------------------
+        if apply_rm13:
+            plot_df = add_rm13_monthly(
+                plot_df,
+                products=anom_cols,
+                date_col="date"
+            )
+            plot_cols = {p: f"{p}_anom_rm13" for p in products}
+        else:
+            plot_cols = {p: f"{p}_anom" for p in products}
+
+        # ----------------------------------------
+        # 6) plot full available range (NO trimming)
+        # ----------------------------------------
+        t = pd.to_datetime(plot_df["date"])
+        ref_plot_col = plot_cols[ref]
+
+        ax.plot(
+            t,
+            plot_df[ref_plot_col],
+            lw=linewidth_ref,
+            color="k",
+            alpha=alpha,
+            label="Buoy"
+        )
+
+        for p in products:
+            if p == ref:
+                continue
+            ax.plot(
+                t,
+                plot_df[plot_cols[p]],
+                lw=linewidth_prod,
+                color=product_colors.get(p, None),
+                alpha=alpha,
+                label=p
+            )
+
+        ax.axhline(0, color="0.6", lw=1.0, ls=(0, (4, 4)))
+        ax.grid(True, linestyle="--", alpha=0.35)
+
+        # correlations inside panel
+        y0 = 0.06
+        dy = 0.07
+        ktxt = 0
+        for p in products:
+            if p == ref:
+                continue
+            dd = plot_df[[ref_plot_col, plot_cols[p]]].dropna()
+            if len(dd) >= 2:
+                cc = np.corrcoef(dd[ref_plot_col], dd[plot_cols[p]])[0, 1]
+                ax.text(
+                    0.03 + (ktxt % 2) * 0.42,
+                    y0 + (ktxt // 2) * dy,
+                    f"Buoy vs {p}: ({cc:.2f})",
+                    transform=ax.transAxes,
+                    fontsize=9,
+                    color=product_colors.get(p, "k"),
+                    fontweight="bold"
+                )
+                ktxt += 1
+
+        ax.set_title(region_names.get(region, region), fontsize=14, fontweight="bold")
+        ax.set_ylabel("Precipitation anomaly\n(mm day$^{-1}$)", fontsize=12, fontweight="bold")
+        ax.tick_params(axis="both", labelsize=10)
+
+        if i >= len(regions) - ncols:
+            ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+
+    # turn off unused axes
+    for j in range(len(regions), len(axes)):
+        axes[j].axis("off")
+
+    # shared legend
+    handles, labels = axes[0].get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+
+    title_txt = "Monthly domain-mean precipitation anomalies"
+    if apply_rm13:
+        title_txt = "Monthly (13-month-running-mean) domain-mean precipitation anomalies"
+
+    fig.suptitle(title_txt, fontsize=17, fontweight="bold", y=0.98)
+
+    fig.legend(
+        uniq.values(),
+        uniq.keys(),
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=legend_ncol,
+        frameon=False,
+        fontsize=11
+    )
+
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    if savepath:
+        fig.savefig(savepath, dpi=400, bbox_inches="tight")
+
+    return fig
+
+
+#-------------------------------------------------
+def plot_region_anomaly_timeseries_from_df(
+    df_anom,
+    regions=("ENP", "WNP", "IND", "ATL"),
+    region_col="region",
+    date_col="date",
+    ref_col="rain_rate_anom",
+    anomaly_cols=(
+        "rain_rate_anom",
+        "GPCP v3.2_anom",
+        "GPCP v3.3_anom",
+        "ERA5_anom",
+        "IMERG v07_anom",
+        "MERRA2_anom",
+    ),
+    region_names=Buoy_REGION_NAMES,
+    product_colors=product_colors,
+    figsize=(14, 9),
+    sharex=False,
+    sharey=False,
+    linewidth_ref=3.0,
+    linewidth_prod=2.2,
+    alpha=0.95,
+    title="Monthly (13-month-running-mean) domain-mean precipitation anomalies",
+    ylabel="Precipitation anomaly\n[mm day$^{-1}$]",
+    legend_ncol=3,
+    savepath=None,
+):
+    """
+    Plot regional anomaly time series from an already-prepared anomaly dataframe.
+
+    Expected dataframe columns
+    --------------------------
+    date, region, and anomaly columns such as:
+      rain_rate_anom
+      GPCP v3.2_anom
+      GPCP v3.3_anom
+      ERA5_anom
+      IMERG v07_anom
+      MERRA2_anom
+    """
+
+    d = df_anom.copy()
+    d[date_col] = pd.to_datetime(d[date_col])
+
+    if region_names is None:
+        region_names = Buoy_REGION_NAMES
+
+    if product_colors is None:
+        product_colors = {
+            "GPCP v3.2": "#4c4c4c",
+            "GPCP v3.3": "#1f77b4",
+            "ERA5": "#d62728",
+            "IMERG v07": "#2ca02c",
+            "MERRA2": "#ff7f0e",
+            "Buoy": "#0820d4",
+        }
+
+    # map anomaly column -> legend label
+    col_to_label = {
+        "rain_rate_anom": "Buoy",
+        "GPCP v3.2_anom": "GPCP v3.2",
+        "GPCP v3.3_anom": "GPCP v3.3",
+        "ERA5_anom": "ERA5",
+        "IMERG v07_anom": "IMERG v07",
+        "MERRA2_anom": "MERRA2",
+    }
+
+    nreg = len(regions)
+    ncols = 2 if nreg > 1 else 1
+    nrows = int(np.ceil(nreg / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=figsize,
+        dpi=300,
+        sharex=sharex,
+        sharey=sharey,
+        squeeze=False
+    )
+    axes = axes.flatten()
+
+    for i, region in enumerate(regions):
+        ax = axes[i]
+
+        dfr = (
+            d[d[region_col] == region]
+            .sort_values(date_col)
+            .copy()
+        )
+
+        if dfr.empty:
+            ax.text(
+                0.5, 0.5, "No data",
+                transform=ax.transAxes,
+                ha="center", va="center",
+                fontsize=12, fontweight="bold"
+            )
+            ax.set_title(region_names.get(region, region), fontsize=14, fontweight="bold")
+            continue
+
+        # plot reference first
+        if ref_col in dfr.columns:
+            ax.plot(
+                dfr[date_col],
+                dfr[ref_col],
+                lw=linewidth_ref,
+                color=product_colors.get("Buoy", "b"),
+                alpha=alpha,
+                label="Buoy",
+            )
+
+        # plot other anomaly series
+        for col in anomaly_cols:
+            if col == ref_col:
+                continue
+            if col not in dfr.columns:
+                continue
+
+            label = col_to_label.get(col, col.replace("_anom", ""))
+            ax.plot(
+                dfr[date_col],
+                dfr[col],
+                lw=linewidth_prod,
+                color=product_colors.get(label, None),
+                alpha=alpha,
+                label=label,
+            )
+
+        # zero line
+        ax.axhline(0, color="0.6", lw=1.0, ls=(0, (4, 4)))
+
+        # title and labels
+        ax.set_title(region_names.get(region, region), fontsize=16, fontweight="bold")
+        ax.set_ylabel(ylabel, fontsize=12, fontweight="bold")
+        ax.set_xlabel("Year", fontsize=12, fontweight="bold")
+        ax.grid(True, linestyle="--", alpha=0.35)
+
+        # nicer ticks
+        ax.tick_params(axis="both", labelsize=10)
+
+        # correlation text inside each panel
+        y0 = 0.06
+        dy = 0.07
+        ktxt = 0
+
+        for col in anomaly_cols:
+            if col == ref_col or col not in dfr.columns:
+                continue
+
+            dd = dfr[[ref_col, col]].dropna()
+            if len(dd) >= 2:
+                cc = np.corrcoef(dd[ref_col], dd[col])[0, 1]
+                label = col_to_label.get(col, col.replace("_anom", ""))
+
+                ax.text(
+                    0.03 + (ktxt % 2) * 0.42,
+                    y0 + (ktxt // 2) * dy,
+                    f"Buoy vs {label}: ({cc:.2f})",
+                    transform=ax.transAxes,
+                    fontsize=9,
+                    color=product_colors.get(label, "k"),
+                    fontweight="bold",
+                )
+                ktxt += 1
+
+    # turn off unused axes
+    for j in range(len(regions), len(axes)):
+        axes[j].axis("off")
+
+    # shared legend
+    handles, labels = axes[0].get_legend_handles_labels()
+    uniq = {}
+    for h, l in zip(handles, labels):
+        if l not in uniq:
+            uniq[l] = h
+
+    fig.suptitle(title, fontsize=17, fontweight="bold", y=0.98)
+
+    fig.legend(
+        uniq.values(),
+        uniq.keys(),
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=legend_ncol,
+        frameon=False,
+        fontsize=11
+    )
+
+    fig.tight_layout(rect=[0, 0.05, 1, 0.95])
+
+    if savepath:
+        fig.savefig(savepath, dpi=400, bbox_inches="tight")
+
+    return fig
+#------------------------------------------------

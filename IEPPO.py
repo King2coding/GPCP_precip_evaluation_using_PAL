@@ -145,8 +145,8 @@ gc.collect()
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # ALIGN ALL DATASETS IN TIME
-# mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
-mindate,maxdate = imerg_v06_ds_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
+mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
+# mindate,maxdate = imerg_v06_ds_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max().values
 
 # select time range for all datasets
 gpcp_ds_v3pt2_al = gpcp_ds_v3pt2_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
@@ -2059,8 +2059,13 @@ monthly_df = monthly_df[
     (monthly_df["date"] >= "2000-01-01") & (monthly_df["date"] <= "2020-12-31")
 ].copy()
 
+monthly_df['year'] = monthly_df['date'].dt.year
+year_means = monthly_df.groupby(['year','region'])[products].mean().reset_index()
+year_means['year'] = year_means['year'].astype(int)
 
-fig = plot_2x2_annual_rm13_with_trends(
+
+
+fig, mnth = plot_2x2_annual_rm13_with_trends(
     df_raw=buoy_sate_daily_rainfall_colasped_df,
     regions=["ENP","WNP","IND","ATL"],
     products=["rain_rate","GPCP v3.2","GPCP v3.3","ERA5","IMERG v07","MERRA2"],
@@ -2178,6 +2183,8 @@ df['date'] = pd.to_datetime(df['date'])
 # Year–month
 df['year_month'] = df['date'].dt.to_period('M')
 
+products = ['rain_rate','GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'IMERG v06', 'ERA5', 'MERRA2']
+
 
 monthly_by_region = {}
 
@@ -2258,18 +2265,237 @@ fig, axes = plot_global_and_regional_pdfs_regioncol(
     colors=("black", "lime", ),
 )
 
+
+
 fig, axes = plot_global_and_regional_pdfs_insitu_hist_only(
-    df,
+    df_monthly,
     region_name="ENP",
     insitu_col="rain_rate",
-    line_cols=("rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5"),
-    line_colors=("black", "blue", "red", "lime", ),
+    line_cols=("rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5", 
+               'IMERG v07','MERRA2'),
+    line_colors=("black", "blue", "red", "lime", 
+                 "green", "orange", "purple"),
+    bins=np.arange(0, 15.5, 0.5),
+    smooth_window=3
+)
+
+
+fig, axes = plot_global_and_regional_pdfs_insitu_hist_only(
+    df_monthly,
+    region_name="WNP",
+    insitu_col="rain_rate",
+    line_cols=("rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5", 
+               'IMERG v06','IMERG v07','MERRA2'),
+    line_colors=("black", "blue", "red", "lime", 
+                 "green", "orange", "purple"),
     bins=np.arange(0, 15.5, 0.5),
     smooth_window=3
 )
 
 # "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"
 # "red", "lime", "orange", "purple"
+
+#%%
+products_eval = ["rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"]
+
+monthly_region = make_monthly_region_series(
+    df=buoy_sate_daily_rainfall_colasped_df,
+    products=products_eval,
+    date_col="date",
+    region_col="region"
+)
+
+monthly_region_anom = deseasonalize_monthly(
+    monthly_region,
+    products=products_eval,
+    time_col="month_start",
+    region_col="region"
+)
+
+fig = plot_deseasonalized_anomaly_scatter(
+    df_anom=monthly_region_anom,
+    regions=["ENP", "WNP", "IND", "ATL"],
+    ref_col="rain_rate",
+    product_cols=["GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"],
+    region_labels=Buoy_REGION_NAMES,
+    product_colors=product_colors,
+    region_col="region",
+    figsize=(20, 12),
+    savepath=os.path.join(path_to_plots, f"deseasonalized_monthly_anomaly_scatter_{cde_run_dte}.png")
+)
+# plt.close(fig)
+gc.collect()
+
+#%%
+# regions = ["ENP", "WNP", "IND", "ATL"]
+
+# fig = plot_region_monthly_anomalies_rm13_gapaware(
+#     df_raw=buoy_sate_daily_rainfall_colasped_df,
+#     regions=regions,
+#     products=["rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"],
+#     product_colors=product_colors,
+#     ref="rain_rate",
+#     region_col="region",
+#     date_col="date",
+#     region_names=Buoy_REGION_NAMES,
+#     min_days_month=20,
+#     min_days_month_ref=25,
+#     apply_rm13=True,
+#     comparison_mode="buoy",   # or "common"
+#     max_gap_months=1,
+#     figsize=(15, 10),
+#     savepath=os.path.join(path_to_plots, f"regional_monthly_anomaly_rm13_gapaware_{cde_run_dte}.png")
+# )
+
+# gc.collect()
+
+regions = ["ENP", "WNP", "IND", "ATL"]
+
+fig = plot_region_monthly_anomalies_rm13_gapaware_v2(
+    df_raw=buoy_sate_daily_rainfall_colasped_df,
+    regions=regions,
+    products=["rain_rate", "GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"],
+    product_colors=product_colors,
+    ref="rain_rate",
+    region_col="region",
+    date_col="date",
+    region_names=Buoy_REGION_NAMES,
+    min_days_month=20,
+    min_days_month_ref=25,
+    apply_rm13=True,
+    reindex_full=True,
+    year_min=None,   # or set if you want
+    year_max=None,
+    figsize=(15, 10),
+    savepath=os.path.join(
+        path_to_plots,
+        f"regional_monthly_anomaly_rm13_gapaware_v2_{cde_run_dte}.png"
+    )
+)
+gc.collect()
+
+#-----------------------------------------------------------
+df = buoy_sate_daily_rainfall_colasped_df.copy()
+
+df["date"] = pd.to_datetime(df["date"])
+df["year"] = df["date"].dt.year.astype(int)
+
+# df = df[(df["year"] >= 2000) & (df["year"] <= 2020)].copy()
+
+# Ensure datetime
+df['date'] = pd.to_datetime(df['date'])
+
+# Year–month
+df['year_month'] = df['date'].dt.to_period('M')
+
+
+monthly_by_region = {}
+
+for region in list(Buoy_region_markers.keys()):
+    dfr = df[df['region'] == region].copy()
+
+    monthly = (
+        dfr
+        .groupby('year_month')[products]
+        .mean()
+        .reset_index()
+    )
+
+    # Period → Timestamp
+    monthly['year_month'] = monthly['year_month'].dt.to_timestamp()
+
+    # ---- NEW: enforce continuous monthly index ----
+    full_index = pd.date_range(
+        start=monthly['year_month'].min(),
+        end=monthly['year_month'].max(),
+        freq='MS'   # Month Start
+    )
+
+    monthly = (
+        monthly
+        .set_index('year_month')
+        .reindex(full_index)
+        .rename_axis('year_month')
+        .reset_index()
+    )
+
+    monthly['region'] = region
+
+    monthly['date'] = monthly['year_month'].dt.date
+
+    monthly_by_region[region] = monthly
+
+monthly_by_region_ = pd.concat(
+    list(monthly_by_region.values()),
+    axis=0
+)
+# ----------------------------------------
+# 2) deseasonalize monthly series
+# ----------------------------------------
+des_mnthly = {}
+for regi in monthly_by_region.keys():
+    regi_mnth = monthly_by_region[regi]
+    regi_mnth['date'] = regi_mnth['year_month'].dt.date
+monthly_anom = deseasonalize_monthly(
+df_monthly=monthly_by_region_,
+products=products,
+time_col="date",
+region_col='region'
+)
+
+monthly_anom_ = monthly_anom[['date', 'region', 'rain_rate_anom', 'GPCP v3.2_anom', 'GPCP v3.3_anom', 'ERA5_anom', 'IMERG v07_anom', 'MERRA2_anom']].copy()
+monthly_anom_['date'] = pd.to_datetime(monthly_anom_['date'])
+monthly_anom_ = monthly_anom_.sort_values(["region", "date"]).reset_index(drop=True)
+
+
+# columns to smooth
+anom_cols = [c for c in monthly_anom_.columns if c.endswith("_anom")]
+
+# --- 13-month centered rolling mean by region ---
+df_rm13 = monthly_anom_.copy()
+
+df_rm13[anom_cols] = (
+    df_rm13
+    .groupby("region")[anom_cols]
+    .transform(lambda x: x.rolling(window=13, center=True, min_periods=1).mean())
+)
+
+print(df_rm13.head())
+
+fig = plot_region_anomaly_timeseries_from_df(
+    df_anom=df_rm13,   # your final dataframe with date, region, *_anom columns
+    regions=["ENP", "WNP", "IND", "ATL"],
+    product_colors=product_colors,
+    region_names=Buoy_REGION_NAMES,
+)
+plt.show()
+
+
+# fig = plot_deseasonalized_anomaly_scatter(
+#     df_anom=df_rm13,
+#     regions=["ENP", "WNP", "IND", "ATL"],
+#     ref_col="rain_rate",
+#     product_cols=["GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"],
+#     region_labels=Buoy_REGION_NAMES,
+#     product_colors=product_colors,
+#     region_col="region",
+#     figsize=(20, 12),
+#     savepath=os.path.join(path_to_plots, f"deseasonalized_monthly_anomaly_scatter_{cde_run_dte}.png")
+# )
+# # plt.close(fig)
+# gc.collect()
+
+for p in products:
+    monthly_anom_[f"{p}_anom_13"] = monthly_anom_[f"{p}_anom"].rolling(window=13, center=True, min_periods=1).mean()
+
+monthly_anom_ = monthly_anom_.groupby('region')[['rain_rate_anom', 'GPCP v3.2_anom', 'GPCP v3.3_anom', 'ERA5_anom', 'IMERG v07_anom', 'MERRA2_anom']].rolling(window=13, center=True, min_periods=1).mean()
+
+enp_anom = monthly_anom[monthly_anom['region'] == 'ENP']
+
+enp_anom_13 = enp_anom[['rain_rate_anom', 'GPCP v3.2_anom', 'GPCP v3.3_anom', 'ERA5_anom', 'IMERG v07_anom', 'MERRA2_anom']].rolling(window=13, center=True, min_periods=1).mean()
+
+anom_cols = [f"{p}_anom" for p in products]
+plot_df = monthly_anom[["date"] + anom_cols].copy()
 #%% OceanRain based assessment for the 45 degree poleward
 # write crs and resample to gpcp resolution
 
@@ -2279,10 +2505,22 @@ imergv7_pnt25 = resample_to_new_res(imerg_v07_al,(720,1440),'lon','lat')
 era5_pnt25 = resample_to_new_res(era5_ds_al['tp'],(720,1440),'x','y')
 mer2_pnt25 = resample_to_new_res(mer2_ds_al,(720,1440),'x','y')
 
-df_qc = oceanrain_step0_qc_v2(ocRain_df, 
-                              min_flag2=13, 
-                              keep_spurious_flag2_11=False, 
-                              qclip_hi=None)
+# df_qc = oceanrain_step0_qc_v2(ocRain_df, 
+#                               min_flag2=13, 
+#                               keep_spurious_flag2_11=False, 
+#                               qclip_hi=None)
+
+df_qc = oceanrain_step0_qc_precip_main(
+    ocRain_df,
+    drop_harbor_inop=True,
+    drop_spurious_flag2_11=True,
+    keep_true_zero=True,
+    keep_flag2_12_zero_precip=False,
+    min_flag2_positive=13,
+    prob_thr=None,
+    wind_max=None,
+    qclip_hi=None,
+)
 
 # 0) QC
 # df_qc = oceanrain_step0_qc(
@@ -2294,16 +2532,120 @@ df_qc = oceanrain_step0_qc_v2(ocRain_df,
 # )
 
 # 1) Daily aggregation to GPCP pixels (includes poleward cut inside)
-daily_or, rain_days, snow_days = oceanrain_daily_aggregate_to_gpcp_v2(
-    df_qc,
-    gpcp_ds_v3pt2_al.lat.values,
-    gpcp_ds_v3pt2_al.lon.values,
-    lat_abs_min=45,
-    coverage_frac=0.10,
-    phase_frac_thr=0.50,
-    include_mixed_in_all=False,
+# daily_or, rain_days, snow_days = oceanrain_daily_aggregate_to_gpcp_v2(
+#     df_qc,
+#     gpcp_ds_v3pt2_al.lat.values,
+#     gpcp_ds_v3pt2_al.lon.values,
+#     lat_abs_min=45,
+#     coverage_frac=0.10,
+#     phase_frac_thr=0.50,
+#     include_mixed_in_all=False,
+# )
+daily_or_all, daily_or_usable = oceanrain_daily_aggregate_to_gpcp_main(
+    oc_df_minute=df_qc,
+    gpcp_lat_1d=gpcp_ds_v3pt2_al.lat.values,
+    gpcp_lon_1d=gpcp_ds_v3pt2_al.lon.values,
+    lat_abs_min=45.0,
+    coverage_frac=0.50,
+)
+
+#--------------------------------------------------------------
+product_map = {
+    "GPCP v3.2": (gpcp_ds_v3pt2_al, {"GPCP v3.2": "precip"}),
+    "GPCP v3.3": (gpcp_ds_v3pt3_al, {"GPCP v3.3": "precip"}),
+    "ERA5": (era5_ds_al, {"ERA5": "tp"}),
+    "IMERG v07": (imerg_v07_al, {"IMERG v07": None}),
+    "MERRA2": (mer2_ds_al, {"MERRA2": None}),
+}
+
+print(type(product_map))
+
+# daily_or_usable_common, common_start, common_end = subset_to_common_time_range(
+#     daily_or_usable,
+#     products,
+#     date_col="date",
+# )
+
+daily_or_attached = step2_attach_products_oceanrain(
+    daily_or_usable,
+    gpcp_grid_ds=gpcp_ds_v3pt2_al,
+    products=product_map,
+    ref_col="main_mmday",
+)
+
+#--------------------------------------------------------------
+products_eval = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
+
+cat_metrics_hemi, qt_metrics_hemi = compute_hemi_metrics_oceanrain(
+    daily_or_attached,
+    products=products_eval,
+    obs_col="main_mmday",
+    hemis=("NH", "SH"),
+    cat_thr=0.3,
+)
+
+#--------------------------------------------------------------
+fig1 = plot_hemi_cat_metrics_barpanel(
+    cat_metrics_hemi,
+    products_eval,
+    product_colors,
+    metrics=("POD", "FAR", "Bias", "HSS"),
+    hemis=("SH", "NH"),
+    figsize=(10, 10),
+)
+
+fig2 = plot_hemi_quant_metrics_barpanel(
+    qt_metrics_hemi,
+    products_eval,
+    product_colors,
+    metrics=("CC", "RMSE", "MAE", "Bias"),
+    hemis=("SH", "NH"),
+    figsize=(10, 10),
 )
 #-------------------------------------------------------------
+products_eval = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
+
+ship_month_clim = build_oceanrain_ship_month_climatology(
+    daily_or_attached,
+    obs_col="main_mmday",
+    product_cols=products_eval,
+    min_days_per_ship_month=1,
+)
+
+monthly_ship = build_oceanrain_ship_year_month_means(
+    daily_or_attached,
+    obs_col="main_mmday",
+    product_cols=products_eval,
+    min_days_per_month=1,   # you can later test 3 or 5
+)
+
+fig_sh = plot_oceanrain_monthly_ship_scatter_by_hemi(
+    monthly_ship,
+    hemi="NH",
+    products=['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2'],
+    figsize=(15, 7.5),
+    xylim=(0, 15),
+    add_titles=False,
+)
+
+fig_sh = plot_oceanrain_monthly_ship_scatter_by_hemi(
+    monthly_ship,
+    hemi="SH",
+    products=['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2'],
+    figsize=(15, 7.5),
+    xylim=(0, 10),
+    add_titles=False,
+)
+
+#-------------------------------------------------------------
+ship_month_metrics = compute_metrics_from_ship_month_climatology(
+    ship_month_clim,
+    products=products_eval,
+    obs_col="main_mmday",
+)
+#-------------------------------------------------------------
+# cols = ["dsd_mmday_rain", "dsd_mmday_snow", "rate_gag_mmph"]
+# cols = ["dsd_mmday_rain", "dsd_mmday_snow"]
 # cols = ["dsd_mmday_rain", "dsd_mmday_snow"]  # add "rate_gag_mmph" if you want too
 
 # for c in cols:
@@ -2319,34 +2661,34 @@ daily_or, rain_days, snow_days = oceanrain_daily_aggregate_to_gpcp_v2(
 #     print(snow_days.loc[top3.index, ["time_utc", "lat", "lon", "ship", "precip_flag", "precip_flag2", c]])
 #------------------------------------------------------------
 
-# NH/SH split is now easy
-snow_days_NH = snow_days[snow_days["hemi"] == "NH"]
-snow_days_SH = snow_days[snow_days["hemi"] == "SH"]
+# # NH/SH split is now easy
+# snow_days_NH = snow_days[snow_days["hemi"] == "NH"]
+# snow_days_SH = snow_days[snow_days["hemi"] == "SH"]
 
-products = {
-    "GPCP v3.2": (gpcp_ds_v3pt2_al, {"GPCP v3.2": 'precip'}), # , "gpcp_pliq": "probability_liquid_phase"
-    "GPCP v3.3": (gpcp_ds_v3pt3_al, {"GPCP v3.3": 'precip'}), # , "gpcp_pliq": "probability_liquid_phase"
-    "ERA5": (era5_ds_al, {"ERA5": "tp"}),
-    "IMERG": (imerg_v07_al, {"IMERG v07": None}),
-    "MERRA2": (mer2_ds_al, {"MERRA2": None})
-}
+# products = {
+#     "GPCP v3.2": (gpcp_ds_v3pt2_al, {"GPCP v3.2": 'precip'}), # , "gpcp_pliq": "probability_liquid_phase"
+#     "GPCP v3.3": (gpcp_ds_v3pt3_al, {"GPCP v3.3": 'precip'}), # , "gpcp_pliq": "probability_liquid_phase"
+#     "ERA5": (era5_ds_al, {"ERA5": "tp"}),
+#     "IMERG": (imerg_v07_al, {"IMERG v07": None}),
+#     "MERRA2": (mer2_ds_al, {"MERRA2": None})
+# }
 
-snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH) = step2_attach_and_split(
-    snow_days=snow_days,
-    rain_days=rain_days,
-    gpcp_grid_ds=gpcp_ds_v3pt2_al,
-    products=products
-)
+# snow_days2, rain_days2, (snow_NH, snow_SH, rain_NH, rain_SH) = step2_attach_and_split(
+#     snow_days=snow_days,
+#     rain_days=rain_days,
+#     gpcp_grid_ds=gpcp_ds_v3pt2_al,
+#     products=products
+# )
 
 phase_based_cat_metrics_hemi = {}
 phase_based_qt_metrics_hemi  = {}
 
-phase_based_data = {"Snow": snow_days2, "Rain": rain_days2}
+# phase_based_data = {"Snow": snow_days2, "Rain": rain_days2}
 
 # ensure hemi exists (recommended)
 # snow_days2 = add_pixel_coords_and_hemi(snow_days2, gpcp_ds_v3pt2_al["lat"].values, gpcp_ds_v3pt2_al["lon"].values)
 # rain_days2 = add_pixel_coords_and_hemi(rain_days2, gpcp_ds_v3pt2_al["lat"].values, gpcp_ds_v3pt2_al["lon"].values)
-phase_based_data = {"Snow": snow_days2, "Rain": rain_days2}
+# phase_based_data = {"Snow": snow_days2, "Rain": rain_days2}
 
 products = ['GPCP v3.2',  'GPCP v3.3','IMERG v07', 'ERA5', 'MERRA2'] # 
 
