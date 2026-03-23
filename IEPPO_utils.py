@@ -45,6 +45,16 @@ products = [
     "MERRA2",
 ]
 
+
+Buoy_PRODUCT_COLS = {
+    "Buoy": "rain_rate",
+    "GPCP v3.2": "GPCP v3.2",
+    "GPCP v3.3": "GPCP v3.3",
+    "ERA5": "ERA5",
+    "IMERG v07": "IMERG v07",
+    "MERRA2": "MERRA2",
+}
+
 cc = CRS.from_authority(code=4326, auth_name='EPSG')
 
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
@@ -4032,7 +4042,7 @@ def plot_categorical_metrics_by_region(
     product_colors,
     region_labels=None,
     metrics=("POD", "FAR", "Bias", "HSS"),
-    figsize=(16, 14),
+    figsize=(16, 16),
     bar_width=0.18,
 ):
     """
@@ -4077,6 +4087,8 @@ def plot_categorical_metrics_by_region(
             # (optional) leave Bias auto-scaled unless you want fixed bounds
             
             metric_label = metric + ' [mm day$^{-1}$]' if metric in ["MAE", "RMSE"] else metric
+
+            metric_label = metric + ' [%]' if metrics == ("CC", "RMSE", "MAE", "Bias") else metric
                 
 
         ax.set_ylabel(metric_label, fontsize=18, fontweight="bold")
@@ -4093,7 +4105,8 @@ def plot_categorical_metrics_by_region(
 
     # X-axis
     axes[-1].set_xticks(x + bar_width * (n_products - 1) / 2)
-    axes[-1].set_xticklabels([PAL_REGION_NAMES[k] for k in regions], fontsize=12, fontweight="bold")
+    axes[-1].set_xticklabels([PAL_REGION_NAMES[k] for k in regions], 
+                             fontsize=15, fontweight="bold", rotation=25, ha="center")
     # axes[-1].set_xlabel("Region", fontsize=15, fontweight="bold")
 
     # Legend (top, single row)
