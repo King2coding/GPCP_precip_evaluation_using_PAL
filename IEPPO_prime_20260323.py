@@ -25,6 +25,10 @@ path_to_gpcp_v3pt3 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_
 
 path_to_gpcp_v3pt2 = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/GPCP/GPCP_v3_pnt_2_2000_2020'
 
+path_to_gpcp_v2pt3 = r'/ra1/pubdat/GPCP/v2.3'
+
+path_to_gpcp_v1pt3 = r'/ra1/pubdat/GPCP/V1.3'
+
 path_to_imerg_v06 = r'/ra1/pubdat/GPM/imerg6'
 
 path_to_imerg_v07 = r'/ra1/pubdat/AVHRR_CloudSat_proj/IMERG/IMERGV7/Data_V7_daily_1998-2025'
@@ -46,6 +50,15 @@ all_buoy_dirs = [os.path.join(moored_bouys_paf, d) for d in os.listdir(moored_bo
 all_gpcp_v3pt2_files = sorted([os.path.join(path_to_gpcp_v3pt2, f) for f in os.listdir(path_to_gpcp_v3pt2) if f.endswith('.nc4')])
 
 all_gpcp_v3pt3_files = sorted([os.path.join(path_to_gpcp_v3pt3, f) for f in os.listdir(path_to_gpcp_v3pt3) if f.endswith('.nc4')])
+
+all_gpcp_v2pt3_files = sorted([os.path.join(path_to_gpcp_v2pt3, f) for f in os.listdir(path_to_gpcp_v2pt3) if ('preliminary' not in f) and f.endswith('.nc')])
+
+all_gpcp_v1pt3_files = sorted([os.path.join(path_to_gpcp_v1pt3, f) for f in os.listdir(path_to_gpcp_v1pt3) if f.endswith('.nc')])
+
+all_gpcp_v1pt3_2000_2020_files = [f for f in all_gpcp_v1pt3_files if \
+                                  2000 <= int(os.path.basename(f)
+                                    .split('_')[3].replace('d','')[:4]) \
+                                    <= 2020]
 
 all_imerg_v06_files = sorted([os.path.join(path_to_imerg_v06, f) for f in os.listdir(path_to_imerg_v06) if f.endswith('.nc4')])
 
@@ -82,6 +95,19 @@ gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files,
                                     )
 gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
 
+gpcp_ds_v1pt3_xr = xr.open_mfdataset(all_gpcp_v1pt3_2000_2020_files,
+                                    combine="nested",              # files are time-sequenced
+                                    concat_dim="time",             # concatenate along time                                               
+                                    coords="minimal",
+                                    compat="override",
+                                    parallel=True,
+                                    engine="netcdf4",
+                                    chunks={"time": 120, "lat": 180, "lon": 360},  # <<< important
+                                    cache=False
+                                    )
+
+gpcp_ds_v1pt3_xr = ds_swaplon(gpcp_ds_v1pt3_xr)
+
 print("✅ GPCP loading complete!...")
 print("-" * 30 + "\n")
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
@@ -116,16 +142,16 @@ gc.collect()
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
 # Use multiprocessing to process IMERG files in parallel
-imerg_v06_ds_xr_list = []
-with Pool(processes=18) as pool:
-    imerg_v06_ds_xr_list = pool.map(
-        process_imerg_file,
-        [(idx, file_path, 'v06') for idx, file_path in enumerate(all_imerg_v06_files)]
-    )
+# imerg_v06_ds_xr_list = []
+# with Pool(processes=18) as pool:
+#     imerg_v06_ds_xr_list = pool.map(
+#         process_imerg_file,
+#         [(idx, file_path, 'v06') for idx, file_path in enumerate(all_imerg_v06_files)]
+#     )
 
-# Combine all processed batches into a single xarray dataset - simple version
-if imerg_v06_ds_xr_list:
-    imerg_v06_ds_xr = xr.concat(imerg_v06_ds_xr_list, dim="time")
+# # Combine all processed batches into a single xarray dataset - simple version
+# if imerg_v06_ds_xr_list:
+#     imerg_v06_ds_xr = xr.concat(imerg_v06_ds_xr_list, dim="time")
 
 imerg_v07_ds_xr_list = []
 with Pool(processes=18) as pool:
@@ -140,7 +166,7 @@ if imerg_v07_ds_xr_list:
 
 print("IMERG loading complete")
 print("-" * 50 + "\n")
-del(imerg_v06_ds_xr_list, imerg_v07_ds_xr_list)
+del(imerg_v07_ds_xr_list) # imerg_v06_ds_xr_list,
 gc.collect() 
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
@@ -151,9 +177,10 @@ mindate,maxdate = gpcp_ds_v3pt2_xr.time.min().values, gpcp_ds_v3pt2_xr.time.max(
 # select time range for all datasets
 gpcp_ds_v3pt2_al = gpcp_ds_v3pt2_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
 gpcp_ds_v3pt3_al = gpcp_ds_v3pt3_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
+gpcp_ds_v1pt3_al = gpcp_ds_v1pt3_xr.sel(time=slice(mindate, maxdate)).compute()#.chunk({'time': -1})
 era5_ds_al = era5_ds_xr.sel(valid_time=slice(mindate, maxdate))#.compute()#.chunk({'valid_time': -1})
 imerg_v07_al = imerg_v07_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chunk({'time': -1})
-imerg_v06_al = imerg_v06_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chunk({'time': -1})
+# imerg_v06_al = imerg_v06_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chunk({'time': -1})
 mer2_ds_al = mer2_ds_xr.sel(time=slice(mindate, maxdate))#.chunk({'time': -1})
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
@@ -305,6 +332,15 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
         pal_gpcpv3pt3_df_rain.index = pd.to_datetime(pal_gpcpv3pt3_df_rain['time'])        
 
         # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
+        pal_rain_gpcpv1pt3_df = pal_rain_df.copy()          
+        
+        pal_gpcpv1pt3_df_rain = process_gpcp_with_PAL_rain_and_wind(
+                                        pal_rain_gpcpv1pt3_df,
+                                        gpcp_ds_v1pt3_xr, 'GPCP v1.3')  # , pal_wind_gpcpv1pt3_df
+
+        pal_gpcpv1pt3_df_rain.index = pd.to_datetime(pal_gpcpv1pt3_df_rain['time'])        
+
+        # # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  -------------
         # Process ERA5 data with PAL 
         pal_rain_era5_df = pal_rain_df.copy() 
         
@@ -349,6 +385,19 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
         pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
                                                 ['GPCP v3.3_v3.3', 'date_v3.3']], 
                                                 inplace=True)
+        # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+        # merge GPCP v1.3 data
+        pal_df_combined_rain = pal_df_combined_rain.merge(
+            pal_gpcpv1pt3_df_rain[['date','GPCP v1.3']], 
+            left_index=True, right_index=True, how='left', suffixes= ('', '_v1.3')
+        )
+
+        # Remove any duplicate columns from previous merges
+        pal_df_combined_rain.drop(columns=[i for i in pal_df_combined_rain.columns if i in \
+                                                ['GPCP v1.3_v1.3', 'date_v1.3']], 
+                                                inplace=True)
+        
         # - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
         # ERA5 merge
@@ -404,6 +453,7 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
         # groupby date and get mean of rain_rate and GPCP data 'GPCP_v1pt3',
         grp = pal_df_combined_rain.groupby('date')
         daily_avg_rain = grp.mean([['rain_rate', 
+                                    'GPCP v1.3',
                                     'GPCP v3.2', 
                                     'GPCP v3.3', 
                                     # 'IMERG v06',
@@ -442,6 +492,7 @@ for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
     # calculate daily mean per track_PAL_id
     region_pal_sate_df_daily_mean = region_pal_sate_df.groupby(['track_PAL_id'])[
                                                                ['rain_rate', 
+                                                                'GPCP v1.3',
                                                                 'GPCP v3.2', 
                                                                 'GPCP v3.3',
                                                                 # 'IMERG v06',
@@ -815,8 +866,8 @@ pal_sate_daily_rainfall_colasped_df = pd.read_pickle(os.path.join(path_to_put_df
 # Create scatter plots for PAL vs satellite products
 scatter_fig = plot_satellite_vs_groundtruth(pal_sate_daily_mean_df,
                                             truth_col='rain_rate',
-                                            product_cols=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
-                                            product_labels=['GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2'],
+                                            product_cols=['GPCP v1.3', 'GPCP v3.2', 'GPCP v3.3', 'ERA5',  'MERRA2','IMERG v07',],
+                                            product_labels=['GPCP v1.3', 'GPCP v3.2', 'GPCP v3.3', 'ERA5', 'MERRA2', 'IMERG v07'],
                                             truth_label='PAL Observations',
                                             max_val=18,
                                             ticks=(0, 6, 12, 18),
@@ -859,7 +910,7 @@ for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
 
 # The plot
 
-products = ["GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5",  "MERRA2"]
+products = ['GPCP v1.3', "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5",  "MERRA2"]
 
 # cate metrics
 fig = plot_categorical_metrics_by_region(
@@ -887,7 +938,7 @@ fig.savefig(svnme, dpi=300)
 # - - - - - - - - - - - - - - - - - - - - - - - - - - -- - - - - - - - - - - - - - - 
 # METRICS BY RAINFALL INTENSITY
 rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0] # 
-products = ['GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
+products = ['GPCP v1.3', 'GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
 
 cat_metrics = ['POD', 'FAR', 'Bias', 'HSS']
 qt_metrics  = ['CC', 'RMSE', 'MAE', 'RB']   # <- as you want (Bias handled as RB in %)
@@ -1340,7 +1391,6 @@ ax.set_ylabel('PDF (%)', fontsize=18, fontweight='bold')
 
 # ax.set_xticks(bin_values)
 # ax.set_xticklabels(bin_labels)
-from matplotlib.ticker import FixedLocator, FuncFormatter
 
 bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
 

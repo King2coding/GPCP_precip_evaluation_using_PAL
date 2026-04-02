@@ -18,6 +18,7 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 from matplotlib.ticker import MaxNLocator
 from matplotlib.ticker import FixedLocator, FuncFormatter
+
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -104,6 +105,7 @@ PAL_region_colors = {
 }
 
 product_colors = {
+    "GPCP v1.3": "#9467bd",   # purple
     "GPCP v3.2": "#4c4c4c",   # dark gray
     "GPCP v3.3": "#1f77b4",   # blue
     "ERA5": "#d62728",       # red
@@ -345,7 +347,7 @@ def process_merra2_file(file_info):
             print(f"Processing MERRA2 file {idx+1}")
         mer2_xr = xr.open_dataset(file_path, engine='netcdf4')
         # convert units in kg m-2 s-1 to mm/day by a factor of 3600*24
-        mer2_xr = mer2_xr['PRECTOTCORR'] * 3600
+        mer2_xr = mer2_xr['PRECTOT'] * 3600
         mer2_xr = mer2_xr.mean(dim='time')
         mer2_xr = mer2_xr * 24  # convert to mm/day
         # Add a time dimension based on the file name or metadata
