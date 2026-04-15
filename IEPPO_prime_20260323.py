@@ -368,7 +368,7 @@ for buoy_reg, buoy_files, marker in [("Eastern PACIFIC", buoy_files_by_region["E
             lon = -178
 
         ax.scatter(lon, lat, color='k', s=25, 
-                   marker=marker, markerfacecolor='k', 
+                   marker=marker, 
                    label=f'{buoy_reg} Buoys', 
                    transform=ccrs.PlateCarree())
 
@@ -399,9 +399,10 @@ handles.extend([
     plt.Line2D([0], [0], color='black', marker='d', markersize=10, linestyle='None')
 ])
 labels.extend([
-    f"PACIFIC ({buoy_counts['PACIFIC']} Buoys)",
-    f"INDIAN ({buoy_counts['INDIAN']} Buoys)",
-    f"ATLANTIC ({buoy_counts['ATLANTIC']} Buoys)"
+    f"Eastern PACIFIC Ocean ({buoy_counts['Eastern PACIFIC']} Buoys)",
+    f"Western PACIFIC Ocean ({buoy_counts['Western PACIFIC']} Buoys)",
+    f"INDIAN Ocean ({buoy_counts['INDIAN']} Buoys)",
+    f"ATLANTIC Ocean ({buoy_counts['ATLANTIC']} Buoys)"
 ])
 
 # Add OceanRain year markers to the legend
