@@ -1,28 +1,590 @@
 #%%
-import os
-import numpy as np
-import pandas as pd
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+from IEPPO_utils import *
 
 #%%
-path_to_dat = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/dfs_27Jan2026'
-df = pd.read_pickle(os.path.join(path_to_dat, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260216.pkl'))
 
-#%%
-mpl.rcParams['font.family'] = 'serif'
-mpl.rcParams['font.serif'] = ['DejaVu Serif', 'Times', 'serif']
-mpl.rcParams['font.weight'] = 'bold'
-mpl.rcParams['axes.labelweight'] = 'bold'
-mpl.rcParams['axes.titleweight'] = 'bold'
-mpl.rcParams['xtick.labelsize'] = 18
-mpl.rcParams['ytick.labelsize'] = 18
+path_to_pal_data = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/PAL/data_unzipped/PAL_SPURS1_SPURS2_TPOS_Others_202210'
 
+moored_bouys_paf = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys'
+
+all_pal_files = sorted([os.path.join(path_to_pal_data, f) for f in os.listdir(path_to_pal_data) if f.endswith('.nc')])
+
+all_buoy_dirs = [os.path.join(moored_bouys_paf, d) for d in os.listdir(moored_bouys_paf) if os.path.isdir(os.path.join(moored_bouys_paf, d))]
+
+path_to_ocRain = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/OceanRain'
+
+#%% Floating variables
 def fmt_k(n: int) -> str:
     return f"{n/1000:.1f}k" if n >= 1000 else str(n)
 
+#-------------------------------------------------------------------------------------------
+
+# CLASSIFY BUOY FILES BY REGION
+pacific_buoy_dir = next((d for d in all_buoy_dirs if "PACIFIC" in d.upper()), None)
+indian_buoy_dir = next((d for d in all_buoy_dirs if "INDIAN" in d.upper()), None)
+atlantic_buoy_dir = next((d for d in all_buoy_dirs if "ATLANTIC" in d.upper()), None)
+
+# Ensure directories were found
+if not pacific_buoy_dir:
+    raise ValueError("No directory found for PACIFIC region.")
+if not indian_buoy_dir:
+    raise ValueError("No directory found for INDIAN region.")
+if not atlantic_buoy_dir:
+    raise ValueError("No directory found for ATLANTIC region.")
+
+# Get all files for each region
+pacific_buoy_files = sorted([os.path.join(pacific_buoy_dir, f) for f in os.listdir(pacific_buoy_dir) if f.endswith('.cdf')])
+
+# define buoy files by regions
+pacific_buoy_regions = ['ENP', 'WNP']
+
+# FIRST GROUP BUOY FILES BY REGION BASED ON THEIR LONGITUDE
+# Define longitude bounds for ENP and WNP
+pacific_region_bounds = {
+    'ENP': (-180, -60),  # Longitude range for Eastern North Pacific in [-180, 180]
+    'WNP': (120, 180)      # Longitude range for Western North Pacific in [-180, 180]
+}
+
+# Group buoy files by region
+buoy_files_by_region = {'ENP': [], 'WNP': []}
+for buoy_file in pacific_buoy_files:
+    with xr.open_dataset(buoy_file) as ds:
+        buoy_lon = ds['lon'].values[0]
+        buoy_lon = (buoy_lon + 180) % 360 - 180  # Normalize longitude to [-180, 180]
+
+    for region, bounds in pacific_region_bounds.items():
+        if bounds[0] <= buoy_lon <= bounds[1]:
+            buoy_files_by_region[region].append(buoy_file)
+            break
+
+# add the india and atlantic buoys
+buoy_files_by_region['IND'] = sorted([os.path.join(indian_buoy_dir, f) for f in os.listdir(indian_buoy_dir) if f.endswith('.cdf')])
+buoy_files_by_region['ATL'] = sorted([os.path.join(atlantic_buoy_dir, f) for f in os.listdir(atlantic_buoy_dir) if f.endswith('.cdf')])
+print("✅ BUOY CLASSIFICATION SUMMARY COMPLETED")
+print("\n" + "="*50)
+gc.collect()
+
+regional_buoy_sate_dfs_daily_lst = []
+for region_name, buoy_files in buoy_files_by_region.items():
+    print(f"Processing region: {region_name}")
+        # store Buoy and GPCP dataframes
+
+    # LOAD Buoy DATA
+    for b, b_file in enumerate(buoy_files):
+        b_df, b_lat, b_lon = grab_Buoy_data_df(b_file)
+        b_df["month"] = b_df["time"].dt.month
+        b_df['year'] = b_df['time'].dt.year
+        # metadata
+        buoy_id = os.path.basename(b_file).split(".")[0]
+        b_df["region"] = region_name
+        b_df["ID"] = buoy_id
+
+        # append to list
+        regional_buoy_sate_dfs_daily_lst.append(b_df)
+#-------------------------------------------------------------------------------------------
+# CLASSIFY PAL FILES BY REGION
+pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, 
+                                                               PAL_region_bounds)
+
+regional_PAL_sate_dfs_daily_lst = []
+for region_name, pal_files in list(pals_classed_by_region.items())[:-1]:
+  
+    print(f"\nProcessing region: {region_name} with {len(pal_files)} PAL files")      
+
+     
+
+    # LOAD PAL DATA
+    for i,pal_file in enumerate(pal_files):
+        pal_ds = xr.open_dataset(pal_file)        
+        pal_rain_df = grab_PAL_rain_and_wind_df(pal_ds)  
+        pal_rain_df["month"] = pal_rain_df["time"].dt.month
+        pal_rain_df['year'] = pal_rain_df['time'].dt.year
+
+        # metadata
+        pal_id = os.path.basename(pal_file).split(".")[0]
+        pal_rain_df["region"] = region_name
+        pal_rain_df["ID"] = pal_id
+
+        # append to list
+        regional_PAL_sate_dfs_daily_lst.append(pal_rain_df)
+gc.collect()
+
+
+#-------------------------------------------------------------------------------------------
+ocRain = np.load(os.path.join(path_to_ocRain, "OceanRAIN_MINUTE_coordinates_and_data_Kingsley_20260210.npz"))
+
+# Access the keys in the .npz file
+keys = ocRain.files
+print("Keys in the .npz file:", keys)
+# Create a DataFrame from the .npz file
+ocRain_df = pd.DataFrame({key: ocRain[key] for key in keys})
+
+print("Data files listed and datasets loaded.")
+
+
+df_qc = oceanrain_step0_qc_precip_main(
+    ocRain_df,
+    drop_harbor_inop=True,
+    drop_spurious_flag2_11=True,
+    keep_true_zero=True,
+    keep_flag2_12_zero_precip=False,
+    min_flag2_positive=13,
+    prob_thr=None,
+    wind_max=None,
+    qclip_hi=None,
+)
+
+# gpcp_lat_1d = np.arange(89.75, -90.0, -0.5, dtype=np.float32)
+# gpcp_lon_1d = np.arange(-179.75, 180.0, 0.5, dtype=np.float32)
+
+
+daily_or_all, daily_or_usable = oceanrain_daily_aggregate_to_gpcp_main(
+    oc_df_minute=df_qc,
+    gpcp_lat_1d=np.arange(89.75, -90.0, -0.5, dtype=np.float32),
+    gpcp_lon_1d=np.arange(-179.75, 180.0, 0.5, dtype=np.float32),
+    lat_abs_min=45.0,
+    coverage_frac=0.50,
+)
+
+gc.collect()
+#%% Monthly Availability of Number of In situ per Region
+
+# ---------------------------------------------------------
+# 1. BUILD MONTHLY UNIQUE SHIP COUNTS BY HEMISPHERE
+# ---------------------------------------------------------
+def build_oceanrain_monthly_ship_availability(usable_days):
+    """
+    From OceanRAIN usable daily data, count unique ships per month by hemisphere.
+    One ship contributes at most once per hemisphere-month.
+    Missing months are filled with zero.
+    """
+    df = usable_days.copy()
+
+    df["date"] = pd.to_datetime(df["date"])
+    df["month_start"] = df["date"].dt.to_period("M").dt.to_timestamp()
+
+    # one ship counted once per hemi-month
+    monthly = (
+        df[["hemi", "ship", "month_start"]]
+        .drop_duplicates()
+        .groupby(["hemi", "month_start"])
+        .size()
+        .reset_index(name="n_ships")
+    )
+
+    hemi_order = ["NH", "SH"]
+
+    full_months = pd.date_range(
+        monthly["month_start"].min(),
+        monthly["month_start"].max(),
+        freq="MS"
+    )
+
+    full_index = pd.MultiIndex.from_product(
+        [hemi_order, full_months],
+        names=["hemi", "month_start"]
+    )
+
+    monthly = (
+        monthly.set_index(["hemi", "month_start"])
+               .reindex(full_index, fill_value=0)
+               .reset_index()
+    )
+
+    return monthly
+
+# =========================================================
+# 2. MONTHLY UNIQUE-PLATFORM AVAILABILITY
+# =========================================================
+def build_monthly_platform_availability(df, region_order=None):
+    """
+    Count unique platform IDs per month in each region.
+    One platform can contribute at most once per region-month.
+    Missing months are filled with zero.
+    """
+    out = df.copy()
+    out["time"] = pd.to_datetime(out["time"])
+    out["month_start"] = out["time"].dt.to_period("M").dt.to_timestamp()
+
+    # one row per region-ID-month
+    out = (
+        out[["region", "ID", "month_start"]]
+        .drop_duplicates()
+        .groupby(["region", "month_start"])
+        .size()
+        .reset_index(name="n_platforms")
+    )
+
+    if region_order is None:
+        region_order = sorted(out["region"].unique())
+
+    # full monthly range
+    full_months = pd.date_range(
+        out["month_start"].min(),
+        out["month_start"].max(),
+        freq="MS"
+    )
+
+    full_index = pd.MultiIndex.from_product(
+        [region_order, full_months],
+        names=["region", "month_start"]
+    )
+
+    out = (
+        out.set_index(["region", "month_start"])
+           .reindex(full_index, fill_value=0)
+           .reset_index()
+    )
+
+    return out
+
+def build_oceanrain_raw_monthly_ship_availability(df_raw):
+    """
+    Build monthly OceanRAIN ship availability by hemisphere
+    from raw observational presence, not analysis-screened data.
+
+    Rules:
+    - require valid time, lat, lon, ship
+    - hemisphere from raw latitude
+    - one ship counted at most once per hemisphere-month
+    """
+    df = df_raw.copy()
+
+    # basic validity only
+    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce")
+    df = df.dropna(subset=["time_utc", "lat", "lon", "ship"]).copy()
+
+    # month and hemisphere
+    df["month_start"] = df["time_utc"].dt.to_period("M").dt.to_timestamp()
+    df["hemi"] = np.where(df["lat"] >= 0, "NH", "SH")
+
+    # one ship counted once per hemi-month
+    monthly = (
+        df[["hemi", "ship", "month_start"]]
+        .drop_duplicates()
+        .groupby(["hemi", "month_start"])
+        .size()
+        .reset_index(name="n_ships")
+    )
+
+    hemi_order = ["NH", "SH"]
+
+    full_months = pd.date_range(
+        monthly["month_start"].min(),
+        monthly["month_start"].max(),
+        freq="MS"
+    )
+
+    full_index = pd.MultiIndex.from_product(
+        [hemi_order, full_months],
+        names=["hemi", "month_start"]
+    )
+
+    monthly = (
+        monthly.set_index(["hemi", "month_start"])
+               .reindex(full_index, fill_value=0)
+               .reset_index()
+    )
+
+    return monthly
+# ------------------------------------------------------------------
+# REFINED PLOT FUNCTION
+# ------------------------------------------------------------------
+def plot_monthly_availability_lines(
+    monthly_df,
+    region_order,
+    region_name_map,
+    region_colors=None,
+    title="Monthly Data Availability",
+    ylabel="Monthly Available Platforms",
+    figsize=(13, 5),
+    lw=1.6,
+    ylim=(0, 21),
+    ytick_values=(0, 5, 10, 15, 20),
+    xlim=None,
+    major_year_interval=5,
+    minor_year_interval=1,
+    tick_fontsize=15,
+    title_fontsize=22,
+    label_fontsize=17,
+    legend_fontsize=15,
+    legend_ncol=2,
+    step_where="mid",
+    ax=None
+):
+    """
+    Plot monthly availability lines for regions on one axis.
+    Legend is placed outside below the plot.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+
+    if region_colors is None:
+        region_colors = {}
+
+    # plot each region
+    for region in region_order:
+        sub = (
+            monthly_df[monthly_df["region"] == region]
+            .sort_values("month_start")
+        )
+
+        ax.step(
+            sub["month_start"],
+            sub["n_platforms"],
+            where=step_where,
+            lw=lw,
+            color=region_colors.get(region, None),
+            label=region_name_map.get(region, region)
+        )
+
+    # titles and labels
+    ax.set_title(title, fontsize=title_fontsize, fontweight="bold", pad=10)
+    ax.set_ylabel(ylabel, fontsize=label_fontsize, fontweight="bold")
+
+    # y-axis
+    ax.set_ylim(*ylim)
+    ax.set_yticks(list(ytick_values))
+
+    # x-axis
+    if xlim is not None:
+        ax.set_xlim(pd.Timestamp(xlim[0]), pd.Timestamp(xlim[1]))
+
+    ax.xaxis.set_major_locator(mdates.YearLocator(base=major_year_interval))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    ax.xaxis.set_minor_locator(mdates.YearLocator(base=minor_year_interval))
+
+    # ticks
+    ax.tick_params(axis="both", which="major",
+                   labelsize=tick_fontsize, length=6, width=1.1,
+                   direction="in", top=True, right=True)
+    ax.tick_params(axis="both", which="minor",
+                   length=3.5, width=0.9,
+                   direction="in", top=True, right=True)
+
+    # spines
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.1)
+
+    # no margins on x
+    ax.margins(x=0)
+
+    # legend outside below
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.2),
+        ncol=legend_ncol,
+        frameon=False,
+        fontsize=legend_fontsize
+    )
+
+    plt.tight_layout()
+    return fig, ax
+
+def plot_oceanrain_monthly_availability_raw(
+    monthly_df,
+    hemi_name_map=None,
+    hemi_colors=None,
+    title="OceanRAIN Number",
+    ylabel="Monthly Available Ships",
+    figsize=(13, 5),
+    lw=1.8,
+    ylim=None,
+    ytick_values=None,
+    xlim=None,
+    major_year_interval=1,
+    minor_year_interval=1,
+    tick_fontsize=18,
+    title_fontsize=28,
+    label_fontsize=20,
+    legend_fontsize=18,
+    step_where="mid"
+):
+    if hemi_name_map is None:
+        hemi_name_map = {
+            "NH": "Northern Hemisphere",
+            "SH": "Southern Hemisphere"
+        }
+
+    if hemi_colors is None:
+        hemi_colors = {
+            "NH": "#555555",
+            "SH": "#cc6666"
+        }
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for hemi in ["NH", "SH"]:
+        sub = monthly_df[monthly_df["hemi"] == hemi].sort_values("month_start")
+
+        ax.step(
+            sub["month_start"],
+            sub["n_ships"],
+            where=step_where,
+            lw=lw,
+            color=hemi_colors.get(hemi, None),
+            label=hemi_name_map.get(hemi, hemi)
+        )
+
+    ax.set_title(title, fontsize=title_fontsize, fontweight="bold", pad=10)
+    ax.set_ylabel(ylabel, fontsize=label_fontsize, fontweight="bold")
+
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    if ytick_values is not None:
+        ax.set_yticks(list(ytick_values))
+
+    if xlim is not None:
+        ax.set_xlim(pd.Timestamp(xlim[0]), pd.Timestamp(xlim[1]))
+
+    ax.xaxis.set_major_locator(mdates.YearLocator(base=major_year_interval))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+    ax.xaxis.set_minor_locator(mdates.YearLocator(base=minor_year_interval))
+
+    ax.tick_params(axis="both", which="major",
+                   labelsize=tick_fontsize, length=6, width=1.1,
+                   direction="in", top=True, right=True)
+    ax.tick_params(axis="both", which="minor",
+                   length=3.5, width=0.9,
+                   direction="in", top=True, right=True)
+
+    for spine in ax.spines.values():
+        spine.set_linewidth(1.1)
+
+    ax.margins(x=0)
+
+    leg = ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=2,
+        frameon=False,
+        fontsize=legend_fontsize
+    )
+    for line in leg.get_lines():
+        line.set_linewidth(2.4)
+
+    plt.tight_layout()
+    return fig, ax
+# ------------------------------------------------------------------
+
+# =========================================================
+# 3. BUILD MONTHLY AVAILABILITY FOR BUOY AND PAL
+# =========================================================
+# Buoy
+Buoy_dfs = pd.concat(regional_buoy_sate_dfs_daily_lst, axis=0).copy()
+buoy_region_order = ["ENP", "WNP", "IND", "ATL"]   # adjust if needed
+
+Buoy_monthly_avail = build_monthly_platform_availability(
+    Buoy_dfs,
+    region_order=buoy_region_order
+)
+
+# PAL
+Pal_dfs = pd.concat(regional_PAL_sate_dfs_daily_lst, axis=0).copy()
+pal_region_order = sorted(Pal_dfs["region"].dropna().unique())   # or provide your own order
+
+Pal_monthly_avail = build_monthly_platform_availability(
+    Pal_dfs,
+    region_order=pal_region_order
+)
+
+
+# =========================================================
+# 4. OPTIONAL COLORS
+#    Set your own if you want consistency across figures
+
+
+# =========================================================
+# 5. PLOT BUOY
+# =========================================================
+fig_buoy, ax_buoy = plot_monthly_availability_lines(
+    monthly_df=Buoy_monthly_avail,
+    region_order=buoy_region_order,
+    region_name_map=Buoy_REGION_NAMES,
+    region_colors=Buoy_region_colors,
+    title="Buoy Number",
+    ylabel="Monthly Available Buoys",
+    figsize=(13.2, 5.2),
+    lw=1.6,
+    ylim=(0, 21),
+    ytick_values=(0, 5, 10, 15, 20),
+    xlim=("1998-01-01", "2025-06-01"),   # adjust if needed
+    major_year_interval=5,
+    minor_year_interval=1,
+    tick_fontsize=15,
+    title_fontsize=22,
+    label_fontsize=17,
+    legend_fontsize=14,
+    legend_ncol=4
+)
+
+plt.show()
+
+gc.collect()
+
+# =========================================================
+# 6. PLOT PAL
+# =========================================================
+fig_pal, ax_pal = plot_monthly_availability_lines(
+    monthly_df=Pal_monthly_avail,
+    region_order=pal_region_order,
+    region_name_map=PAL_REGION_NAMES,
+    region_colors=PAL_region_colors,
+    title="PAL Number",
+    ylabel="Monthly\nAvailable PALs",
+    figsize=(13.2, 5.2),
+    lw=2.6,
+    ylim=(0, 21),
+    ytick_values=(0, 5, 10, 15, 20),
+    xlim=("2010-01-01", "2021-12-01"),   # adjust if needed
+    major_year_interval=1,
+    minor_year_interval=1,
+    tick_fontsize=15,
+    title_fontsize=22,
+    label_fontsize=17,
+    legend_fontsize=13,
+    legend_ncol=3
+)
+
+plt.show()
+gc.collect()
+
+# Example:
+# daily_all, usable_days = oceanrain_daily_aggregate_to_gpcp_main(...)
+
+OceanRAIN_monthly_raw_avail = build_oceanrain_raw_monthly_ship_availability(ocRain_df)
+
+fig_or, ax_or = plot_oceanrain_monthly_availability_raw(
+    OceanRAIN_monthly_raw_avail,
+    hemi_name_map={
+        "NH": "Northern Hemisphere",
+        "SH": "Southern Hemisphere"
+    },
+    hemi_colors={
+        "NH": "#555555",
+        "SH": "#cc6666"
+    },
+    title="OceanRAIN Number",
+    ylabel="Monthly\nAvailable Ships",
+    figsize=(13.2, 5.2),
+    ylim=(0, 5),                 # adjust after checking actual max
+    ytick_values=(0, 1, 2, 3, 4, 5),
+    xlim=("2010-01-01", "2017-12-01"),
+    major_year_interval=1,
+    minor_year_interval=1,
+    tick_fontsize=17,
+    title_fontsize=22,
+    label_fontsize=17,
+    legend_fontsize=18
+)
+plt.show()
+
+gc.collect()
 #%%
+path_to_dat = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/dfs_27Jan2026'
+df = pd.read_pickle(os.path.join(path_to_dat, 'buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260216.pkl'))
 
 # -----------------------------
 # Inputs

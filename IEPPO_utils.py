@@ -18,6 +18,11 @@ import matplotlib as mpl
 import matplotlib.colors as mcolors
 from matplotlib.ticker import MaxNLocator
 from matplotlib.ticker import FixedLocator, FuncFormatter
+from matplotlib.colors import BoundaryNorm
+import matplotlib.dates as mdates
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
@@ -36,6 +41,85 @@ from rasterio.warp import Resampling
 from multiprocessing import Pool
 
 #%% DEFINE GLOBAL VARIABLES
+product_markers = {
+    "GPCP v1.3": "o",
+    "GPCP v3.2": "s",
+    "GPCP v3.3": "^",
+    "IMERG v07": "D",
+    "ERA5": "P",
+    "MERRA2": "X",
+}
+
+# Wider spacing for clarity
+product_offsets = {
+    "GPCP v1.3": (-12.0,  3.0),
+    "GPCP v3.2": ( 0.0,  4.0),
+    "GPCP v3.3": ( 10.0,  3.0),
+    "IMERG v07": (-6.0, -1.0),
+    "ERA5":      ( 0.0, -8.0),
+    "MERRA2":    ( 12.0, -3.0),
+}
+
+
+METRIC_STYLE = {
+    # categorical
+    "POD": {
+        "label": "POD",
+        "bounds": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        "cmap": plt.cm.viridis
+    },
+    "FAR": {
+        "label": "FAR",
+        "bounds": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        "cmap": plt.cm.viridis_r
+    },
+    "HSS": {
+        "label": "HSS",
+        "bounds": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+        "cmap": plt.cm.viridis
+    },
+    "Bias_det": {
+        "label": "Bias",
+        "bounds": [0.0, 0.5, 0.8, 1.0, 1.2, 1.6, 2.2],
+        "cmap": plt.cm.RdYlBu_r
+    },
+
+    # quantitative
+    "CC": {
+        "label": "CC",
+        "bounds": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+        "cmap": plt.cm.viridis
+    },
+    "RMSE": {
+        "label": "RMSE [mm/day]",
+        "bounds": [0, 5, 10, 15,20],
+        "cmap": plt.cm.viridis_r
+    },
+    "MAE": {
+        "label": "MAE [mm/day]",
+        "bounds": [0, 2, 4, 6, 8, 10],
+        "cmap": plt.cm.viridis_r
+    },
+    "Bias": {
+        "label": "Bias [%]",
+        "bounds": [-100, -50, -20, 20, 50, 100],
+        "cmap": plt.cm.RdBu_r
+    },
+}
+
+region_label_offsets = {
+    "ETNP": (0.0, 15.0),
+    "TNEP": (0.0, 15.0),
+    "TNWP": (0.0, 15.0),
+    "TSEP": (0.0, 15.0),
+    "STNA": (0.0, 15.0),
+    "TNIO": (0.0, 15.0),
+    "ENP":  (0.0, 15.0),
+    "WNP":  (0.0, 15.0),
+    "IND":  (0.0, 15.0),
+    "ATL":  (0.0, 15.0),
+}
+
 
 products = [
     "rain_rate",     # Buoy
@@ -45,7 +129,6 @@ products = [
     "IMERG v07",
     "MERRA2",
 ]
-
 
 Buoy_PRODUCT_COLS = {
     "Buoy": "rain_rate",
@@ -59,6 +142,17 @@ Buoy_PRODUCT_COLS = {
 cc = CRS.from_authority(code=4326, auth_name='EPSG')
 
 cde_run_dte = str(date.today().strftime('%Y%m%d'))
+
+year_colors = {
+    2010: 'black',
+    2011: 'magenta',
+    2012: 'green',
+    2013: 'lime',
+    2014: 'orange',
+    2015: 'cyan',
+    2016: 'blue',
+    2017: 'red'
+}
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # Set plot parameters
@@ -106,6 +200,7 @@ PAL_region_colors = {
 
 product_colors = {
     "GPCP v1.3": "#9467bd",   # purple
+    "GPCP v2.3": "#17becf",   # cyan
     "GPCP v3.2": "#4c4c4c",   # dark gray
     "GPCP v3.3": "#1f77b4",   # blue
     "ERA5": "#d62728",       # red
@@ -320,6 +415,61 @@ def classify_and_group_files_bounding_box(file_list, region_bounds_dict=None):
     return classification
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def region_center_from_bounds(bounds_dict):
+    rows = []
+    for region, b in bounds_dict.items():
+        lon_c = (b["lon_min"] + b["lon_max"]) / 2
+        lat_c = (b["lat_min"] + b["lat_max"]) / 2
+        rows.append({
+            "region": region,
+            "lon": lon_c,
+            "lat": lat_c,
+            "lon_min": b["lon_min"],
+            "lon_max": b["lon_max"],
+            "lat_min": b["lat_min"],
+            "lat_max": b["lat_max"],
+        })
+    return pd.DataFrame(rows)
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+def nested_metrics_to_tidy(metrics_dict, reference_type, bounds_dict):
+    rows = []
+    centers = region_center_from_bounds(bounds_dict)
+
+    for region, prod_dict in metrics_dict.items():
+        for product, met_dict in prod_dict.items():
+            for metric, value in met_dict.items():
+                rows.append({
+                    "reference_type": reference_type,
+                    "region": region,
+                    "product": product,
+                    "metric": metric,
+                    "value": value
+                })
+
+    df = pd.DataFrame(rows)
+    df = df.merge(centers, on="region", how="left")
+    return df
+
+def format_lon(x, pos=None):
+    x = int(round(x))
+    if x == 0:
+        return "0°"
+    if x < 0:
+        return f"{abs(x)}°W"
+    return f"{x}°E"
+
+def format_lat(y, pos=None):
+    y = int(round(y))
+    if y == 0:
+        return "EQ"
+    if y < 0:
+        return f"{abs(y)}°S"
+    return f"{y}°N"
+
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 def process_era5_file(file_info):
     idx, file_path = file_info
     if idx % 5 == 0:
@@ -384,6 +534,51 @@ def process_imerg_file(args):
     elif version == 'v07':
         precip_aray = imerg_precip_data.precipitation.data    
         imerg_time = pd.to_datetime(imerg_precip_data['time'].values[0],format='%Y-%m-%d') 
+
+    precip_aray = np.flip(precip_aray[0,:,:].transpose(), axis=0)
+    precip_aray = precip_aray[np.newaxis, :, :]
+
+    lon = imerg_precip_data.coords['lon'].values
+    lat = np.flip(imerg_precip_data.coords['lat']).values    
+    imerg_precip_data.close() 
+
+    # Create xarray DataArray
+    imerg_xr = xr.DataArray(
+        precip_aray,
+        coords={
+            "time": [imerg_time],
+            "lat": lat,
+            "lon": lon,
+        },
+        dims=["time", "lat", "lon"],
+        name="precipitation",
+    )
+
+    # write crs and resample to gpcp resolution
+    imerg_xr.rio.write_crs(cc.to_string(), inplace=True)
+    imerg_xr = imerg_xr.rio.set_spatial_dims(x_dim="lon", y_dim="lat", inplace=True)
+    imerg_xr = imerg_xr.rio.reproject(
+        imerg_xr.rio.crs,
+        shape=(360, 720),#gpcp_ds_v3pt2_xr['precip'].shape[1:], # # set the shape as the GPCP data
+        resampling=Resampling.average,
+    )
+    # rename spatial dims back to latlon
+    imerg_xr = imerg_xr.rename({'y': 'lat', 'x': 'lon'})
+    del(imerg_precip_data,imerg_time, precip_aray,lon,lat)  
+    return imerg_xr
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+def process_imerg_hdf_file(args):
+    idx, file_path = args
+    if idx % 500 == 0:
+        print(f"Processing IMERG file {idx+1}")
+
+    imerg_precip_data = xr.open_dataset(file_path,engine='netcdf4',group='Grid')
+
+    imerg_precip_data = imerg_precip_data['precipitation']
+    precip_aray = imerg_precip_data.data
+    imerg_time = pd.Timestamp(imerg_precip_data["time"].values[0].strftime("%Y-%m-%d"))    
 
     precip_aray = np.flip(precip_aray[0,:,:].transpose(), axis=0)
     precip_aray = precip_aray[np.newaxis, :, :]
@@ -847,6 +1042,59 @@ def extract_point_timeseries_to_df(
 
     return df
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def compute_metrics_by_intensity_for_df(
+    df,
+    products,
+    rainfall_bins,
+    obs_col="rain_rate",
+):
+    """
+    Compute categorical and quantitative metrics by rain-rate threshold
+    for one collocated dataframe.
+
+    Returns
+    -------
+    cat_met_by_prdt : dict
+        cat_met_by_prdt[product] -> DataFrame(index=rainfall_bins, columns=cat_metrics)
+    qt_met_by_prdt : dict
+        qt_met_by_prdt[product]  -> DataFrame(index=rainfall_bins, columns=qt_metrics)
+    """
+    cat_metrics = ['POD', 'FAR', 'Bias', 'HSS']
+    qt_metrics  = ['CC', 'RMSE', 'MAE', 'RB']
+
+    cat_met_by_prdt = {}
+    qt_met_by_prdt  = {}
+
+    for product in products:
+        cat_met_prdt = pd.DataFrame(index=rainfall_bins, columns=cat_metrics, dtype=float)
+        qt_met_prdt  = pd.DataFrame(index=rainfall_bins, columns=qt_metrics,  dtype=float)
+
+        forecast = df[product]
+        observed = df[obs_col]
+
+        for r_bin in rainfall_bins:
+            # categorical: all valid pairs at this threshold
+            cat_mets = categorical_stats(forecast, observed, r_bin)
+            cat_met_prdt.loc[r_bin, 'POD']  = cat_mets.get('POD',  np.nan)
+            cat_met_prdt.loc[r_bin, 'FAR']  = cat_mets.get('FAR',  np.nan)
+            cat_met_prdt.loc[r_bin, 'Bias'] = cat_mets.get('Bias', np.nan)
+            cat_met_prdt.loc[r_bin, 'HSS']  = cat_mets.get('HSS',  np.nan)
+
+            # quantitative: only intensity-matched rainy cases
+            bin_df = df[(df[obs_col] >= r_bin) & (df[product] >= r_bin)].copy()
+            qt_mets = calculate_metrics(bin_df, obs_col, product)
+
+            qt_met_prdt.loc[r_bin, 'CC']   = qt_mets.get('CC',   np.nan)
+            qt_met_prdt.loc[r_bin, 'RMSE'] = qt_mets.get('RMSE', np.nan)
+            qt_met_prdt.loc[r_bin, 'MAE']  = qt_mets.get('MAE',  np.nan)
+            qt_met_prdt.loc[r_bin, 'RB']   = qt_mets.get('Bias', np.nan)  # relative bias [%]
+
+        cat_met_by_prdt[product] = cat_met_prdt
+        qt_met_by_prdt[product]  = qt_met_prdt
+
+    return cat_met_by_prdt, qt_met_by_prdt
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
 def categorical_stats(forecast, observation, threshold):
     """
     Compute categorical verification statistics following WMO/JWGNE definitions.
@@ -1040,6 +1288,55 @@ def compute_pdf_elements(data, colname, bins):
     return pdf_df
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def compute_pdf_bundle_for_insitu_df(
+    df,
+    *,
+    obs_col="rain_rate",
+    products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"),
+    bin_values=(0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256),
+    year_range=None,
+    date_col="date",
+):
+    """
+    Compute PDFc/PDFv tables for one in situ-based collocated dataframe.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input collocated dataframe containing obs_col + product columns.
+    obs_col : str
+        In situ rainfall column, usually 'rain_rate'.
+    products : tuple/list
+        Product columns to process.
+    bin_values : tuple/list
+        Bin upper edges passed to compute_pdf_elements().
+    year_range : tuple or None
+        Optional year filter, e.g. (2000, 2020).
+    date_col : str
+        Date column used only if year_range is provided.
+
+    Returns
+    -------
+    pdf_dict : dict
+        pdf_dict['insitu'] = PDF table for obs_col
+        pdf_dict[product]  = PDF table for each product
+    """
+    dff = df.copy()
+
+    if year_range is not None:
+        y0, y1 = year_range
+        dff[date_col] = pd.to_datetime(dff[date_col])
+        dff["year"] = dff[date_col].dt.year.astype(int)
+        dff = dff[(dff["year"] >= y0) & (dff["year"] <= y1)].copy()
+
+    pdf_dict = {}
+    pdf_dict["insitu"] = compute_pdf_elements(dff, obs_col, list(bin_values))
+
+    for product in products:
+        pdf_dict[product] = compute_pdf_elements(dff, product, list(bin_values))
+
+    return pdf_dict
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def make_monthly_clim_anoms(monthly_clim_by_region, buoy_col="rain_rate", products=None):
     """
     For each region: add anomaly columns prod_anom = prod - buoy_col
@@ -1101,7 +1398,318 @@ def compute_monthly_climatology_equal_station_weight(
 
     return monthly_clim_by_region, station_month
 
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def rename_monthnum_for_plotting(monthly_clim_by_region):
+    out = {}
+    for region, clim in monthly_clim_by_region.items():
+        c = clim.copy()
+        if "month_num" in c.columns:
+            c = c.rename(columns={"month_num": "month"})
+        out[region] = c
+    return out
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+def compute_monthly_climatology_from_monthly_buoy_df(
+    df,
+    products,
+    *,
+    region_col="region",
+    id_col="ID",
+    month_col="month",
+    buoy_col="Buoy",
+    n_days_col="n_days",
+    min_days_per_month=20,
+    min_buoys_per_month=None,
+    equal_weight_by_buoy=True,
+):
+    """
+    Compute regional monthly climatology from the monthly buoy-product dataframe.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Master monthly buoy-product dataframe.
+    products : list
+        Product columns including buoy reference, e.g.
+        ["Buoy", "GPCP v2.3", "GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"]
+    min_days_per_month : int
+        Minimum buoy daily count required for a monthly buoy value to be used.
+    min_buoys_per_month : int or None
+        If given, require at least this many active buoys in a region-month before using that row.
+    equal_weight_by_buoy : bool
+        If True, first compute each buoy's monthly climatology, then average across buoys.
+        If False, average all rows directly.
+
+    Returns
+    -------
+    monthly_clim_by_region : dict
+        region -> DataFrame with columns ["month_num"] + products
+    """
+    dff = df.copy()
+    dff[month_col] = pd.to_datetime(dff[month_col])
+
+    # keep only sufficiently sampled buoy-months
+    if n_days_col in dff.columns:
+        dff = dff[dff[n_days_col] >= min_days_per_month].copy()
+
+    # add calendar month
+    dff["month_num"] = dff[month_col].dt.month
+
+    # optional: require enough active buoys per region-month
+    if min_buoys_per_month is not None:
+        active_counts = (
+            dff.groupby([region_col, month_col], as_index=False)
+               .agg(n_active_buoys=(id_col, "nunique"))
+        )
+
+        dff = dff.merge(active_counts, on=[region_col, month_col], how="left")
+        dff = dff[dff["n_active_buoys"] >= min_buoys_per_month].copy()
+
+    monthly_clim_by_region = {}
+
+    for region in dff[region_col].dropna().unique():
+        dfr = dff[dff[region_col] == region].copy()
+
+        if equal_weight_by_buoy:
+            # Step 1: monthly climatology per buoy
+            buoy_month_clim = (
+                dfr.groupby([id_col, "month_num"], as_index=False)[products]
+                   .mean()
+            )
+
+            # Step 2: average climatology across buoys
+            clim = (
+                buoy_month_clim.groupby("month_num", as_index=False)[products]
+                              .mean()
+            )
+        else:
+            # direct row-wise average
+            clim = (
+                dfr.groupby("month_num", as_index=False)[products]
+                   .mean()
+            )
+
+        monthly_clim_by_region[region] = clim.sort_values("month_num").reset_index(drop=True)
+
+    return monthly_clim_by_region
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# ============================================================
+# BUILD ANNUAL REGIONAL SERIES FROM MONTHLY BUOY-PRODUCT TABLE
+# ============================================================
+def build_annual_from_monthly_buoy_df(
+    df,
+    products,
+    *,
+    region_col="region",
+    id_col="ID",
+    month_col="month",
+    buoy_col="Buoy",
+    n_days_col="n_days",
+    min_days_per_month=20,
+    min_buoys_per_month=5,
+    min_months_per_year=8,
+    equal_weight_by_buoy=True,
+):
+    """
+    Build annual regional mean rainfall series from the monthly buoy-product table.
+
+    Workflow
+    --------
+    1) keep only buoy-months with sufficient daily coverage
+    2) optionally require enough active buoys in each region-month
+    3) compute region-month means (equal-weight by buoy recommended)
+    4) compute annual means from valid region-month means
+
+    Returns
+    -------
+    annual_by_region : dict
+        region -> DataFrame with columns:
+        ['year', 'n_valid_months'] + products
+
+    annual_df : pd.DataFrame
+        concatenated regional annual dataframe
+    """
+
+    dff = df.copy()
+    dff[month_col] = pd.to_datetime(dff[month_col])
+
+    # --------------------------------------------------------
+    # 1) keep only sufficiently sampled buoy-months
+    # --------------------------------------------------------
+    if n_days_col in dff.columns:
+        dff = dff[dff[n_days_col] >= min_days_per_month].copy()
+
+    if dff.empty:
+        return {}, pd.DataFrame()
+
+    # --------------------------------------------------------
+    # 2) require enough active buoys in each region-month
+    # --------------------------------------------------------
+    if min_buoys_per_month is not None:
+        active_counts = (
+            dff.groupby([region_col, month_col], as_index=False)
+               .agg(n_active_buoys=(id_col, "nunique"))
+        )
+
+        dff = dff.merge(active_counts, on=[region_col, month_col], how="left")
+        dff = dff[dff["n_active_buoys"] >= min_buoys_per_month].copy()
+
+    if dff.empty:
+        return {}, pd.DataFrame()
+
+    # --------------------------------------------------------
+    # 3) compute region-month series
+    # --------------------------------------------------------
+    if equal_weight_by_buoy:
+        # one value per buoy-month already exists; now average equally across buoys
+        monthly_region = (
+            dff.groupby([region_col, month_col], as_index=False)[products]
+               .mean()
+        )
+    else:
+        monthly_region = (
+            dff.groupby([region_col, month_col], as_index=False)[products]
+               .mean()
+        )
+
+    monthly_region["year"] = monthly_region[month_col].dt.year
+    monthly_region["month_num"] = monthly_region[month_col].dt.month
+
+    # --------------------------------------------------------
+    # 4) annual means from monthly regional values
+    # --------------------------------------------------------
+    annual_rows = []
+
+    for region, dfr in monthly_region.groupby(region_col):
+        for year, dfy in dfr.groupby("year"):
+            row = {
+                region_col: region,
+                "year": int(year),
+                "n_valid_months": int(dfy[buoy_col].notna().sum())
+            }
+
+            if row["n_valid_months"] >= min_months_per_year:
+                for p in products:
+                    row[p] = dfy[p].mean()
+            else:
+                for p in products:
+                    row[p] = np.nan
+
+            annual_rows.append(row)
+
+    annual_df = pd.DataFrame(annual_rows).sort_values([region_col, "year"]).reset_index(drop=True)
+
+    annual_by_region = {
+        reg: sub.drop(columns=[region_col]).reset_index(drop=True)
+        for reg, sub in annual_df.groupby(region_col)
+    }
+
+    return annual_by_region, annual_df
+#-------------------------------------------------------------------
+# ============================================================
+# Monthly anomaly scatter from the MONTHLY buoy-product table
+# Consistent with:
+#   - min 20 valid buoy days per month
+#   - optional min active buoys per region-month
+#   - equal weighting by buoy
+# ============================================================
+
+def build_monthly_region_series_from_monthly_buoy_df(
+    df,
+    products,
+    *,
+    region_col="region",
+    id_col="ID",
+    month_col="month",
+    n_days_col="n_days",
+    min_days_per_month=20,
+    min_buoys_per_month=2,
+    equal_weight_by_buoy=True,
+):
+    """
+    Build regional monthly series from the monthly buoy-product dataframe.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Monthly buoy-product dataframe, e.g. all_buoy_product_monthly_df
+    products : list
+        Columns to retain, e.g.
+        ["Buoy","GPCP v2.3","GPCP v3.2","GPCP v3.3","IMERG v07","ERA5","MERRA2"]
+    min_days_per_month : int
+        Minimum number of valid buoy days required in a buoy-month.
+    min_buoys_per_month : int or None
+        Require at least this many active buoys in a region-month.
+    equal_weight_by_buoy : bool
+        If True:
+          1) keep one row per buoy-month
+          2) region-month = mean across buoy monthly values
+        If False:
+          direct mean across all rows in a region-month.
+
+    Returns
+    -------
+    monthly_region : pd.DataFrame
+        Columns:
+          region, month_start, n_active_buoys, products...
+    """
+    dff = df.copy()
+    dff[month_col] = pd.to_datetime(dff[month_col])
+
+    # -----------------------------
+    # 1) keep only buoy-months with enough daily coverage
+    # -----------------------------
+    if n_days_col in dff.columns:
+        dff = dff[dff[n_days_col] >= min_days_per_month].copy()
+
+    if dff.empty:
+        return pd.DataFrame(columns=[region_col, "month_start", "n_active_buoys"] + list(products))
+
+    # -----------------------------
+    # 2) count active buoys per region-month
+    # -----------------------------
+    active_counts = (
+        dff.groupby([region_col, month_col], as_index=False)
+           .agg(n_active_buoys=(id_col, "nunique"))
+           .rename(columns={month_col: "month_start"})
+    )
+
+    # -----------------------------
+    # 3) compute region-month means
+    # -----------------------------
+    if equal_weight_by_buoy:
+        # one value per buoy-month is already present in the input table
+        # region-month = average across buoy monthly values
+        monthly_region = (
+            dff.groupby([region_col, month_col], as_index=False)[products]
+               .mean()
+               .rename(columns={month_col: "month_start"})
+        )
+    else:
+        monthly_region = (
+            dff.groupby([region_col, month_col], as_index=False)[products]
+               .mean()
+               .rename(columns={month_col: "month_start"})
+        )
+
+    monthly_region = monthly_region.merge(
+        active_counts,
+        on=[region_col, "month_start"],
+        how="left"
+    )
+
+    # -----------------------------
+    # 4) optional minimum buoy count filter
+    # -----------------------------
+    if min_buoys_per_month is not None:
+        monthly_region = monthly_region[
+            monthly_region["n_active_buoys"] >= min_buoys_per_month
+        ].copy()
+
+    monthly_region = monthly_region.sort_values([region_col, "month_start"]).reset_index(drop=True)
+
+    return monthly_region
+#-------------------------------------------------------------------
 # QC for OceanRAIN data
 
 def oceanrain_step0_qc(
@@ -1459,6 +2067,7 @@ def oceanrain_step0_qc_precip_main(
     # core row filtering
     drop_harbor_inop: bool = True,
     drop_spurious_flag2_11: bool = True,
+    drop_flag2_17: bool = False,
     keep_true_zero: bool = True,
 
     # whether to keep flag2=12 (precipitation minutes with 0.00 mm/h)
@@ -1585,6 +2194,9 @@ def oceanrain_step0_qc_precip_main(
     if "precip_flag2" in df.columns:
         if drop_spurious_flag2_11:
             m &= (df["precip_flag2"] != 11)
+
+        if drop_flag2_17:
+            m &= (df["precip_flag2"] != 17)
 
         allowed_flag2 = pd.Series(False, index=df.index)
 
@@ -1915,7 +2527,6 @@ def oceanrain_daily_aggregate_to_gpcp_v2(
 
     return daily_or, rain_days, snow_days
 
-# -----------------------------------------------------------------------------
 # ------------------------------------------------------------
 # helper: minute-rate series (mm/h) -> daily accumulation (mm/day)
 # ------------------------------------------------------------
@@ -1926,7 +2537,359 @@ def _mmday_from_mmph(series):
     x = pd.to_numeric(series, errors="coerce").to_numpy(dtype="float64")
     return np.nansum(x) / 60.0
 
+def _mmday_from_mmph_mean24(series):
+    x = pd.to_numeric(series, errors="coerce").to_numpy(dtype="float64")
+    if np.isfinite(x).sum() == 0:
+        return np.nan
+    return np.nanmean(x) * 24.0
 
+#------------------------------------------------------------
+# ============================================================
+# helper: categorical metrics dict -> tidy table
+# ============================================================
+def compute_spread_ratio_from_daily_pairs(
+    df,
+    *,
+    obs_col="main_mmday",
+    product_cols=None,
+    hemi_col="hemi",
+    hemis=("NH", "SH"),
+):
+    rows = []
+
+    if product_cols is None:
+        raise ValueError("product_cols must be provided.")
+
+    for hemi in hemis:
+        dfh = df[df[hemi_col] == hemi].copy()
+
+        for prod in product_cols:
+            sub = dfh[[obs_col, prod]].replace([np.inf, -np.inf], np.nan).dropna().copy()
+
+            if len(sub) < 2:
+                rows.append({
+                    "hemi": hemi,
+                    "product": prod,
+                    "N_pairs": len(sub),
+                    "obs_std": np.nan,
+                    "prod_std": np.nan,
+                    "spread_ratio": np.nan,
+                })
+                continue
+
+            obs_std = sub[obs_col].std(ddof=1)
+            prod_std = sub[prod].std(ddof=1)
+
+            spread_ratio = np.nan
+            if np.isfinite(obs_std) and obs_std != 0:
+                spread_ratio = prod_std / obs_std
+
+            rows.append({
+                "hemi": hemi,
+                "product": prod,
+                "N_pairs": len(sub),
+                "obs_std": obs_std,
+                "prod_std": prod_std,
+                "spread_ratio": spread_ratio,
+            })
+
+    return pd.DataFrame(rows)
+#------------------------------------------------------------
+def quant_dict_to_table_with_spread(
+    qt_metrics_dict,
+    spread_df,
+    products_order=None,
+):
+    rows = []
+
+    for hemi, prod_dict in qt_metrics_dict.items():
+        for prod, mets in prod_dict.items():
+            rows.append({
+                "hemi": hemi,
+                "product": prod,
+                "CC": mets.get("CC", np.nan),
+                "Bias_pct": mets.get("Bias", np.nan),
+                "RMSE": mets.get("RMSE", np.nan),
+                "MAE": mets.get("MAE", np.nan),
+                "N_event_pairs": mets.get("N", np.nan),
+            })
+
+    qt_df = pd.DataFrame(rows)
+
+    out = qt_df.merge(
+        spread_df[["hemi", "product", "N_pairs", "obs_std", "prod_std", "spread_ratio"]],
+        on=["hemi", "product"],
+        how="left"
+    )
+
+    if products_order is not None:
+        out["product"] = pd.Categorical(out["product"], categories=products_order, ordered=True)
+        out = out.sort_values(["hemi", "product"]).reset_index(drop=True)
+
+    return out
+
+#------------------------------------------------------------
+def plot_quant_summary_cc_bias_spread(
+    quant_summary_df,
+    *,
+    products_order,
+    product_colors,
+    figsize=(12, 9),
+):
+    metrics = [
+        ("CC", "CC"),
+        ("Bias_pct", "Bias [%]"),
+        ("spread_ratio", r"Spread ratio [$\sigma_p / \sigma_{OR}$]"),
+    ]
+
+    hemis = ["NH", "SH"]
+
+    fig, axes = plt.subplots(
+        nrows=len(metrics),
+        ncols=len(hemis),
+        figsize=figsize,
+        sharex="col",
+        squeeze=False
+    )
+
+    for j, hemi in enumerate(hemis):
+        dfh = quant_summary_df[quant_summary_df["hemi"] == hemi].copy()
+        dfh = dfh.set_index("product").reindex(products_order).reset_index()
+
+        x = np.arange(len(products_order))
+
+        for i, (col, ylabel) in enumerate(metrics):
+            ax = axes[i, j]
+            vals = dfh[col].values.astype(float)
+
+            ax.bar(
+                x,
+                vals,
+                color=[product_colors.get(p, "0.7") for p in products_order],
+                edgecolor="black",
+                linewidth=0.5
+            )
+
+            ax.grid(axis="y", linestyle="--", alpha=0.4)
+            ax.set_ylabel(ylabel, fontsize=12, fontweight="bold")
+
+            if col == "CC":
+                ax.set_ylim(0, max(0.6, np.nanmax(vals) * 1.15 if np.isfinite(np.nanmax(vals)) else 0.6))
+            elif col == "spread_ratio":
+                ax.axhline(1.0, color="k", linestyle="--", linewidth=1.0, alpha=0.7)
+            elif col == "Bias_pct":
+                ax.axhline(0.0, color="k", linestyle="--", linewidth=1.0, alpha=0.7)
+
+            if i == 0:
+                ax.set_title(hemi, fontsize=15, fontweight="bold")
+
+            if i == len(metrics) - 1:
+                ax.set_xticks(x)
+                ax.set_xticklabels(products_order, rotation=25, ha="right", fontsize=11, fontweight="bold")
+            else:
+                ax.tick_params(axis="x", labelbottom=False)
+
+            ax.tick_params(axis="y", labelsize=11)
+
+    handles = [Patch(facecolor=product_colors.get(p, "0.7"), edgecolor="black", label=p) for p in products_order]
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=min(len(products_order), 6),
+        frameon=False,
+        fontsize=11
+    )
+
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    return fig
+
+#------------------------------------------------------------
+def build_oceanrain_descriptive_stats_table(
+    df,
+    *,
+    obs_col="main_mmday",
+    product_cols=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"),
+    hemi_col="hemi",
+):
+    rows = []
+
+    for hemi in ["NH", "SH"]:
+        dsub = df[df[hemi_col] == hemi].copy()
+
+        datasets = [("OceanRAIN", obs_col)] + [(p, p) for p in product_cols]
+
+        for name, col in datasets:
+            s = pd.to_numeric(dsub[col], errors="coerce").dropna()
+
+            if len(s) == 0:
+                continue
+
+            rows.append({
+                "hemi": hemi,
+                "dataset": name,
+                # "N": len(s),
+                "mean": s.mean(),
+                "median": s.median(),
+                "std": s.std(ddof=1),
+                "p75": s.quantile(0.75),
+                "p95": s.quantile(0.95),
+                "p99": s.quantile(0.99),
+            })
+
+    out = pd.DataFrame(rows)
+    return out
+
+#------------------------------------------------------------
+def plot_oceanrain_quant_summary_panel(
+    qt_metrics_hemi,
+    products,
+    product_colors,
+    *,
+    hemis=("NH", "SH"),
+    metrics=("CC", "Bias", "RMSE"),
+    figsize=(12, 9),
+    ylims=None,
+    ylabel_map=None,
+    add_zero_line_for_bias=True,
+):
+    """
+    Compact NH/SH quantitative summary panel for OceanRAIN comparison.
+
+    Parameters
+    ----------
+    qt_metrics_hemi : dict
+        Example structure:
+        qt_metrics_hemi["NH"]["GPCP v1.3"]["CC"] = 0.49
+        qt_metrics_hemi["NH"]["GPCP v1.3"]["Bias"] = -42.0
+        qt_metrics_hemi["NH"]["GPCP v1.3"]["RMSE"] = 11.15
+
+    products : list
+        Product order to plot.
+
+    product_colors : dict
+        Mapping from product name to color.
+
+    hemis : tuple
+        Usually ("NH", "SH").
+
+    metrics : tuple
+        Metrics to plot in rows. Recommended: ("CC", "Bias", "RMSE")
+
+    ylims : dict or None
+        Optional metric-specific limits, e.g.
+        {
+            "CC": (0, 0.6),
+            "Bias": (-50, 25),
+            "RMSE": (0, 15),
+        }
+
+    ylabel_map : dict or None
+        Optional prettier y labels.
+    """
+
+    if ylabel_map is None:
+        ylabel_map = {
+            "CC": "CC",
+            "Bias": "Bias [%]",
+            "RMSE": "RMSE\n[mm day$^{-1}$]",
+        }
+
+    nrows = len(metrics)
+    ncols = len(hemis)
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=figsize,
+        sharex=True,
+        squeeze=False
+    )
+
+    x = np.arange(len(products))
+
+    for j, hemi in enumerate(hemis):
+        for i, met in enumerate(metrics):
+            ax = axes[i, j]
+
+            vals = []
+            for p in products:
+                d = qt_metrics_hemi.get(hemi, {}).get(p, {})
+                vals.append(d.get(met, np.nan) if isinstance(d, dict) else np.nan)
+
+            ax.bar(
+                x,
+                vals,
+                color=[product_colors.get(p, "0.7") for p in products],
+                edgecolor="black",
+                linewidth=0.5
+            )
+
+            if i == 0:
+                ax.set_title(hemi, fontsize=16, fontweight="bold")
+
+            ax.set_ylabel(ylabel_map.get(met, met), fontsize=14, fontweight="bold")
+            ax.grid(True, axis="y", linestyle="--", alpha=0.35)
+
+            if met == "Bias" and add_zero_line_for_bias:
+                ax.axhline(0, color="k", linestyle="--", linewidth=1)
+
+            if ylims is not None and met in ylims:
+                ax.set_ylim(*ylims[met])
+
+            ax.tick_params(axis="y", labelsize=12)
+
+            if i == nrows - 1:
+                ax.set_xticks(x)
+                ax.set_xticklabels(products, rotation=25, ha="right", fontsize=13, fontweight="bold")
+            else:
+                ax.tick_params(axis="x", labelbottom=False)
+
+    # shared legend
+    handles = [
+        plt.Rectangle((0, 0), 1, 1, facecolor=product_colors.get(p, "0.7"), edgecolor="black", label=p)
+        for p in products
+    ]
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=len(products),
+        frameon=False,
+        fontsize=13
+    )
+
+    fig.tight_layout(rect=[0, 0.07, 1, 1])
+    return fig, axes
+
+#------------------------------------------------------------
+def round_metric_table(df, cols, ndigits=3):
+    out = df.copy()
+    for c in cols:
+        if c in out.columns:
+            out[c] = out[c].astype(float).round(ndigits)
+    return out
+#------------------------------------------------------------
+def categorical_dict_to_table(cat_metrics_dict, products_order=None):
+    rows = []
+    for hemi, prod_dict in cat_metrics_dict.items():
+        for prod, mets in prod_dict.items():
+            rows.append({
+                "hemi": hemi,
+                "product": prod,
+                "N": mets.get("Hits", 0) + mets.get("Misses", 0) + mets.get("False_Alarms", 0) + mets.get("Correct_Negatives", 0),
+                "POD": mets.get("POD", np.nan),
+                "FAR": mets.get("FAR", np.nan),
+                "Bias": mets.get("Bias", np.nan),
+                "HSS": mets.get("HSS", np.nan),
+            })
+    out = pd.DataFrame(rows)
+
+    if products_order is not None:
+        out["product"] = pd.Categorical(out["product"], categories=products_order, ordered=True)
+        out = out.sort_values(["hemi", "product"]).reset_index(drop=True)
+
+    return out
 # ------------------------------------------------------------
 # daily aggregation using the new OceanRAIN main precip variable
 # ------------------------------------------------------------
@@ -3082,8 +4045,6 @@ def plot_phase_cat_metrics_NH_SH(
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     return fig
 # -----------------------------------------------------------------------------
-import matplotlib.pyplot as plt
-import numpy as np
 
 def plot_oceanrain_monthly_ship_scatter_by_hemi(
     monthly_df: pd.DataFrame,
@@ -3358,7 +4319,6 @@ def plot_hemi_phase_metrics_barpanel(
     fig.tight_layout(rect=[0, 0, 1, 0.93])
     return fig
 #-----------------------------------------------------------------------------
-import matplotlib.pyplot as plt
 
 def plot_oceanrain_ship_month_scatter(
     ship_month_clim: pd.DataFrame,
@@ -3623,9 +4583,6 @@ def plot_hemi_phase_quant_metrics_panel(
     return fig
 
 #------------------------------------------------------------------------------
-import numpy as np
-import pandas as pd
-
 def compute_hemi_metrics_oceanrain(
     daily_or_attached: pd.DataFrame,
     *,
@@ -4044,7 +5001,7 @@ def plot_categorical_metrics_by_region(
     product_colors,
     region_labels=None,
     metrics=("POD", "FAR", "Bias", "HSS"),
-    figsize=(16, 16),
+    figsize=(18, 16),
     bar_width=0.18,
 ):
     """
@@ -4131,9 +5088,11 @@ def plot_monthly_climatology_2x2(
     region_labels,
     products,
     product_colors,
-    figsize=(12, 9),   # close to the 2x2 style you showed
+    ref_col="Buoy",
+    ref_label="Buoy",
+    figsize=(12, 9),
     lw=3.5,
-    ncol_legend=3
+    ncol_legend=7
 ):
     """
     Plot monthly climatology in 2x2 subplots (no shared axes).
@@ -4143,57 +5102,54 @@ def plot_monthly_climatology_2x2(
 
     months = np.arange(1, 13)
 
-    # chunk regions into groups of 4
-    for k in range(0, len(regions), 4):
-        regs = regions[k:k+4]
+    fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
+    axes = axes.flatten()
 
-        fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
-        axes = axes.flatten()
+    for i, ax in enumerate(axes):
+        if i >= len(regions):
+            ax.axis("off")
+            continue
 
-        for i, ax in enumerate(axes):
-            if i >= len(regs):
-                ax.axis("off")
-                continue
+        region = regions[i]
+        clim = monthly_clim_by_region[region]
 
-            region = regs[i]
-            clim = monthly_clim_by_region[region]
-
-            # ---- Buoy (reference) ----
-            ax.plot(
-                clim["month"], clim["rain_rate"],
-                lw=lw, color="b", label="Buoy"
-            )
-
-            # ---- Products ----
-            for prod in products[1:]:
-                ax.plot(
-                    clim["month"], clim[prod],
-                    lw=lw, color=product_colors[prod], label=prod
-                )
-
-            ax.set_title(region_labels[region], fontsize=14, fontweight="bold")
-            ax.set_xlabel("Month", fontsize=12, fontweight="bold")
-            ax.set_ylabel("Rainfall [mm day$^{-1}$]", fontsize=12, fontweight="bold")
-
-            ax.set_xticks(months)
-            ax.set_xlim(1, 12)
-
-            ax.grid(True, linestyle="--", alpha=0.5)
-            ax.tick_params(axis="both", labelsize=11)
-
-        # one legend for the whole figure (clean)
-        handles, labels = axes[0].get_legend_handles_labels()
-        fig.legend(
-            handles, labels,
-            loc="upper center",
-            ncol=ncol_legend,
-            frameon=False,
-            fontsize=11,
-            bbox_to_anchor=(0.5, 0.05)#(0.5, 0.98)
+        # ---- reference ----
+        ax.plot(
+            clim["month"], clim[ref_col],
+            lw=lw, color="b", label=ref_label
         )
 
-        fig.tight_layout(rect=[0.02, 0.04, 0.98, 0.92])  # leave room for legend, titlerect=[0, 0, 1, 0.94])  # leave room for legend
-        plt.show()
+        # ---- products ----
+        for prod in products:
+            if prod == ref_col:
+                continue
+            ax.plot(
+                clim["month"], clim[prod],
+                lw=lw, color=product_colors[prod], label=prod
+            )
+
+        ax.set_title(region_labels[region], fontsize=14, fontweight="bold")
+        ax.set_xlabel("Month", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Rainfall [mm day$^{-1}$]", fontsize=12, fontweight="bold")
+
+        ax.set_xticks(months)
+        ax.set_xlim(1, 12)
+
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.tick_params(axis="both", labelsize=11)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+    handles, labels,
+    loc="lower center",
+    bbox_to_anchor=(0.5, 0.01),
+    ncol=ncol_legend,
+    frameon=False,
+    fontsize=13
+)
+
+    fig.tight_layout(rect=[0, 0.07, 1, 1])
+    return fig
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def plot_monthly_climatology_anoms_2x2(
@@ -4351,7 +5307,6 @@ def plot_monthly_climatology_stack(
 
 
 #%%
-
 
 def plot_doy_climatology_scatter_panels_with_metrics(
     clim_df: pd.DataFrame,
@@ -7178,3 +8133,983 @@ def plot_region_anomaly_timeseries_from_df(
 
     return fig
 #------------------------------------------------
+
+def make_discrete_norm_and_cmap(metric):
+    style = METRIC_STYLE[metric]
+    bounds = style["bounds"]
+    cmap = style["cmap"]
+    norm = BoundaryNorm(bounds, cmap.N, clip=True)
+    return cmap, norm, bounds, style["label"]
+
+def get_metric_style(metric):
+    """
+    Returns cmap, norm, and whether higher is better.
+    Adjust ranges if needed.
+    """
+    if metric in ["POD", "HSS", "CC", "CSI", "Accuracy"]:
+        cmap = plt.cm.viridis
+        norm = mpl.colors.Normalize(vmin=0, vmax=1)
+    elif metric in ["FAR", "POFD"]:
+        cmap = plt.cm.viridis_r
+        norm = mpl.colors.Normalize(vmin=0, vmax=1)
+    elif metric in ["RMSE", "MAE"]:
+        cmap = plt.cm.viridis_r
+        # panel-specific scaling may also be used; this is a generic default
+        norm = None
+    elif metric == "Bias":
+        cmap = plt.cm.RdBu_r
+        norm = None
+    else:
+        cmap = plt.cm.viridis
+        norm = None
+
+    return cmap, norm
+
+def compute_panel_norm(df_panel, metric):
+    """
+    If metric-specific norm was not fixed, define from panel data.
+    """
+    cmap, norm = get_metric_style(metric)
+    if norm is not None:
+        return cmap, norm
+
+    vals = df_panel["value"].replace([np.inf, -np.inf], np.nan).dropna().values
+    if len(vals) == 0:
+        return cmap, mpl.colors.Normalize(vmin=0, vmax=1)
+
+    if metric == "Bias":
+        vmax = np.nanmax(np.abs(vals))
+        vmax = max(vmax, 1.0)
+        norm = mpl.colors.TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
+    else:
+        vmin = np.nanmin(vals)
+        vmax = np.nanmax(vals)
+        if np.isclose(vmin, vmax):
+            vmax = vmin + 1e-6
+        norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+
+    return cmap, norm
+
+def add_base_map(
+    ax,
+    extent=(-180, 180, -30, 60),
+    show_left_labels=False,
+    show_bottom_labels=False,
+):
+    ax.set_extent(extent, crs=ccrs.PlateCarree())
+
+    ax.add_feature(cfeature.LAND, facecolor="lightgray", zorder=0)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.6, zorder=1)
+    ax.add_feature(cfeature.BORDERS, linestyle=":", linewidth=0.4, zorder=1)
+
+    # grid
+    ax.grid(True, which="major", linewidth=0.45, color="gray",
+            alpha=0.5, linestyle="--")
+
+    # ticks
+    xticks = np.arange(-180, 181, 60)
+    yticks = np.arange(-30, 61, 15)
+    ax.set_xticks(xticks, crs=ccrs.PlateCarree())
+    ax.set_yticks(yticks, crs=ccrs.PlateCarree())
+
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
+
+    if not show_bottom_labels:
+        ax.set_xticklabels([])
+    else:
+        ax.tick_params(axis="x", labelsize=11)
+
+    if not show_left_labels:
+        ax.set_yticklabels([])
+    else:
+        ax.tick_params(axis="y", labelsize=11)
+
+    return ax
+
+def plot_spatial_metric_panels(
+    df,
+    metrics,
+    reference_types=("PAL", "Buoy"),
+    figsize=(16, 12),
+    extent=(-180, 180, -30, 60),
+    marker_size=120,
+    marker_edge_width=0.7,
+    savepath=None,
+):
+    nrows = len(metrics)
+    ncols = len(reference_types)
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=figsize,
+        subplot_kw={"projection": ccrs.PlateCarree()}
+    )
+
+    if nrows == 1 and ncols == 1:
+        axes = np.array([[axes]])
+    elif nrows == 1:
+        axes = axes[np.newaxis, :]
+    elif ncols == 1:
+        axes = axes[:, np.newaxis]
+
+    row_mappables = []
+    row_cbar_info = []
+
+    for i, metric in enumerate(metrics):
+        cmap, norm, bounds, cbar_label = make_discrete_norm_and_cmap(metric)
+        row_mappables.append(None)
+        row_cbar_info.append((bounds, cbar_label))
+
+        for j, ref in enumerate(reference_types):
+            ax = axes[i, j]
+
+            show_left = (j == 0)
+            show_bottom = (i == nrows - 1)
+
+            add_base_map(
+                ax,
+                extent=extent,
+                show_left_labels=show_left,
+                show_bottom_labels=show_bottom
+            )
+
+            dsub = df[(df["metric"] == metric) & (df["reference_type"] == ref)].copy()
+
+            for product, dprod in dsub.groupby("product"):
+                marker = product_markers.get(product, "o")
+                dx, dy = product_offsets.get(product, (0.0, 0.0))
+
+                x = dprod["lon"].values + dx
+                y = dprod["lat"].values + dy
+                c = dprod["value"].values
+
+                sc = ax.scatter(
+                    x, y,
+                    c=c,
+                    cmap=cmap,
+                    norm=norm,
+                    s=marker_size,
+                    marker=marker,
+                    edgecolor="black",
+                    linewidth=marker_edge_width,
+                    transform=ccrs.PlateCarree(),
+                    zorder=4
+                )
+
+                if row_mappables[i] is None:
+                    row_mappables[i] = sc
+
+            ax.set_title(
+                f"{ref} — {METRIC_STYLE[metric]['label']}",
+                fontsize=16,
+                fontweight="bold",
+                pad=8
+            )
+
+    # tighter panel spacing first
+    plt.subplots_adjust(
+        left=0.055,
+        right=0.985,
+        top=0.97,
+        bottom=0.12,
+        wspace=0.02,
+        hspace=0.20
+    )
+
+    # -------- Manual row-wise colorbars --------
+    # longer and centered, with explicit vertical positions
+    fig.canvas.draw()
+
+    for i in range(nrows):
+        bounds, cbar_label = row_cbar_info[i]
+        mappable = row_mappables[i]
+
+        # union of the two axes positions for this row
+        pos_l = axes[i, 0].get_position()
+        pos_r = axes[i, -1].get_position()
+
+        row_left = pos_l.x0
+        row_right = pos_r.x1
+        row_bottom = min(pos_l.y0, pos_r.y0)
+
+        row_width = row_right - row_left
+
+        # make cbar longer and centered
+        cbar_width = row_width * 0.42
+        cbar_height = 0.012
+
+        # centered under the row
+        cbar_left = row_left + 0.5 * (row_width - cbar_width)
+
+        # vertical placement:
+        # for bottom row keep it a bit closer to panels so it doesn't fight legend
+        if i == nrows - 1:
+            cbar_bottom = row_bottom - 0.040
+        else:
+            cbar_bottom = row_bottom - 0.055
+
+        cax = fig.add_axes([cbar_left, cbar_bottom, cbar_width, cbar_height])
+
+        cbar = fig.colorbar(
+            mappable,
+            cax=cax,
+            orientation="horizontal",
+            ticks=bounds
+        )
+        cbar.ax.tick_params(labelsize=12, pad=2)
+        cbar.set_label(cbar_label, fontsize=13, fontweight="bold", labelpad=2)
+
+    # -------- Larger product legend --------
+    legend_handles = []
+    for product, marker in product_markers.items():
+        legend_handles.append(
+            Line2D(
+                [0], [0],
+                marker=marker,
+                linestyle="None",
+                color="black",
+                markerfacecolor="white",
+                markeredgecolor="black",
+                markersize=11,
+                label=product
+            )
+        )
+
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.03),
+        ncol=6,
+        frameon=False,
+        fontsize=15,
+        handletextpad=0.5,
+        columnspacing=1.4
+    )
+
+    if savepath is not None:
+        plt.savefig(savepath, dpi=300, bbox_inches="tight")
+
+    return fig, axes
+
+
+def plot_metric_bars_4x2_by_reference(
+    df,
+    products,
+    product_colors,
+    *,
+    metrics=("POD", "FAR", "Bias", "HSS"),
+    reference_types=("PAL", "Buoy"),
+    pal_region_order=("ETNP", "TNEP", "TNWP", "TSEP", "TNIO", "STNA"),
+    buoy_region_order=("ENP", "WNP", "IND", "ATL"),
+    pal_region_labels=None,
+    buoy_region_labels=None,
+    figsize=(24, 18),
+    bar_width=0.11,
+    group_gap=0.24,
+    ylabel_fontsize=19,
+    title_fontsize=20,
+    tick_fontsize=15,
+    legend_fontsize=16,
+    bottom_tick_fontsize=18,
+    max_yticks=5,
+    savepath=None,
+):
+    """
+    rows = metrics
+    col 0 = PAL
+    col 1 = Buoy
+
+    Required df columns:
+      reference_type, region, product, metric, value
+    """
+
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+    from matplotlib.ticker import MaxNLocator
+
+    if pal_region_labels is None:
+        pal_region_labels = PAL_REGION_NAMES
+
+    if buoy_region_labels is None:
+        buoy_region_labels = Buoy_REGION_NAMES
+
+    # share x by column, y by row
+    fig, axes = plt.subplots(
+        nrows=len(metrics),
+        ncols=len(reference_types),
+        figsize=figsize,
+        sharex='col',
+        sharey='row',
+        squeeze=False
+    )
+
+    # nicer metric labels
+    metric_ylabel_map = {
+        "POD": "POD",
+        "FAR": "FAR",
+        "HSS": "HSS",
+        "Bias_det": "Bias",
+        "CC": "CC",
+        "RMSE": "RMSE [mm/day]",
+        "MAE": "MAE [mm/day]",
+        "NRMSE": "NRMSE [%]",
+        "Bias_q": "Bias [%]",   # optional alias if you rename quantitative bias
+    }
+
+    # fixed y-limits where useful
+    metric_ylims = {
+        "POD": (0, 1.0),
+        "FAR": (0, 1.0),
+        "HSS": (0, 0.5),       # slightly larger so buoy bars do not clip
+        "CC": (0, 0.6),
+        # Bias / RMSE / MAE left to auto unless you want to force them
+    }
+
+    # precompute region x positions for each column
+    region_setup = {}
+    for ref in reference_types:
+        if ref == "PAL":
+            region_order = list(pal_region_order)
+            region_labels = [pal_region_labels.get(r, r) for r in region_order]
+        else:
+            region_order = list(buoy_region_order)
+            region_labels = [buoy_region_labels.get(r, r) for r in region_order]
+
+        n_regions = len(region_order)
+        n_products = len(products)
+        x = np.arange(n_regions) * (n_products * bar_width + group_gap)
+        group_center = x + (n_products - 1) * bar_width / 2
+
+        region_setup[ref] = {
+            "order": region_order,
+            "labels": region_labels,
+            "x": x,
+            "center": group_center,
+        }
+
+    # draw panels
+    for i, metric in enumerate(metrics):
+        for j, ref in enumerate(reference_types):
+            ax = axes[i, j]
+
+            region_order = region_setup[ref]["order"]
+            region_labels = region_setup[ref]["labels"]
+            x = region_setup[ref]["x"]
+            group_center = region_setup[ref]["center"]
+
+            dsub = df[
+                (df["reference_type"] == ref) &
+                (df["metric"] == metric)
+            ].copy()
+
+            for k, product in enumerate(products):
+                vals = []
+                for region in region_order:
+                    dd = dsub[(dsub["region"] == region) & (dsub["product"] == product)]
+                    vals.append(dd["value"].iloc[0] if len(dd) > 0 else np.nan)
+
+                ax.bar(
+                    x + k * bar_width,
+                    vals,
+                    width=bar_width,
+                    color=product_colors.get(product, "0.7"),
+                    edgecolor="black",
+                    linewidth=0.55,
+                    label=product if (i == 0 and j == 0) else None,
+                )
+
+            # titles only on top row
+            if i == 0:
+                ax.set_title(ref, fontsize=title_fontsize, fontweight="bold", pad=10)
+
+            # y-label only on left column
+            if j == 0:
+                ylabel = metric_ylabel_map.get(metric, metric)
+                # quantitative bias special handling if metric is plain "Bias"
+                if metric == "Bias" and any(m in metrics for m in ["CC", "RMSE", "MAE"]):
+                    ylabel = "Bias [%]"
+                ax.set_ylabel(ylabel, fontsize=ylabel_fontsize, fontweight="bold")
+
+            # x ticks only on bottom row
+            ax.set_xticks(group_center)
+            if i == len(metrics) - 1:
+                ax.set_xticklabels(
+                    region_labels,
+                    fontsize=bottom_tick_fontsize,
+                    fontweight="bold",
+                    rotation=24,
+                    ha="right"
+                )
+            else:
+                ax.tick_params(axis="x", labelbottom=False)
+
+            # grid
+            ax.grid(axis="y", linestyle="--", alpha=0.45)
+
+            # metric-specific y-limits
+            if metric in metric_ylims:
+                ax.set_ylim(*metric_ylims[metric])
+
+            # reduce y tick density
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=max_yticks))
+            ax.tick_params(axis="y", labelsize=tick_fontsize)
+
+            for t in ax.get_yticklabels():
+                t.set_fontweight("bold")
+
+    # bottom legend
+    legend_handles = [
+        Patch(facecolor=product_colors.get(p, "0.7"), edgecolor="black", label=p)
+        for p in products
+    ]
+
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.55, 0.02),
+        ncol=len(products),
+        frameon=False,
+        fontsize=legend_fontsize
+    )
+
+    plt.subplots_adjust(
+        left=0.07,
+        right=0.985,
+        top=0.94,
+        bottom=0.12,
+        wspace=0.12,
+        hspace=0.10
+    )
+
+    if savepath is not None:
+        plt.savefig(savepath, dpi=300, bbox_inches="tight")
+
+    return fig, axes
+
+
+
+def plot_intensity_metrics_cat_4x2(
+    pal_cat,
+    buoy_cat,
+    rainfall_bins,
+    products,
+    product_colors,
+    figsize=(16, 16),
+    linewidth=2.2,
+    markersize=6,
+    tick_fontsize=13,
+    label_fontsize=17,
+    title_fontsize=18,
+    legend_fontsize=15,
+    savepath=None,
+):
+    cat_metrics = ['POD', 'FAR', 'Bias', 'HSS']
+
+    fig, axes = plt.subplots(
+        nrows=4, ncols=2,
+        figsize=figsize,
+        sharex='col',
+        sharey='row'
+    )
+
+    col_titles = ["PAL", "Buoy"]
+
+    ylabels = {
+        "POD": "POD",
+        "FAR": "FAR",
+        "Bias": "Bias",
+        "HSS": "HSS",
+    }
+
+    ylims = {
+        "POD": (0.0, 1.0),
+        "FAR": (0.35, 1.0),
+        "Bias": None,
+        "HSS": (0, 0.40),
+    }
+
+    sources = [pal_cat, buoy_cat]
+
+    for j, source in enumerate(sources):
+        for i, met in enumerate(cat_metrics):
+            ax = axes[i, j]
+
+            for product in products:
+                dmet = source[product]
+                ax.plot(
+                    rainfall_bins,
+                    dmet.loc[rainfall_bins, met].astype(float),
+                    marker='o',
+                    linewidth=linewidth,
+                    markersize=markersize,
+                    color=product_colors[product],
+                    label=product if (i == 0 and j == 0) else None
+                )
+
+            if i == 0:
+                ax.set_title(col_titles[j], fontsize=title_fontsize, fontweight='bold')
+
+            if j == 0:
+                ax.set_ylabel(ylabels[met], fontsize=label_fontsize, fontweight='bold')
+
+            if ylims[met] is not None:
+                ax.set_ylim(*ylims[met])
+
+            ax.grid(True, linestyle='--', alpha=0.6)
+            ax.set_xscale('log')
+            ax.set_xticks(rainfall_bins)
+            ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+            ax.tick_params(labelsize=tick_fontsize)
+
+            if i < 3:
+                ax.tick_params(axis='x', labelbottom=False)
+
+    for ax in axes[-1, :]:
+        ax.set_xlabel('Rain Rate (mm/day)', fontsize=label_fontsize, fontweight='bold')
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles, labels,
+        loc='lower center',
+        ncol=6,
+        fontsize=legend_fontsize,
+        frameon=False
+    )
+
+    plt.tight_layout(rect=[0, 0.06, 1, 1])
+
+    if savepath:
+        fig.savefig(savepath, dpi=300, bbox_inches='tight')
+
+    return fig, axes
+
+def plot_intensity_metrics_qt_4x2(
+    pal_qt,
+    buoy_qt,
+    rainfall_bins,
+    products,
+    product_colors,
+    figsize=(16, 16),
+    linewidth=2.2,
+    markersize=6,
+    tick_fontsize=13,
+    label_fontsize=17,
+    title_fontsize=18,
+    legend_fontsize=15,
+    savepath=None,
+):
+    qt_metrics = ['CC', 'RMSE', 'MAE', 'RB']
+
+    fig, axes = plt.subplots(
+        nrows=4, ncols=2,
+        figsize=figsize,
+        sharex='col',
+        sharey='row'
+    )
+
+    col_titles = ["PAL", "Buoy"]
+
+    ylabels = {
+        "CC": "CC",
+        "RMSE": "RMSE [mm/day]",
+        "MAE": "MAE [mm/day]",
+        "RB": "Bias [%]",
+    }
+
+    ylims = {
+        "CC": (-0.04, 0.4),
+        "RMSE": None,
+        "MAE": None,
+        "RB": None,
+    }
+
+    sources = [pal_qt, buoy_qt]
+
+    for j, source in enumerate(sources):
+        for i, met in enumerate(qt_metrics):
+            ax = axes[i, j]
+
+            for product in products:
+                dmet = source[product]
+                ax.plot(
+                    rainfall_bins,
+                    dmet.loc[rainfall_bins, met].astype(float),
+                    marker='o',
+                    linewidth=linewidth,
+                    markersize=markersize,
+                    color=product_colors[product],
+                    label=product if (i == 0 and j == 0) else None
+                )
+
+            if i == 0:
+                ax.set_title(col_titles[j], fontsize=title_fontsize, fontweight='bold')
+
+            if j == 0:
+                ax.set_ylabel(ylabels[met], fontsize=label_fontsize, fontweight='bold')
+
+            if ylims[met] is not None:
+                ax.set_ylim(*ylims[met])
+
+            ax.grid(True, linestyle='--', alpha=0.6)
+            ax.set_xscale('log')
+            ax.set_xticks(rainfall_bins)
+            ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+            ax.tick_params(labelsize=tick_fontsize)
+
+            if i < 3:
+                ax.tick_params(axis='x', labelbottom=False)
+
+    for ax in axes[-1, :]:
+        ax.set_xlabel('Rain Rate (mm/day)', fontsize=label_fontsize, fontweight='bold')
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles, labels,
+        loc='lower center',
+        ncol=6,
+        fontsize=legend_fontsize,
+        frameon=False
+    )
+
+    plt.tight_layout(rect=[0, 0.06, 1, 1])
+
+    if savepath:
+        fig.savefig(savepath, dpi=300, bbox_inches='tight')
+
+    return fig, axes
+
+def plot_pdf_bundle_on_axis(
+    ax,
+    pdf_dict,
+    *,
+    insitu_label="PAL",
+    products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"),
+    product_colors=None,
+    pdf_kind="pdfv",   # "pdfv" or "pdfc"
+    lw=4,
+    insitu_color="b",
+    insitu_ls=":",
+):
+    """
+    Plot one PDF bundle on one axis.
+    """
+    x = pdf_dict["insitu"]["bin"].values
+
+    # in situ line
+    ax.plot(
+        x,
+        pdf_dict["insitu"][pdf_kind],
+        lw=lw,
+        color=insitu_color,
+        ls=insitu_ls,
+        label=insitu_label
+    )
+
+    # product lines
+    for product in products:
+        ax.plot(
+            x,
+            pdf_dict[product][pdf_kind],
+            lw=lw,
+            color=product_colors[product],
+            label=product
+        )
+
+
+from matplotlib.lines import Line2D
+from matplotlib.ticker import FixedLocator, FuncFormatter
+
+def plot_pdf_comparison_pal_buoy(
+    pal_df,
+    buoy_df,
+    *,
+    obs_col="rain_rate",
+    products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"),
+    product_colors=None,
+    bin_values=(0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256),
+    pdf_kind="pdfv",          # "pdfv" or "pdfc"
+    pal_year_range=None,
+    buoy_year_range=(2000, 2020),
+    figsize=(16, 6),
+    dpi=300,
+    lw=4,
+    savepath=None,
+):
+    """
+    Build PAL and Buoy PDFs and plot them side by side.
+
+    Returns
+    -------
+    fig, axes, pal_pdf_dict, buoy_pdf_dict
+    """
+
+    # -----------------------------
+    # compute PDFs
+    # -----------------------------
+    pal_pdf_dict = compute_pdf_bundle_for_insitu_df(
+        pal_df,
+        obs_col=obs_col,
+        products=products,
+        bin_values=bin_values,
+        year_range=pal_year_range,
+    )
+
+    buoy_pdf_dict = compute_pdf_bundle_for_insitu_df(
+        buoy_df,
+        obs_col=obs_col,
+        products=products,
+        bin_values=bin_values,
+        year_range=buoy_year_range,
+    )
+
+    # -----------------------------
+    # plot
+    # -----------------------------
+    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharey=True)
+
+    # left: PAL
+    plot_pdf_bundle_on_axis(
+        axes[0],
+        pal_pdf_dict,
+        insitu_label="PAL",
+        products=products,
+        product_colors=product_colors,
+        pdf_kind=pdf_kind,
+        lw=lw,
+        insitu_color="b",
+        insitu_ls=":"
+    )
+
+    # right: Buoy
+    plot_pdf_bundle_on_axis(
+        axes[1],
+        buoy_pdf_dict,
+        insitu_label="Buoy",
+        products=products,
+        product_colors=product_colors,
+        pdf_kind=pdf_kind,
+        lw=lw,
+        insitu_color="b",
+        insitu_ls="-"
+    )
+
+    # -----------------------------
+    # formatting
+    # -----------------------------
+    for ax, ttl in zip(axes, ["PAL", "Buoy"]):
+        ax.set_title(ttl, fontsize=18, fontweight="bold")
+        ax.set_xscale("log")
+        ax.set_xlabel("Rain Rate [mm day$^{-1}$]", fontsize=18, fontweight="bold")
+        ax.grid(True, which="major", linestyle="--", alpha=0.6)
+
+        ax.xaxis.set_major_locator(FixedLocator(list(bin_values)))
+        ax.xaxis.set_major_formatter(
+            FuncFormatter(lambda v, pos: "0.5" if abs(v - 0.5) < 1e-12 else f"{int(round(v))}")
+        )
+        ax.xaxis.set_minor_locator(FixedLocator([]))
+        ax.tick_params(axis="x", which="minor", bottom=False)
+        ax.tick_params(axis="both", which="major", labelsize=15, width=1.5, length=7)
+
+        for tick in ax.get_xticklabels() + ax.get_yticklabels():
+            tick.set_fontweight("bold")
+
+    axes[0].set_ylabel("PDF (%)", fontsize=18, fontweight="bold")
+
+    # -----------------------------
+    # common legend
+    # -----------------------------
+    legend_handles = [
+        Line2D([0], [0], color="b", lw=lw, ls=":", label="PAL"),
+        Line2D([0], [0], color="b", lw=lw, ls="-", label="Buoy"),
+    ]
+
+    legend_handles.extend([
+        Line2D([0], [0], color=product_colors[p], lw=lw, ls="-", label=p)
+        for p in products
+    ])
+
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=8,
+        fontsize=15,
+        frameon=False
+    )
+
+    plt.tight_layout(rect=[0, 0.08, 1, 1])
+
+    if savepath is not None:
+        fig.savefig(savepath, dpi=dpi, bbox_inches="tight")
+
+    return fig, axes, pal_pdf_dict, buoy_pdf_dict
+
+
+# ============================================================
+# PLOT 2x2 INTERANNUAL VARIABILITY FROM MONTHLY-BASED ANNUAL DF
+# ============================================================
+
+def plot_interannual_variability_2x2_from_monthly_df(
+    annual_df,
+    regions,
+    products,
+    product_colors,
+    *,
+    ref="Buoy",
+    region_labels=None,
+    figsize=(16.5, 9.5), # (12, 9)
+    lw_ref=3.5,
+    lw_prod=3.0,
+    ncol_legend=3,
+    year_min=None,
+    year_max=None,
+    region_year_limits=None
+):
+    """
+    2x2 annual interannual variability plot using annual_df produced from
+    build_annual_from_monthly_buoy_df().
+    """
+
+    if region_labels is None:
+        region_labels = Buoy_REGION_NAMES
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
+    axes = axes.flatten()
+
+    for i, ax in enumerate(axes):
+        if i >= len(regions):
+            ax.axis("off")
+            continue
+
+        region = regions[i]
+        dfr = annual_df[annual_df["region"] == region].copy().sort_values("year")
+        if region_year_limits is not None and region in region_year_limits:
+            yr0, yr1 = region_year_limits[region]
+            dfr = dfr[(dfr["year"] >= yr0) & (dfr["year"] <= yr1)].copy()
+
+        if year_min is not None:
+            dfr = dfr[dfr["year"] >= year_min].copy()
+        if year_max is not None:
+            dfr = dfr[dfr["year"] <= year_max].copy()
+
+        if dfr.empty:
+            ax.axis("off")
+            continue
+
+        # reference
+        ax.plot(
+            dfr["year"],
+            dfr[ref],
+            lw=lw_ref,
+            color=product_colors.get(ref, "b"),
+            label=ref
+        )
+
+        # products
+        for prod in products:
+            if prod == ref:
+                continue
+            ax.plot(
+                dfr["year"],
+                dfr[prod],
+                lw=lw_prod,
+                color=product_colors[prod],
+                label=prod
+            )
+
+        ax.set_title(region_labels.get(region, region), fontsize=16, fontweight="bold")
+        # ax.set_xlabel("Year", fontsize=13, fontweight="bold")
+        ax.set_ylabel("Rainfall [mm day$^{-1}$]", fontsize=15, fontweight="bold")
+        ax.grid(True, linestyle="--", alpha=0.5)
+        ax.tick_params(axis="both", labelsize=15)
+
+        # integer year ticks
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    uniq = dict(zip(labels, handles))
+
+    fig.legend(
+        uniq.values(),
+        uniq.keys(),
+        loc="lower center",
+        ncol=ncol_legend,
+        frameon=False,
+        fontsize=16,
+        bbox_to_anchor=(0.5, 0.02)
+    )
+
+    fig.tight_layout(rect=[0, 0.13, 1, 1])
+    return fig
+
+
+def plot_deseasonalized_anomaly_scatter_from_monthly_buoy_df(
+    monthly_buoy_df,
+    *,
+    products,
+    regions,
+    ref_col="Buoy",
+    product_cols=("GPCP v2.3", "GPCP v3.2", "GPCP v3.3", "ERA5", "IMERG v07", "MERRA2"),
+    region_labels=None,
+    product_colors=None,
+    region_col="region",
+    month_col="month",
+    id_col="ID",
+    n_days_col="n_days",
+    min_days_per_month=20,
+    min_buoys_per_month=2,
+    equal_weight_by_buoy=True,
+    figsize=(20, 12),
+    marker_size=18,
+    point_alpha=0.75,
+    savepath=None,
+):
+    """
+    Build monthly regional series from monthly buoy-product table,
+    deseasonalize, then make anomaly scatter.
+    """
+
+    # -----------------------------------------
+    # 1) build monthly regional series
+    # -----------------------------------------
+    monthly_region = build_monthly_region_series_from_monthly_buoy_df(
+        monthly_buoy_df,
+        products=products,
+        region_col=region_col,
+        id_col=id_col,
+        month_col=month_col,
+        n_days_col=n_days_col,
+        min_days_per_month=min_days_per_month,
+        min_buoys_per_month=min_buoys_per_month,
+        equal_weight_by_buoy=equal_weight_by_buoy,
+    )
+
+    # -----------------------------------------
+    # 2) deseasonalize by region
+    # -----------------------------------------
+    monthly_region_anom = deseasonalize_monthly(
+        df_monthly=monthly_region,
+        products=products,
+        time_col="month_start",
+        region_col=region_col
+    )
+
+    # -----------------------------------------
+    # 3) scatter plot using your existing function
+    # -----------------------------------------
+    fig = plot_deseasonalized_anomaly_scatter(
+        df_anom=monthly_region_anom,
+        regions=regions,
+        ref_col=ref_col,
+        product_cols=product_cols,
+        region_labels=region_labels,
+        product_colors=product_colors,
+        region_col=region_col,
+        figsize=figsize,
+        savepath=savepath,
+    )
+
+    return fig, monthly_region, monthly_region_anom
