@@ -20,6 +20,7 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.ticker import FixedLocator, FuncFormatter
 from matplotlib.colors import BoundaryNorm
 import matplotlib.dates as mdates
+import matplotlib.lines as mlines
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -317,7 +318,45 @@ def ds_swaplon(ds):
     ds = ds.assign_coords({var: new_lon})
     ds = ds.sortby(var)
     return ds
+# ------------------------------------------------------------
+# helpers
+# ------------------------------------------------------------
+def wrap_lon(lon):
+    """Convert longitude to [-180, 180)."""
+    lon = np.asarray(lon)
+    return (lon + 180) % 360 - 180
 
+def split_track_on_jumps(lon, lat, max_jump_deg=8):
+    """
+    Split ship track into segments when there is a large jump
+    in lon/lat between consecutive points.
+    """
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+
+    good = np.isfinite(lon) & np.isfinite(lat)
+    lon = lon[good]
+    lat = lat[good]
+
+    if len(lon) == 0:
+        return []
+
+    segments = []
+    start = 0
+    for i in range(1, len(lon)):
+        dlon = abs(lon[i] - lon[i - 1])
+        dlat = abs(lat[i] - lat[i - 1])
+
+        # dateline crossing or unrealistic jump
+        if dlon > 100 or dlat > max_jump_deg:
+            if i - start > 1:
+                segments.append((lon[start:i], lat[start:i]))
+            start = i
+
+    if len(lon) - start > 1:
+        segments.append((lon[start:], lat[start:]))
+
+    return segments
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
 def simple_box_check(lat_min_file, lat_max_file, lon_min_file, lon_max_file,
