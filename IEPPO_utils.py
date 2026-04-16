@@ -320,6 +320,12 @@ def ds_swaplon(ds):
     return ds
 # ------------------------------------------------------------
 # helpers
+def infer_time_var(ds):
+    for v in ['time_utc', 'time', 'datetime', 'date_time', 'TIME', 'Time']:
+        if v in ds.variables or v in ds.coords:
+            return v
+    raise KeyError(f"No time variable found. Available: {list(ds.variables)}")
+
 # ------------------------------------------------------------
 def wrap_lon(lon):
     """Convert longitude to [-180, 180)."""
@@ -349,6 +355,35 @@ def split_track_on_jumps(lon, lat, max_jump_deg=8):
 
         # dateline crossing or unrealistic jump
         if dlon > 100 or dlat > max_jump_deg:
+            if i - start > 1:
+                segments.append((lon[start:i], lat[start:i]))
+            start = i
+
+    if len(lon) - start > 1:
+        segments.append((lon[start:], lat[start:]))
+
+    return segments
+
+def split_track_on_jumps_wrapped(lon, lat, max_jump_deg=12):
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+
+    good = np.isfinite(lon) & np.isfinite(lat)
+    lon = lon[good]
+    lat = lat[good]
+
+    if len(lon) == 0:
+        return []
+
+    segments = []
+    start = 0
+
+    for i in range(1, len(lon)):
+        raw_dlon = abs(lon[i] - lon[i - 1])
+        dlon = min(raw_dlon, 360 - raw_dlon)   # wrapped longitude jump
+        dlat = abs(lat[i] - lat[i - 1])
+
+        if dlat > max_jump_deg or dlon > 25:
             if i - start > 1:
                 segments.append((lon[start:i], lat[start:i]))
             start = i
