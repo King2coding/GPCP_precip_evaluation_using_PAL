@@ -21,13 +21,15 @@ from matplotlib.ticker import FixedLocator, FuncFormatter
 from matplotlib.colors import BoundaryNorm
 import matplotlib.dates as mdates
 import matplotlib.lines as mlines
-
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
+import matplotlib.gridspec as gridspec
 
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
 
 import seaborn as sns
 from scipy.stats import linregress
@@ -506,7 +508,75 @@ def region_center_from_bounds(bounds_dict):
     return pd.DataFrame(rows)
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+def build_obs_df_for_representative_locations(
+    pals_classed_by_region,
+    buoy_files_by_region,
+    pal_stride=25
+):
+    rows = []
 
+    # ----------------------------------------
+    # PAL points
+    # ----------------------------------------
+    for region, files in pals_classed_by_region.items():
+        if region == "Unclassified" or len(files) == 0:
+            continue
+
+        for file in files:
+            ds = xr.open_dataset(file)
+
+            lat_vals = np.asarray(ds["lat"].values)[::pal_stride]
+            lon_vals = wrap_lon(np.asarray(ds["lon"].values)[::pal_stride])
+
+            ds.close()
+
+            n = min(len(lat_vals), len(lon_vals))
+            lat_vals = lat_vals[:n]
+            lon_vals = lon_vals[:n]
+
+            good = np.isfinite(lat_vals) & np.isfinite(lon_vals)
+
+            for lat, lon in zip(lat_vals[good], lon_vals[good]):
+                rows.append({
+                    "reference_type": "PAL",
+                    "region": region,
+                    "lat": float(lat),
+                    "lon": float(lon)
+                })
+
+    # ----------------------------------------
+    # Buoy points
+    # map file-group keys to your metric region labels
+    # ----------------------------------------
+    buoy_region_map = {
+        "ENP": "ENP",
+        "WNP": "WNP",
+        "IND": "IND",
+        "ATL": "ATL",
+    }
+
+    for raw_region, files in buoy_files_by_region.items():
+        region = buoy_region_map.get(raw_region, raw_region)
+
+        for file in files:
+            ds = xr.open_dataset(file)
+
+            lat = float(np.asarray(ds["lat"].values).ravel()[0])
+            lon = float(wrap_lon(np.asarray(ds["lon"].values).ravel()[0]))
+
+            ds.close()
+
+            if np.isfinite(lat) and np.isfinite(lon):
+                rows.append({
+                    "reference_type": "Buoy",
+                    "region": region,
+                    "lat": lat,
+                    "lon": lon
+                })
+
+    obs_df = pd.DataFrame(rows)
+    return obs_df
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 def nested_metrics_to_tidy(metrics_dict, reference_type, bounds_dict):
     rows = []
     centers = region_center_from_bounds(bounds_dict)
@@ -524,6 +594,181 @@ def nested_metrics_to_tidy(metrics_dict, reference_type, bounds_dict):
 
     df = pd.DataFrame(rows)
     df = df.merge(centers, on="region", how="left")
+    return df
+
+#=============================================================
+# ============================================================
+# METRIC COLOR STYLE
+# ============================================================
+
+# ============================================================
+# METRIC STYLE
+# ============================================================
+def make_metric_style_dict():
+    """
+    More discrete color steps, but only a subset of ticks will be labeled later.
+    Bounds are chosen to better emphasize observed variability while still using extensions.
+    """
+    return {
+        "POD": {
+            # finer internal steps, but colorbar labels can stay sparse
+            "bounds": np.array([0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40,
+                                0.50, 0.60, 0.70, 0.80]),
+            "cmap": plt.cm.cividis,
+            "label": "POD",
+            "extend": "both",
+            "tick_labels": [0.1, 0.3, 0.5, 0.7, 0.8],
+        },
+        "FAR": {
+            "bounds": np.array([0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50,
+                                0.55, 0.60, 0.65, 0.70]),
+            "cmap": plt.cm.cividis_r,
+            "label": "FAR",
+            "extend": "both",
+            "tick_labels": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+        },
+        "HSS": {
+            "bounds": np.array([0.10, 0.14, 0.18, 0.22, 0.26, 0.30, 0.34, 0.38, 0.42]),
+            "cmap": plt.cm.cividis,
+            "label": "HSS",
+            "extend": "both",
+            "tick_labels": [0.10, 0.20, 0.30, 0.40],
+        },
+        "FreqBias": {
+            "bounds": np.array([0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50]),
+            "cmap": plt.cm.RdBu_r,
+            "label": "Bias",
+            "extend": "both",
+            "tick_labels": [0.6, 0.8, 1.0, 1.25, 1.5],
+        },
+        "CC": {
+            "bounds": np.array([0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40,
+                                0.45, 0.50, 0.55, 0.60]),
+            "cmap": plt.cm.cividis,
+            "label": "CC",
+            "extend": "both",
+            "tick_labels": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+        },
+        "RMSE": {
+            "bounds": np.array([4, 6, 8, 10, 12, 14, 16, 18, 20]),
+            "cmap": plt.cm.cividis_r,
+            "label": "RMSE [mm/day]",
+            "extend": "both",
+            "tick_labels": [4, 8, 12, 16, 20],
+        },
+        "MAE": {
+            "bounds": np.array([2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            "cmap": plt.cm.cividis_r,
+            "label": "MAE [mm/day]",
+            "extend": "both",
+            "tick_labels": [2, 4, 6, 8, 10],
+        },
+        "Bias": {
+            "bounds": np.array([0.55, 0.60, 0.65, 0.75, 0.90, 1.00, 1.10, 1.25, 1.35, 1.50]),
+            "cmap": plt.cm.RdBu_r,
+            "label": "Bias",
+            "extend": "both",
+            "tick_labels": [0.55, 0.65, 0.75, 0.9, 1.0, 1.1, 1.25, 1.35, 1.5],
+        },
+    }
+# ============================================================
+# REPRESENTATIVE LOCATIONS FROM ACTUAL OBS
+# ============================================================
+
+def compute_region_representative_locations(
+    obs_df,
+    reference_col="reference_type",
+    region_col="region",
+    lon_col="lon",
+    lat_col="lat",
+    method="median"
+):
+    """
+    Compute representative lon/lat per (reference_type, region) using
+    actual observation coordinates rather than bounding-box centers.
+
+    Notes:
+    - Uses a circular mean for longitude to avoid dateline issues.
+    - Uses median latitude by default.
+    """
+
+    req = [reference_col, region_col, lon_col, lat_col]
+    miss = [c for c in req if c not in obs_df.columns]
+    if miss:
+        raise ValueError(f"obs_df missing required columns: {miss}")
+
+    def circular_mean_deg(lon_deg):
+        lon_rad = np.deg2rad(wrap_lon(np.asarray(lon_deg, dtype=float)))
+        s = np.nanmean(np.sin(lon_rad))
+        c = np.nanmean(np.cos(lon_rad))
+        out = np.rad2deg(np.arctan2(s, c))
+        return wrap_lon(out)
+
+    rows = []
+    for (ref, reg), g in obs_df.groupby([reference_col, region_col]):
+        lon_vals = wrap_lon(g[lon_col].astype(float).values)
+        lat_vals = g[lat_col].astype(float).values
+
+        if method == "median":
+            # longitude median can be awkward near dateline; use circular mean
+            rep_lon = circular_mean_deg(lon_vals)
+            rep_lat = np.nanmedian(lat_vals)
+        elif method == "mean":
+            rep_lon = circular_mean_deg(lon_vals)
+            rep_lat = np.nanmean(lat_vals)
+        else:
+            raise ValueError("method must be 'median' or 'mean'")
+
+        rows.append({
+            "reference_type": ref,
+            "region": reg,
+            "lon": rep_lon,
+            "lat": rep_lat
+        })
+
+    return pd.DataFrame(rows)
+
+
+def nested_metrics_to_tidy_with_replocs(
+    metrics_dict,
+    reference_type,
+    rep_locs_df
+):
+    """
+    Convert nested metrics dict to tidy dataframe and attach representative
+    lon/lat from rep_locs_df.
+
+    rep_locs_df must contain:
+      - reference_type
+      - region
+      - lon
+      - lat
+    """
+    rows = []
+    for region, prod_dict in metrics_dict.items():
+        for product, met_dict in prod_dict.items():
+            for metric, value in met_dict.items():
+                rows.append({
+                    "reference_type": reference_type,
+                    "region": region,
+                    "product": product,
+                    "metric": metric,
+                    "value": value
+                })
+
+    df = pd.DataFrame(rows)
+
+    need = {"reference_type", "region", "lon", "lat"}
+    if not need.issubset(rep_locs_df.columns):
+        raise ValueError(
+            f"rep_locs_df must contain {need}, got {set(rep_locs_df.columns)}"
+        )
+
+    df = df.merge(
+        rep_locs_df[["reference_type", "region", "lon", "lat"]],
+        on=["reference_type", "region"],
+        how="left"
+    )
     return df
 
 def format_lon(x, pos=None):
@@ -8208,12 +8453,21 @@ def plot_region_anomaly_timeseries_from_df(
     return fig
 #------------------------------------------------
 
-def make_discrete_norm_and_cmap(metric):
+def make_discrete_norm_and_cmap_(metric):
     style = METRIC_STYLE[metric]
     bounds = style["bounds"]
     cmap = style["cmap"]
     norm = BoundaryNorm(bounds, cmap.N, clip=True)
     return cmap, norm, bounds, style["label"]
+
+def make_discrete_norm_and_cmap(metric, metric_style):
+    style = metric_style[metric]
+    bounds = style["bounds"]
+    cmap = style["cmap"]
+    norm = BoundaryNorm(bounds, cmap.N, clip=True)
+    return cmap, norm, bounds, style["label"]
+
+
 
 def get_metric_style(metric):
     """
@@ -8267,6 +8521,48 @@ def compute_panel_norm(df_panel, metric):
 def add_base_map(
     ax,
     extent=(-180, 180, -30, 60),
+    show_left_labels=True,
+    show_bottom_labels=True,
+    land_color="lightgray",
+):
+    ax.set_extent(extent, crs=ccrs.PlateCarree())
+    ax.add_feature(cfeature.LAND, facecolor=land_color, zorder=1)
+    ax.add_feature(cfeature.COASTLINE, linewidth=0.6, zorder=2)
+    ax.add_feature(cfeature.BORDERS, linestyle=":", linewidth=0.4, zorder=2)
+
+    gl = ax.gridlines(
+        crs=ccrs.PlateCarree(),
+        draw_labels=False,
+        linewidth=0.45,
+        color="grey",
+        alpha=0.45,
+        linestyle="--",
+        zorder=0
+    )
+
+    xticks = np.arange(-180, 181, 60)
+    yticks = np.arange(-30, 61, 15)
+
+    ax.set_xticks(xticks, crs=ccrs.PlateCarree())
+    ax.set_yticks(yticks, crs=ccrs.PlateCarree())
+
+    if show_bottom_labels:
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
+    else:
+        ax.set_xticklabels([])
+
+    if show_left_labels:
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
+    else:
+        ax.set_yticklabels([])
+
+    ax.tick_params(labelsize=12)
+    for lab in ax.get_xticklabels() + ax.get_yticklabels():
+        lab.set_fontweight("bold")
+
+def add_base_map_(
+    ax,
+    extent=(-180, 180, -30, 60),
     show_left_labels=False,
     show_bottom_labels=False,
 ):
@@ -8301,6 +8597,367 @@ def add_base_map(
 
     return ax
 
+#=----------------------------------------------------------------------------
+# ============================================================
+# 4) BOTTOM CONTEXT MAP: PAL + BUOYS ONLY
+# ============================================================
+
+# ------------------------------------------------------------
+# Optional: slightly cleaner context legend placement
+# ------------------------------------------------------------
+# ============================================================
+# CONTEXT MAP
+# ============================================================
+def plot_pal_buoy_context_map(
+    ax,
+    pals_classed_by_region,
+    buoy_files_by_region,
+    PAL_region_colors,
+    extent=(-180, 180, -30, 60),
+    pal_track_stride=25,
+    pal_linewidth=2.0,
+    buoy_marker_size=35,
+    add_legend=False,   # <- default OFF now
+):
+    """
+    Bottom context panel showing:
+      - PAL tracks by PAL region color
+      - buoy locations by ocean marker type
+
+    Legend is off by default to keep the figure clean.
+    """
+
+    add_base_map(
+        ax,
+        extent=extent,
+        show_left_labels=True,
+        show_bottom_labels=True
+    )
+
+    # -----------------------------
+    # PAL tracks
+    # -----------------------------
+    for region, files in pals_classed_by_region.items():
+        if region == "Unclassified" or len(files) == 0:
+            continue
+
+        color = PAL_region_colors.get(region, "tab:blue")
+
+        for file in files:
+            ds = xr.open_dataset(file)
+            lat = ds["lat"].values[::pal_track_stride]
+            lon = wrap_lon(ds["lon"].values[::pal_track_stride])
+            ds.close()
+
+            ax.plot(
+                lon, lat,
+                transform=ccrs.PlateCarree(),
+                color=color,
+                linewidth=pal_linewidth,
+                zorder=4
+            )
+
+    # -----------------------------
+    # Buoys
+    # -----------------------------
+    buoy_specs = [
+        ("ENP", buoy_files_by_region.get("ENP", []), "*"),
+        ("WNP", buoy_files_by_region.get("WNP", []), "P"),
+        ("IND", buoy_files_by_region.get("IND", []), "s"),
+        ("ATL", buoy_files_by_region.get("ATL", []), "d"),
+    ]
+
+    for _, buoy_files, marker in buoy_specs:
+        for fl in buoy_files:
+            xrfile = xr.open_dataset(fl)
+            lat = xrfile["lat"].values[0]
+            lon = wrap_lon(xrfile["lon"].values[0])
+            xrfile.close()
+
+            if lon == -180:
+                lon = -179.8
+
+            ax.scatter(
+                lon, lat,
+                color="k",
+                s=buoy_marker_size,
+                linewidths=1.2,
+                marker=marker,
+                transform=ccrs.PlateCarree(),
+                zorder=5
+            )
+
+    return ax
+
+#=----------------------------------------------------------------------------
+# ============================================================
+# ROW COLORBARS
+# ============================================================
+def add_row_colorbars_clean(
+    fig,
+    axes,
+    metrics,
+    row_mappables,
+    metric_style,
+    ax_context=None,
+    *,
+    cb_width_frac=0.40,     # shorter bars
+    cb_height=0.011,
+    title_position="top",   # "top", "bottom", "right"
+    title_fontsize=12,
+    tick_fontsize=10,
+    tick_pad=1,
+):
+    """
+    One shared horizontal colorbar per row.
+    Uses many discrete color steps, but only labels selected ticks.
+    """
+
+    fig.canvas.draw()
+    nrows = len(metrics)
+
+    for i, metric in enumerate(metrics):
+        mappable = row_mappables[i]
+        if mappable is None:
+            continue
+
+        style = metric_style[metric]
+        bounds = np.asarray(style["bounds"])
+        extend = style.get("extend", "neither")
+        cbar_label = style["label"]
+        tick_labels = style.get("tick_labels", bounds)
+
+        # row geometry
+        row_boxes = [ax.get_position() for ax in axes[i, :]]
+        row_left = min(bb.x0 for bb in row_boxes)
+        row_right = max(bb.x1 for bb in row_boxes)
+        row_bottom = min(bb.y0 for bb in row_boxes)
+        row_width = row_right - row_left
+
+        cb_width = row_width * cb_width_frac
+        cb_left = row_left + 0.5 * (row_width - cb_width)
+
+        # place centered in the gap between this row and the next element below
+        if i < nrows - 1:
+            next_row_top = max(ax.get_position().y1 for ax in axes[i + 1, :])
+            gap_mid = 0.5 * (row_bottom + next_row_top)
+            cb_bottom = gap_mid - 0.5 * cb_height
+        else:
+            if ax_context is not None:
+                ctx_top = ax_context.get_position().y1
+                gap_mid = 0.5 * (row_bottom + ctx_top)
+                cb_bottom = gap_mid - 0.5 * cb_height
+            else:
+                cb_bottom = row_bottom - 0.03
+
+        cax = fig.add_axes([cb_left, cb_bottom, cb_width, cb_height])
+
+        norm = BoundaryNorm(bounds, mappable.cmap.N, clip=True)
+        sm = plt.cm.ScalarMappable(cmap=mappable.cmap, norm=norm)
+        sm.set_array([])
+
+        cbar = fig.colorbar(
+            sm,
+            cax=cax,
+            orientation="horizontal",
+            ticks=tick_labels,
+            extend=extend,
+            boundaries=bounds,
+            spacing="proportional",
+        )
+
+        cbar.ax.tick_params(labelsize=tick_fontsize, pad=tick_pad)
+
+        # label placement
+        if title_position == "right":
+            cbar.set_label(cbar_label, fontsize=title_fontsize, fontweight="bold", labelpad=2)
+            cbar.ax.xaxis.set_label_position("bottom")
+        elif title_position == "bottom":
+            cbar.set_label(cbar_label, fontsize=title_fontsize, fontweight="bold", labelpad=2)
+            cbar.ax.xaxis.set_label_position("bottom")
+        else:
+            # centered above
+            cbar.ax.set_title(cbar_label, fontsize=title_fontsize, fontweight="bold", pad=6)
+# ============================================================
+# 5) NEW MAIN PLOTTING FUNCTION
+# ============================================================
+
+# ------------------------------------------------------------
+# NEW: dedicated GridSpec colorbar rows
+# ------------------------------------------------------------
+# ============================================================
+# MAIN SPATIAL PANEL PLOT
+# ============================================================
+def plot_spatial_skill_panels_with_context(
+    df,
+    metrics,
+    pals_classed_by_region,
+    buoy_files_by_region,
+    PAL_region_colors,
+    reference_types=("PAL", "Buoy"),
+    metric_style=None,
+    figsize=(16, 15.2),
+    extent=(-180, 180, -30, 60),
+    marker_size=105,
+    marker_edge_width=0.7,
+    pal_context_track_stride=25,
+    savepath=None,
+):
+    """
+    Cleaner version:
+      - shorter row colorbars
+      - more vertical spacing
+      - no geo-context legend
+      - cleaner product legend
+    """
+
+    if metric_style is None:
+        metric_style = make_metric_style_dict()
+
+    nrows = len(metrics)
+    ncols = len(reference_types)
+
+    fig = plt.figure(figsize=figsize)
+
+    gs = gridspec.GridSpec(
+        nrows=nrows + 1,
+        ncols=ncols,
+        height_ratios=[1] * nrows + [0.82],   # slightly taller context map
+        hspace=0.72,                          # more row spacing
+        wspace=0.02
+    )
+
+    axes = np.empty((nrows, ncols), dtype=object)
+    for i in range(nrows):
+        for j in range(ncols):
+            axes[i, j] = fig.add_subplot(gs[i, j], projection=ccrs.PlateCarree())
+
+    ax_context = fig.add_subplot(gs[-1, :], projection=ccrs.PlateCarree())
+
+    row_mappables = [None] * nrows
+
+    # -----------------------------
+    # metric map rows
+    # -----------------------------
+    for i, metric in enumerate(metrics):
+        style = metric_style[metric]
+        cmap = style["cmap"]
+        bounds = np.asarray(style["bounds"])
+        norm = BoundaryNorm(bounds, cmap.N, clip=False)
+
+        for j, ref in enumerate(reference_types):
+            ax = axes[i, j]
+
+            add_base_map(
+                ax,
+                extent=extent,
+                show_left_labels=(j == 0),
+                show_bottom_labels=(i == nrows - 1)
+            )
+
+            dsub = df[
+                (df["metric"] == metric) &
+                (df["reference_type"] == ref)
+            ].copy()
+
+            for product, dprod in dsub.groupby("product"):
+                marker = product_markers.get(product, "o")
+                dx, dy = product_offsets.get(product, (0.0, 0.0))
+
+                sc = ax.scatter(
+                    dprod["lon"].values + dx,
+                    dprod["lat"].values + dy,
+                    c=dprod["value"].values,
+                    cmap=cmap,
+                    norm=norm,
+                    s=marker_size,
+                    marker=marker,
+                    edgecolor="black",
+                    linewidth=marker_edge_width,
+                    transform=ccrs.PlateCarree(),
+                    zorder=4
+                )
+
+                if row_mappables[i] is None:
+                    row_mappables[i] = sc
+
+            ax.set_title(
+                f"{ref} — {style['label']}",
+                fontsize=17,
+                fontweight="bold",
+                pad=10
+            )
+
+    # -----------------------------
+    # bottom context map
+    # -----------------------------
+    plot_pal_buoy_context_map(
+        ax=ax_context,
+        pals_classed_by_region=pals_classed_by_region,
+        buoy_files_by_region=buoy_files_by_region,
+        PAL_region_colors=PAL_region_colors,
+        extent=extent,
+        pal_track_stride=pal_context_track_stride,
+        add_legend=False
+    )
+
+    # -----------------------------
+    # product legend only
+    # -----------------------------
+    legend_handles = [
+        Line2D(
+            [0], [0],
+            marker=marker,
+            linestyle="None",
+            color="black",
+            markerfacecolor="white",
+            markeredgecolor="black",
+            markersize=10,
+            label=product
+        )
+        for product, marker in product_markers.items()
+    ]
+
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.035),
+        ncol=6,
+        frameon=False,
+        fontsize=15,
+        handletextpad=0.6,
+        columnspacing=1.5
+    )
+
+    # finalize axes positions before adding row colorbars
+    plt.subplots_adjust(
+        left=0.055,
+        right=0.985,
+        top=0.97,
+        bottom=0.12
+    )
+    fig.canvas.draw()
+
+    add_row_colorbars_clean(
+            fig=fig,
+            axes=axes,
+            metrics=metrics,
+            row_mappables=row_mappables,
+            metric_style=metric_style,
+            ax_context=ax_context,
+            cb_width_frac=0.40,
+            cb_height=0.011,
+            title_position="top",
+            title_fontsize=12,
+            tick_fontsize=10,
+    )
+
+    if savepath is not None:
+        plt.savefig(savepath, dpi=300, bbox_inches="tight")
+
+    return fig, axes, ax_context
+#----------------------------------------------------------------------------
+
 def plot_spatial_metric_panels(
     df,
     metrics,
@@ -8332,7 +8989,7 @@ def plot_spatial_metric_panels(
     row_cbar_info = []
 
     for i, metric in enumerate(metrics):
-        cmap, norm, bounds, cbar_label = make_discrete_norm_and_cmap(metric)
+        cmap, norm, bounds, cbar_label = make_discrete_norm_and_cmap_(metric)
         row_mappables.append(None)
         row_cbar_info.append((bounds, cbar_label))
 
@@ -8342,7 +8999,7 @@ def plot_spatial_metric_panels(
             show_left = (j == 0)
             show_bottom = (i == nrows - 1)
 
-            add_base_map(
+            add_base_map_(
                 ax,
                 extent=extent,
                 show_left_labels=show_left,
@@ -8664,7 +9321,6 @@ def plot_metric_bars_4x2_by_reference(
     return fig, axes
 
 
-
 def plot_intensity_metrics_cat_4x2(
     pal_cat,
     buoy_cat,
@@ -8892,9 +9548,6 @@ def plot_pdf_bundle_on_axis(
             label=product
         )
 
-
-from matplotlib.lines import Line2D
-from matplotlib.ticker import FixedLocator, FuncFormatter
 
 def plot_pdf_comparison_pal_buoy(
     pal_df,

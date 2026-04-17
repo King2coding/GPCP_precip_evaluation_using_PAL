@@ -184,7 +184,7 @@ imerg_v07_al = imerg_v07_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chu
 # imerg_v06_al = imerg_v06_ds_xr.sel(time=slice(mindate, maxdate))#.compute()#.chunk({'time': -1})
 mer2_ds_al = mer2_ds_xr.sel(time=slice(mindate, maxdate))#.chunk({'time': -1})
 
-#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+#%% The In situ data - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 # CLASSIFY PAL FILES BY REGION
 pals_classed_by_region = classify_and_group_files_bounding_box(all_pal_files, 
                                                                PAL_region_bounds)
@@ -281,7 +281,7 @@ all_ocean_rain_files = sorted([os.path.join(path_to_ocean_rain_nc, f) for f in o
 files_by_year = defaultdict(list)
 
 for o in all_ocean_rain_files:
-    print(os.path.basename(o))
+    # print(os.path.basename(o))
     with xr.open_dataset(o) as ds:
         years = pd.to_datetime(ds['time'].values).year
         unique_years = np.unique(years)
@@ -1324,6 +1324,89 @@ fig, axes = plot_spatial_metric_panels(
 plt.show()
 gc.collect()
 
+#-- - --- - -- - --- - - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --
+# another alternative spatial plot
+obs_df = build_obs_df_for_representative_locations(
+    pals_classed_by_region=pals_classed_by_region,
+    buoy_files_by_region=buoy_files_by_region,
+    pal_stride=25
+)
+
+rep_locs_df = compute_region_representative_locations(
+    obs_df=obs_df,
+    method="median"
+)
+#===================Categorical Metrics==========
+df_pal_cat = nested_metrics_to_tidy_with_replocs(
+    metrics_dict=pal_region_based_cat_metrics,
+    reference_type="PAL",
+    rep_locs_df=rep_locs_df
+)
+
+df_buoy_cat = nested_metrics_to_tidy_with_replocs(
+    metrics_dict=buoy_region_based_cat_metrics,
+    reference_type="Buoy",
+    rep_locs_df=rep_locs_df
+)
+
+df_pal_cat["metric"] = df_pal_cat["metric"].replace({"Bias": "FreqBias"})
+df_buoy_cat["metric"] = df_buoy_cat["metric"].replace({"Bias": "FreqBias"})
+
+df_cat_plot = pd.concat([df_pal_cat, df_buoy_cat], ignore_index=True)
+
+#===================Quantitative Metrics==========
+df_pal_qnt = nested_metrics_to_tidy_with_replocs(
+    metrics_dict=pal_region_based_qt_metrics,
+    reference_type="PAL",
+    rep_locs_df=rep_locs_df
+)
+
+df_buoy_qnt = nested_metrics_to_tidy_with_replocs(
+    metrics_dict=buoy_region_based_qt_metrics,
+    reference_type="Buoy",
+    rep_locs_df=rep_locs_df
+)
+
+df_qnt_plot = pd.concat([df_pal_qnt, df_buoy_qnt], ignore_index=True)
+
+#===================Plotting==========
+# Categorical Metrics Plot with Context
+cat_metrics = ["POD", "FAR", "FreqBias", "HSS"]
+svname = os.path.join(path_to_plots, f"spatial_skill_panels_with_context_{cde_run_dte}.png")
+metric_style = make_metric_style_dict()
+
+fig, axes, ax_context = plot_spatial_skill_panels_with_context(
+    df=df_cat_plot,   # your tidy dataframe
+    metrics=["POD", "FAR", "FreqBias", "HSS"],   # use FreqBias if your metric column is named that
+    pals_classed_by_region=pals_classed_by_region,
+    buoy_files_by_region=buoy_files_by_region,
+    PAL_region_colors=PAL_region_colors,
+    metric_style=metric_style,
+    figsize=(16, 15.2),
+    savepath=None
+)
+# plt.show()
+fig.savefig(svname, dpi=300, bbox_inches='tight')
+
+gc.collect()
+
+# Quantitative Metrics Plot with Context
+
+svname = os.path.join(path_to_plots, f"spatial_quantitative_skill_panels_with_context_{cde_run_dte}.png")
+qnt_metrics = ["CC", "RMSE", "MAE", "Bias"]
+
+fig, axes, ax_context = plot_spatial_skill_panels_with_context(
+    df=df_qnt_plot,   # your tidy dataframe
+    metrics=["CC", "RMSE", "MAE", "Bias"],   # use Bias if your metric column is named that
+    pals_classed_by_region=pals_classed_by_region,
+    buoy_files_by_region=buoy_files_by_region,
+    PAL_region_colors=PAL_region_colors,
+    metric_style=metric_style,
+    figsize=(16, 15.2),
+    savepath=None
+)
+fig.savefig(svname, dpi=300, bbox_inches='tight')
+gc.collect()
 #%% Daily Assessment: Metrics as a fucntion of intensity
 
 rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
