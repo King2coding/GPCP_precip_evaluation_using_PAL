@@ -1851,7 +1851,7 @@ annual_by_region, annual_buoy_product_df = build_annual_from_monthly_buoy_df(
     buoy_col="Buoy",
     n_days_col="n_days",
     min_days_per_month=20,
-    min_buoys_per_month=5, # 2
+    min_buoys_per_month=2, # 2
     min_months_per_year=4, # 4     # can change to 10 if you want stricter
     equal_weight_by_buoy=True
 )
