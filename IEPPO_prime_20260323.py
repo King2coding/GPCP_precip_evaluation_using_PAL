@@ -69,7 +69,7 @@ all_era5_tp_files = sorted([os.path.join(path_to_era5_tp, f) for f in os.listdir
 
 all_merra2_files = sorted([os.path.join(path_to_merra2, f) for f in os.listdir(path_to_merra2) if f.endswith('.nc4')])
 
-#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+#%%
 # Load GPCP datasets using xarray with chunking for efficiency
 gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcp_v3pt2_files,
                                     combine="nested",              # files are time-sequenced
@@ -1224,12 +1224,23 @@ for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
         pal_region_based_qt_metrics.setdefault(region_name, {})[product] = reg_qt_met
 
 #- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
+pal_start = pal_sate_daily_rainfall_colasped_df["date"].min()
+pal_end   = pal_sate_daily_rainfall_colasped_df["date"].max()
+
+buoy_sate_daily_rainfall_colasped_df_overlap = buoy_sate_daily_rainfall_colasped_df.copy()
+buoy_sate_daily_rainfall_colasped_df_overlap = (
+    buoy_sate_daily_rainfall_colasped_df_overlap[
+        (buoy_sate_daily_rainfall_colasped_df_overlap["date"] >= pal_start) &
+        (buoy_sate_daily_rainfall_colasped_df_overlap["date"] <= pal_end)
+    ]
+    .copy()
+)
 buoy_region_based_cat_metrics = {}
 buoy_region_based_qt_metrics = {}
 
-for region_name in buoy_sate_daily_rainfall_colasped_df['region'].unique():
+for region_name in buoy_sate_daily_rainfall_colasped_df_overlap['region'].unique():
 
-    region_df = buoy_sate_daily_rainfall_colasped_df[buoy_sate_daily_rainfall_colasped_df['region'] == region_name]
+    region_df = buoy_sate_daily_rainfall_colasped_df_overlap[buoy_sate_daily_rainfall_colasped_df_overlap['region'] == region_name]
 
     # region_name = region_df['region'].unique()[0]
 
@@ -1249,80 +1260,80 @@ for region_name in buoy_sate_daily_rainfall_colasped_df['region'].unique():
         buoy_region_based_qt_metrics.setdefault(region_name, {})[product] = reg_qt_met
 #- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
 
-df_pal_cat  = nested_metrics_to_tidy(pal_region_based_cat_metrics,  "PAL",  PAL_region_bounds)
-df_buoy_cat = nested_metrics_to_tidy(buoy_region_based_cat_metrics, "Buoy", Buoy_region_bounds)
+# df_pal_cat  = nested_metrics_to_tidy(pal_region_based_cat_metrics,  "PAL",  PAL_region_bounds)
+# df_buoy_cat = nested_metrics_to_tidy(buoy_region_based_cat_metrics, "Buoy", Buoy_region_bounds)
 
-# quantitative
-df_pal_qnt  = nested_metrics_to_tidy(pal_region_based_qt_metrics,  "PAL",  PAL_region_bounds)
-df_buoy_qnt = nested_metrics_to_tidy(buoy_region_based_qt_metrics, "Buoy", Buoy_region_bounds)
+# # quantitative
+# df_pal_qnt  = nested_metrics_to_tidy(pal_region_based_qt_metrics,  "PAL",  PAL_region_bounds)
+# df_buoy_qnt = nested_metrics_to_tidy(buoy_region_based_qt_metrics, "Buoy", Buoy_region_bounds)
 
-# combined
-df_cat = pd.concat([df_pal_cat, df_buoy_cat], ignore_index=True)
-df_cat = df_cat.copy()
-df_cat["metric"] = df_cat["metric"].replace({"Bias": "Bias_det"})
+# # combined
+# df_cat = pd.concat([df_pal_cat, df_buoy_cat], ignore_index=True)
+# df_cat = df_cat.copy()
+# df_cat["metric"] = df_cat["metric"].replace({"Bias": "Bias_det"})
 
-df_qnt = pd.concat([df_pal_qnt, df_buoy_qnt], ignore_index=True)
+# df_qnt = pd.concat([df_pal_qnt, df_buoy_qnt], ignore_index=True)
+# #- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
+
+# cat_metrics_to_plot = ("POD", "FAR", "Bias_det", "HSS")
+# savepath = os.path.join(path_to_plots, f"categorical_4x2_pal_buoy_refined_{cde_run_dte}.png")
+# fig, axes = plot_metric_bars_4x2_by_reference(
+#     df=df_cat,
+#     products=["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"],
+#     product_colors=product_colors,
+#     metrics=cat_metrics_to_plot,
+#     figsize=(24, 18),
+#     bar_width=0.105,
+#     group_gap=0.24,
+#     max_yticks=4,
+#     savepath=savepath
+# )
+# plt.show()
+# gc.collect()
+# #- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
+
+# quant_metrics_to_plot = ("CC", "RMSE", "MAE", "Bias")
+# savepath = os.path.join(path_to_plots, f"quantitative_4x2_pal_buoy_refined_{cde_run_dte}.png")
+# fig, axes = plot_metric_bars_4x2_by_reference(
+#     df=df_qnt,
+#     products=["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"],
+#     product_colors=product_colors,
+#     metrics=quant_metrics_to_plot,
+#     figsize=(24, 18),
+#     bar_width=0.105,
+#     group_gap=0.24,
+#     max_yticks=4,
+#     savepath="quantitative_4x2_pal_buoy_refined.png"
+# )
+# plt.show()
+
 #- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
+# # A comparative spatial plot of metrics
 
-cat_metrics_to_plot = ("POD", "FAR", "Bias_det", "HSS")
-savepath = os.path.join(path_to_plots, f"categorical_4x2_pal_buoy_refined_{cde_run_dte}.png")
-fig, axes = plot_metric_bars_4x2_by_reference(
-    df=df_cat,
-    products=["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"],
-    product_colors=product_colors,
-    metrics=cat_metrics_to_plot,
-    figsize=(24, 18),
-    bar_width=0.105,
-    group_gap=0.24,
-    max_yticks=4,
-    savepath=savepath
-)
-plt.show()
-gc.collect()
-#- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
+# # Categorical Metrics Plot
+# cat_metrics_to_plot = ["POD", "FAR", "Bias_det", "HSS"]
+# savepath = os.path.join(path_to_plots, f"spatial_categorical_skill_refined_{cde_run_dte}.png")
+# fig, axes = plot_spatial_metric_panels(
+#     df=df_cat,
+#     metrics=cat_metrics_to_plot,
+#     reference_types=("PAL", "Buoy"),
+#     figsize=(16, 14),
+#     savepath="spatial_categorical_skill_refined.png"
+# )
+# plt.show()
 
-quant_metrics_to_plot = ("CC", "RMSE", "MAE", "Bias")
-savepath = os.path.join(path_to_plots, f"quantitative_4x2_pal_buoy_refined_{cde_run_dte}.png")
-fig, axes = plot_metric_bars_4x2_by_reference(
-    df=df_qnt,
-    products=["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"],
-    product_colors=product_colors,
-    metrics=quant_metrics_to_plot,
-    figsize=(24, 18),
-    bar_width=0.105,
-    group_gap=0.24,
-    max_yticks=4,
-    savepath="quantitative_4x2_pal_buoy_refined.png"
-)
-plt.show()
+# savepath = os.path.join(path_to_plots, f"spatial_quantitative_skill_refined_{cde_run_dte}.png")
+# quant_metrics_to_plot = ["CC", "RMSE", "MAE", "Bias"]
 
-#- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
-# A comparative spatial plot of metrics
-
-# Categorical Metrics Plot
-cat_metrics_to_plot = ["POD", "FAR", "Bias_det", "HSS"]
-savepath = os.path.join(path_to_plots, f"spatial_categorical_skill_refined_{cde_run_dte}.png")
-fig, axes = plot_spatial_metric_panels(
-    df=df_cat,
-    metrics=cat_metrics_to_plot,
-    reference_types=("PAL", "Buoy"),
-    figsize=(16, 14),
-    savepath="spatial_categorical_skill_refined.png"
-)
-plt.show()
-
-savepath = os.path.join(path_to_plots, f"spatial_quantitative_skill_refined_{cde_run_dte}.png")
-quant_metrics_to_plot = ["CC", "RMSE", "MAE", "Bias"]
-
-fig, axes = plot_spatial_metric_panels(
-    df=df_qnt,
-    metrics=quant_metrics_to_plot,
-    reference_types=("PAL", "Buoy"),
-    figsize=(16, 14),
-    savepath="spatial_quantitative_skill_refined.png"
-)
-plt.show()
-gc.collect()
+# fig, axes = plot_spatial_metric_panels(
+#     df=df_qnt,
+#     metrics=quant_metrics_to_plot,
+#     reference_types=("PAL", "Buoy"),
+#     figsize=(16, 14),
+#     savepath="spatial_quantitative_skill_refined.png"
+# )
+# plt.show()
+# gc.collect()
 
 #-- - --- - -- - --- - - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --- - -- - --
 # another alternative spatial plot
@@ -1394,6 +1405,7 @@ gc.collect()
 
 svname = os.path.join(path_to_plots, f"spatial_quantitative_skill_panels_with_context_{cde_run_dte}.png")
 qnt_metrics = ["CC", "RMSE", "MAE", "Bias"]
+metric_style = make_metric_style_dict()
 
 fig, axes, ax_context = plot_spatial_skill_panels_with_context(
     df=df_qnt_plot,   # your tidy dataframe
@@ -1420,7 +1432,7 @@ pal_cat, pal_qt = compute_metrics_by_intensity_for_df(
 )
 
 buoy_cat, buoy_qt = compute_metrics_by_intensity_for_df(
-    buoy_sate_daily_rainfall_colasped_df.copy(),
+    buoy_sate_daily_rainfall_colasped_df_overlap.copy(),
     products=products,
     rainfall_bins=rainfall_bins,
     obs_col="rain_rate"
@@ -1435,6 +1447,8 @@ fig1, axes1 = plot_intensity_metrics_cat_4x2(
     figsize=(16, 16),
     savepath=savepath
 )
+gc.collect()
+
 savepath = os.path.join(path_to_plots, f"qt_metrics_by_intensity_pal_vs_buoy_{cde_run_dte}.png")
 fig2, axes2 = plot_intensity_metrics_qt_4x2(
     pal_qt=pal_qt,
@@ -1498,7 +1512,6 @@ all_mer2_mnthly_files = sorted([os.path.join(mer2_mnthly_files, f) for f in os.l
 all_mer2_mnthly_files_ = [f for f in all_mer2_mnthly_files  if int(os.path.basename(f).split('.')[5][:4]) >= 1998]
 
 all_imerg_mnthly_files = sorted([os.path.join(imerg_mnthly_files, f) for f in os.listdir(imerg_mnthly_files) if f.endswith('.HDF5')])
-# all_era5_mnthly_files = sorted([os.path.join(era5_mnhtly_file, f) for f in os.listdir(era5_mnhtly_file) if f.endswith('.nc4')])
 
 #%% Load monthly data files
 
@@ -1597,8 +1610,10 @@ imerg_v07_mnthly_ds_xr = imerg_v07_mnthly_ds_xr * 24
 
 print("IMERG loading complete")
 print("-" * 50 + "\n")
-del(imerg_v07_ds_xr_list) # imerg_v06_ds_xr_list,
+del(imerg_v07_mnth_ds_xr_list) # imerg_v06_ds_xr_list,
 gc.collect()
+
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
 
 # find min max dates in all dataset
 min_date = pd.to_datetime(min(
@@ -1608,7 +1623,7 @@ min_date = pd.to_datetime(min(
     era5_mnth_ds.valid_time.min(), 
     mer2_ds_mnth_ds.time.min(),
     imerg_v07_mnthly_ds_xr.time.min()).values)
-max_date = pd.to_datetime(max(
+max_date = pd.to_datetime(min(
     gpcp_v2pt3_mnth_ds['precip'].time.max(),    
     gpcp_v3pt2_mnth_ds['sat_gauge_precip'].time.max(), 
     gpcp_v3pt3_mnth_ds['sat_gauge_precip'].time.max(), 
@@ -1759,6 +1774,7 @@ all_buoy_product_monthly_df.to_pickle(os.path.join(path_to_put_dfs, f'buoy_month
 gc.collect() 
 
 #%% Monthly to Interannual Variability: Monthly Clim Cycles
+all_buoy_product_monthly_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_monthly_df_20260407.pkl'))
 products = [
     "Buoy",
     "GPCP v2.3",
@@ -1835,8 +1851,8 @@ annual_by_region, annual_buoy_product_df = build_annual_from_monthly_buoy_df(
     buoy_col="Buoy",
     n_days_col="n_days",
     min_days_per_month=20,
-    min_buoys_per_month=2,
-    min_months_per_year=4,      # can change to 10 if you want stricter
+    min_buoys_per_month=5, # 2
+    min_months_per_year=4, # 4     # can change to 10 if you want stricter
     equal_weight_by_buoy=True
 )
 
@@ -1874,6 +1890,169 @@ svnme = os.path.join(
 fig.savefig(svnme, dpi=300, bbox_inches='tight')
 
 gc.collect()
+
+#%% INTERANNUAL VARIABILITY: PRODUCT BASED COMPARISON
+print('Starting Product-based matching...')
+
+regional_product_monthly_dict = {}
+regional_product_monthly_list = []
+
+for region_name, buoy_files in buoy_files_by_region.items():
+    print(f"Processing region: {region_name}")
+    region_tables = []
+
+    for b, b_file in enumerate(buoy_files):
+        b_df, b_lat, b_lon = grab_Buoy_data_df(b_file)           
+        # -----------------------------
+        # Extract product monthly series
+        # -----------------------------
+        gpcp23_df = (
+            gpcp_v2pt3_mnth_ds["precip"]
+            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(latitude=float(b_lat), longitude=float(b_lon), method="nearest")
+            .to_dataframe()
+            .reset_index()
+        )
+        gpcp23_df["month"] = pd.to_datetime(gpcp23_df["time"]).dt.to_period("M").dt.to_timestamp()
+        gpcp23_df = gpcp23_df[["month", "precip"]].rename(columns={"precip": "GPCP v2.3"})
+
+        gpcp32_df = (
+            gpcp_v3pt2_mnth_ds["sat_gauge_precip"]
+            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(lat=float(b_lat), lon=float(b_lon), method="nearest")
+            .to_dataframe()
+            .reset_index()
+        )
+        gpcp32_df["month"] = pd.to_datetime(gpcp32_df["time"]).dt.to_period("M").dt.to_timestamp()
+        gpcp32_df = gpcp32_df[["month", "sat_gauge_precip"]].rename(columns={"sat_gauge_precip": "GPCP v3.2"})
+
+        gpcp33_df = (
+            gpcp_v3pt3_mnth_ds["sat_gauge_precip"]
+            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(lat=float(b_lat), lon=float(b_lon), method="nearest")
+            .to_dataframe()
+            .reset_index()
+        )
+        gpcp33_df["month"] = pd.to_datetime(gpcp33_df["time"]).dt.to_period("M").dt.to_timestamp()
+        gpcp33_df = gpcp33_df[["month", "sat_gauge_precip"]].rename(columns={"sat_gauge_precip": "GPCP v3.3"})
+
+        era5_df = (
+            era5_mnth_ds
+            .sel(valid_time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(y=float(b_lat), x=float(b_lon), method="nearest")
+            .to_dataframe()
+            .reset_index()
+        )
+        era5_df["month"] = pd.to_datetime(era5_df["valid_time"]).dt.to_period("M").dt.to_timestamp()
+        era5_df = era5_df[["month", "tp"]].rename(columns={"tp": "ERA5"})
+
+        imerg_df = (
+            imerg_v07_mnthly_ds_xr
+            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(lat=float(b_lat), lon=float(b_lon), method="nearest")
+            .to_dataframe()
+            .reset_index()
+        )
+        imerg_df["month"] = pd.to_datetime(imerg_df["time"]).dt.to_period("M").dt.to_timestamp()
+        imerg_df = imerg_df[["month", "precipitation"]].rename(columns={"precipitation": "IMERG v07"})
+
+        merra2_df = (
+            mer2_ds_mnth_ds
+            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(y=float(b_lat), x=float(b_lon), method="nearest")
+            .to_dataframe()
+            .reset_index()
+        )
+        merra2_df["month"] = pd.to_datetime(merra2_df["time"]).dt.to_period("M").dt.to_timestamp()
+        merra2_df = merra2_df[["month", "PRECTOT"]].rename(columns={"PRECTOT": "MERRA2"})
+
+        # -----------------------------
+        # Merge all products to one table
+        # -----------------------------
+        products_dfs = gpcp23_df.copy()
+        for prod_df in [gpcp32_df, gpcp33_df, era5_df, imerg_df, merra2_df]:
+            products_dfs = products_dfs.merge(prod_df, on="month", how="left")
+
+        # optional year/month columns
+        products_dfs["year"] = pd.to_datetime(products_dfs["month"]).dt.year
+        products_dfs["month_num"] = pd.to_datetime(products_dfs["month"]).dt.month
+
+        # add region column
+        products_dfs["region"] = region_name
+
+        # add buoy ID column
+        products_dfs["ID"] = buoy_id
+
+        region_tables.append(products_dfs)
+        regional_product_monthly_list.append(products_dfs)
+
+    regional_product_monthly_dict[region_name] = region_tables
+
+# combine all product monthly tables
+all_product_monthly_df = pd.concat(
+    regional_product_monthly_list,
+    ignore_index=True
+) if regional_product_monthly_list else pd.DataFrame()
+
+# save all_product_monthly_df to disk
+all_product_monthly_df.to_pickle(os.path.join(path_to_put_dfs, f'product_monthly_df_{cde_run_dte}.pkl'))
+
+gc.collect() 
+monthly_products = [  
+    "GPCP v2.3",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+    "ERA5",
+    "MERRA2",
+]
+# prudtc_dfs = all_buoy_product_monthly_df.copy()
+# prudtc_dfs.drop(columns = ['Buoy', 'n_days','ID',], inplace=True)
+reg_dfs = []
+for ke in regional_product_monthly_dict.keys():
+     reg_df = pd.concat(regional_product_monthly_dict[ke], ignore_index=True)
+     reg_df['region'] = ke
+     reg_dfs.append(reg_df)
+all_product_monthly_df = pd.concat(reg_dfs, ignore_index=True)
+
+
+
+annual_by_region, annual_product_df = build_annual_from_monthly_buoy_df(
+    all_product_monthly_df,
+    products=monthly_products,
+    region_col="region",
+    id_col="ID",
+    month_col="month",
+    buoy_col="GPCP v3.3",
+    n_days_col="n_days",
+    min_days_per_month=20,
+    min_buoys_per_month=None,
+    min_months_per_year=12,      # can change to 10 if you want stricter
+    equal_weight_by_buoy=False
+)
+
+ann_df = all_product_monthly_df.groupby(['region', 'year'])[monthly_products].mean().reset_index()
+region_year_limits = {
+    "ENP": (1998, 2023),
+    "WNP": (1998, 2023),
+    "IND": (1998, 2023),
+    "ATL": (1998, 2023),   # or (2001, 2024) if you want to remove the early spike more aggressively
+}
+fig = plot_interannual_variability_2x2_from_monthly_df(
+    annual_df=annual_product_df,
+    regions=regions,
+    products=monthly_products,
+    product_colors=product_colors,
+    ref="GPCP v3.3",
+    region_labels=Buoy_REGION_NAMES,
+    figsize=(17, 9.5),
+    lw_ref=3.5,
+    lw_prod=3.5,
+    ncol_legend=6,
+    year_min=1998,
+    year_max=2024,
+    region_year_limits=region_year_limits,
+)
 
 #%% Interannual Variability: Monthly Anomaly Scatterplots — Product vs Buoy
 # ============================================================
@@ -2026,12 +2205,12 @@ merra_ds_res = merra_ds_res.rio.reproject(
 merra_ds_res = merra_ds_res.rename({'y': 'lat', 'x': 'lon'})
 
 product_map = {
-    "GPCP v1.3": (gpcp_ds_v1pt3_al_res, {"GPCP v1.3": None}),
-    "GPCP v3.2": (gpcp_ds_v3pt2_al_res, {"GPCP v3.2": "precip"}),
-    "GPCP v3.3": (gpcp_ds_v3pt3_al_res, {"GPCP v3.3": "precip"}),
-    "ERA5": (era5_ds_res, {"ERA5": "tp"}),
-    "IMERG v07": (imerg_ds_res, {"IMERG v07": None}),
-    "MERRA2": (merra_ds_res, {"MERRA2": None}),
+    "GPCP v1.3": (gpcp_ds_v1pt3_al, {"GPCP v1.3": 'precip'}),
+    "GPCP v3.2": (gpcp_ds_v3pt2_al, {"GPCP v3.2": "precip"}),
+    "GPCP v3.3": (gpcp_ds_v3pt3_al, {"GPCP v3.3": "precip"}),
+    "ERA5": (era5_ds_al, {"ERA5": "tp"}),
+    "IMERG v07": (imerg_v07_al, {"IMERG v07": None}),
+    "MERRA2": (mer2_ds_al, {"MERRA2": None}),
 }
 
 # print(type(product_map))
