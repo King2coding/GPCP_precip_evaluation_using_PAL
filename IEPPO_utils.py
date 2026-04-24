@@ -612,63 +612,60 @@ def make_metric_style_dict():
     return {
         "POD": {
             # finer internal steps, but colorbar labels can stay sparse
-            "bounds": np.array([0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40,
-                                0.50, 0.60, 0.70, 0.80]),
+            "bounds": np.arange(0.05, 1.05,0.05), # np.array([0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80])
             "cmap": plt.cm.cividis,
             "label": "POD",
             "extend": "both",
-            "tick_labels": [0.1, 0.3, 0.5, 0.7, 0.8],
+            "tick_labels": [0.15, 0.30, 0.45, 0.60, 0.75, 0.90],# [0.1, 0.3, 0.5, 0.7, 0.8]
         },
         "FAR": {
-            "bounds": np.array([0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50,
-                                0.55, 0.60, 0.65, 0.70]),
+            "bounds": np.arange(0.05, 1.05,0.05), # np.array([0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70])
             "cmap": plt.cm.cividis_r,
             "label": "FAR",
             "extend": "both",
-            "tick_labels": [0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+            "tick_labels": [0.15, 0.30, 0.45, 0.60, 0.75, 0.90], # [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
         },
         "HSS": {
-            "bounds": np.array([0.10, 0.14, 0.18, 0.22, 0.26, 0.30, 0.34, 0.38, 0.42]),
+            "bounds": np.arange(0.02, 0.42,0.02), # np.array([0.10, 0.14, 0.18, 0.22, 0.26, 0.30, 0.34, 0.38, 0.42])
             "cmap": plt.cm.cividis,
             "label": "HSS",
             "extend": "both",
-            "tick_labels": [0.10, 0.20, 0.30, 0.40],
+            "tick_labels": [0.02, 0.08, 0.20, 0.14, 0.20, 0.26, 0.32, 0.38], # [0.10, 0.20, 0.30, 0.40]
         },
         "FreqBias": {
-            "bounds": np.array([0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50]),
+            "bounds": np.arange(0.20, 1.8,0.08), # np.array([0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50])
             "cmap": plt.cm.RdBu_r,
             "label": "Bias",
             "extend": "both",
-            "tick_labels": [0.6, 0.8, 1.0, 1.25, 1.5],
+            "tick_labels": [0.20, 0.44, 0.68, 0.92, 1.16, 1.40, 1.64, 1.80],
         },
         "CC": {
-            "bounds": np.array([0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40,
-                                0.45, 0.50, 0.55, 0.60]),
+            "bounds": np.arange(0.03, 0.60,0.03), # np.array([0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60])
             "cmap": plt.cm.cividis,
             "label": "CC",
             "extend": "both",
-            "tick_labels": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+            "tick_labels": [0.03, 0.12, 0.21, 0.30, 0.39, 0.48, 0.57], # [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         },
         "RMSE": {
-            "bounds": np.array([4, 6, 8, 10, 12, 14, 16, 18, 20]),
+            "bounds": np.arange(2.5, 17.5,0.5), # np.array([4, 6, 8, 10, 12, 14, 16, 18, 20])
             "cmap": plt.cm.cividis_r,
             "label": "RMSE [mm/day]",
             "extend": "both",
-            "tick_labels": [4, 8, 12, 16, 20],
+            "tick_labels": [2.5, 4.0, 5.5, 7.0, 8.5, 10.0, 11.5, 13.0, 14.5, 16.0, 17.50], # [4, 8, 12, 16, 20]
         },
         "MAE": {
-            "bounds": np.array([2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            "bounds": np.arange(1.5, 12.5,0.5), # np.array([2, 3, 4, 5, 6, 7, 8, 9, 10])
             "cmap": plt.cm.cividis_r,
             "label": "MAE [mm/day]",
             "extend": "both",
-            "tick_labels": [2, 4, 6, 8, 10],
+            "tick_labels": [1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5], # [2, 4, 6, 8, 10]
         },
         "Bias": {
-            "bounds": np.array([0.55, 0.60, 0.65, 0.75, 0.90, 1.00, 1.10, 1.25, 1.35, 1.50]),
+            "bounds": np.arange(-40, 50, 2), # np.array([-20, -10, -5, 0, 5, 10, 15, 20, 25, 30, 40, 50])
             "cmap": plt.cm.RdBu_r,
             "label": "Bias",
             "extend": "both",
-            "tick_labels": [0.55, 0.65, 0.75, 0.9, 1.0, 1.1, 1.25, 1.35, 1.5],
+            "tick_labels": [-40, -30, -20, -10, 0, 10, 20, 30, 40, 50], # [-20, -10, -5, 0, 5, 10,20,30, 40, 50]
         },
     }
 # ============================================================
@@ -5449,7 +5446,7 @@ def plot_monthly_climatology_2x2(
 
         ax.set_title(region_labels[region], fontsize=14, fontweight="bold")
         ax.set_xlabel("Month", fontsize=12, fontweight="bold")
-        ax.set_ylabel("Rainfall [mm day$^{-1}$]", fontsize=12, fontweight="bold")
+        ax.set_ylabel("[mm day$^{-1}$]", fontsize=12, fontweight="bold")
 
         ax.set_xticks(months)
         ax.set_xlim(1, 12)
@@ -8921,7 +8918,7 @@ def plot_spatial_skill_panels_with_context(
     fig.legend(
         handles=legend_handles,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.035),
+        bbox_to_anchor=(0.5, 0.03),
         ncol=6,
         frameon=False,
         fontsize=15,
@@ -9330,10 +9327,10 @@ def plot_intensity_metrics_cat_4x2(
     figsize=(16, 16),
     linewidth=2.2,
     markersize=6,
-    tick_fontsize=13,
-    label_fontsize=17,
-    title_fontsize=18,
-    legend_fontsize=15,
+    tick_fontsize=20,
+    label_fontsize=22,
+    title_fontsize=22,
+    legend_fontsize=22,
     savepath=None,
 ):
     cat_metrics = ['POD', 'FAR', 'Bias', 'HSS']
@@ -9357,8 +9354,8 @@ def plot_intensity_metrics_cat_4x2(
     ylims = {
         "POD": (0.0, 1.0),
         "FAR": (0.35, 1.0),
-        "Bias": None,
-        "HSS": (0, 0.40),
+        "Bias": (0.2, 1.8),
+        "HSS": (0, 0.50),
     }
 
     sources = [pal_cat, buoy_cat]
@@ -9387,6 +9384,16 @@ def plot_intensity_metrics_cat_4x2(
 
             if ylims[met] is not None:
                 ax.set_ylim(*ylims[met])
+            
+            if met == "POD":
+                ax.set_yticks([0.0, 0.5, 1.0])
+            elif met == "FAR":
+                ax.set_yticks([0.4, 0.7, 1.0])
+            elif met == "HSS":
+                ax.set_yticks([0.0, 0.2, 0.4])
+
+            elif met == "Bias":
+                ax.set_yticks([0.4, 0.8, 1.2])
 
             ax.grid(True, linestyle='--', alpha=0.6)
             ax.set_xscale('log')
@@ -9398,13 +9405,13 @@ def plot_intensity_metrics_cat_4x2(
                 ax.tick_params(axis='x', labelbottom=False)
 
     for ax in axes[-1, :]:
-        ax.set_xlabel('Rain Rate (mm/day)', fontsize=label_fontsize, fontweight='bold')
+        ax.set_xlabel('[mm/day]', fontsize=label_fontsize, fontweight='bold')
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(
         handles, labels,
         loc='lower center',
-        ncol=6,
+        ncol=4,
         fontsize=legend_fontsize,
         frameon=False
     )
@@ -9425,10 +9432,10 @@ def plot_intensity_metrics_qt_4x2(
     figsize=(16, 16),
     linewidth=2.2,
     markersize=6,
-    tick_fontsize=13,
-    label_fontsize=17,
-    title_fontsize=18,
-    legend_fontsize=15,
+    tick_fontsize=22,
+    label_fontsize=22,
+    title_fontsize=22,
+    legend_fontsize=22,
     savepath=None,
 ):
     qt_metrics = ['CC', 'RMSE', 'MAE', 'RB']
@@ -9450,10 +9457,10 @@ def plot_intensity_metrics_qt_4x2(
     }
 
     ylims = {
-        "CC": (-0.04, 0.4),
-        "RMSE": None,
-        "MAE": None,
-        "RB": None,
+        "CC": (-0.04, 0.45),
+        "RMSE": [15,50],
+        "MAE": [9,35],
+        "RB": [-40,30],
     }
 
     sources = [pal_qt, buoy_qt]
@@ -9483,6 +9490,15 @@ def plot_intensity_metrics_qt_4x2(
             if ylims[met] is not None:
                 ax.set_ylim(*ylims[met])
 
+            if met == "CC":
+                ax.set_yticks([0.0, 0.15, 0.35])
+            elif met == "RMSE":
+                ax.set_yticks([20, 30, 40, 50])
+            elif met == "MAE":
+                ax.set_yticks([10, 20, 30])
+            elif met == "RB":
+                ax.set_yticks([-30, -15, 0, 15, 30])
+
             ax.grid(True, linestyle='--', alpha=0.6)
             ax.set_xscale('log')
             ax.set_xticks(rainfall_bins)
@@ -9493,13 +9509,13 @@ def plot_intensity_metrics_qt_4x2(
                 ax.tick_params(axis='x', labelbottom=False)
 
     for ax in axes[-1, :]:
-        ax.set_xlabel('Rain Rate (mm/day)', fontsize=label_fontsize, fontweight='bold')
+        ax.set_xlabel('[mm/day]', fontsize=label_fontsize, fontweight='bold')
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(
         handles, labels,
         loc='lower center',
-        ncol=6,
+        ncol=3,
         fontsize=legend_fontsize,
         frameon=False
     )
@@ -9749,7 +9765,7 @@ def plot_interannual_variability_2x2_from_monthly_df(
 
         ax.set_title(region_labels.get(region, region), fontsize=16, fontweight="bold")
         # ax.set_xlabel("Year", fontsize=13, fontweight="bold")
-        ax.set_ylabel("Rainfall [mm day$^{-1}$]", fontsize=15, fontweight="bold")
+        ax.set_ylabel("[mm day$^{-1}$]", fontsize=15, fontweight="bold")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.tick_params(axis="both", labelsize=15)
 
