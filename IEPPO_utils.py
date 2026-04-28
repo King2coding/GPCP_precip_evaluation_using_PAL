@@ -1921,6 +1921,243 @@ def build_annual_from_monthly_buoy_df(
     }
 
     return annual_by_region, annual_df
+
+#-------------------------------------------------------------------
+def build_annual_from_monthly_buoy_df_with_sample_counts(
+
+    df,
+    products,
+    *,
+    region_col="region",
+    id_col="ID",
+    month_col="month",
+    buoy_col="Buoy",
+    n_days_col="n_days",
+    min_days_per_month=20,
+    min_buoys_per_month=5,
+    min_months_per_year=8,
+    equal_weight_by_buoy=True,
+    year_min=None,
+    year_max=None,
+    region_year_limits=None,
+
+):
+
+    """
+
+    Build annual regional mean rainfall series from monthly buoy-product table,
+
+    while also storing sample-support diagnostics.
+
+    Returns
+
+    -------
+
+    annual_by_region : dict
+
+        region -> DataFrame
+
+    annual_df : pd.DataFrame
+
+        concatenated annual dataframe with:
+
+        [region, year, n_valid_months, n_active_buoys_year, n_valid_buoy_months] + products
+
+    """
+
+    dff = df.copy()
+
+    dff[month_col] = pd.to_datetime(dff[month_col])
+
+    dff["year"] = dff[month_col].dt.year
+
+    dff["month_num"] = dff[month_col].dt.month
+
+    # --------------------------------------------------------
+
+    # 0) optional year filtering first
+
+    # --------------------------------------------------------
+
+    if year_min is not None:
+
+        dff = dff[dff["year"] >= year_min].copy()
+
+    if year_max is not None:
+
+        dff = dff[dff["year"] <= year_max].copy()
+
+    if region_year_limits is not None:
+
+        keep_parts = []
+
+        for region, sub in dff.groupby(region_col):
+
+            if region in region_year_limits:
+
+                yr0, yr1 = region_year_limits[region]
+
+                sub = sub[(sub["year"] >= yr0) & (sub["year"] <= yr1)].copy()
+
+            keep_parts.append(sub)
+
+        dff = pd.concat(keep_parts, ignore_index=True) if keep_parts else pd.DataFrame()
+
+    if dff.empty:
+
+        return {}, pd.DataFrame()
+
+    # --------------------------------------------------------
+
+    # 1) keep only sufficiently sampled buoy-months
+
+    # --------------------------------------------------------
+
+    if n_days_col in dff.columns:
+
+        dff = dff[dff[n_days_col] >= min_days_per_month].copy()
+
+    if dff.empty:
+
+        return {}, pd.DataFrame()
+
+    # --------------------------------------------------------
+
+    # 2) require enough active buoys in each region-month
+
+    # --------------------------------------------------------
+
+    if min_buoys_per_month is not None:
+
+        active_counts = (
+
+            dff.groupby([region_col, month_col], as_index=False)
+
+               .agg(n_active_buoys_month=(id_col, "nunique"))
+
+        )
+
+        dff = dff.merge(active_counts, on=[region_col, month_col], how="left")
+
+        dff = dff[dff["n_active_buoys_month"] >= min_buoys_per_month].copy()
+
+    if dff.empty:
+
+        return {}, pd.DataFrame()
+
+    # --------------------------------------------------------
+
+    # 3) compute region-month series
+
+    # --------------------------------------------------------
+
+    if equal_weight_by_buoy:
+
+        monthly_region = (
+
+            dff.groupby([region_col, month_col], as_index=False)[products]
+
+               .mean()
+
+        )
+
+    else:
+
+        monthly_region = (
+
+            dff.groupby([region_col, month_col], as_index=False)[products]
+
+               .mean()
+
+        )
+
+    monthly_region["year"] = monthly_region[month_col].dt.year
+
+    monthly_region["month_num"] = monthly_region[month_col].dt.month
+
+    # count valid region-months contributing to annual means
+
+    monthly_counts = (
+
+        monthly_region.groupby([region_col, "year"], as_index=False)
+
+        .agg(n_valid_months=("month_num", "nunique"))
+
+    )
+
+    # --------------------------------------------------------
+
+    # 4) annual sample diagnostics from buoy-level valid records
+
+    # --------------------------------------------------------
+
+    annual_support = (
+
+        dff.groupby([region_col, "year"], as_index=False)
+
+           .agg(
+
+               n_active_buoys_year=(id_col, "nunique"),
+
+               n_valid_buoy_months=(id_col, "size"),
+
+           )
+
+    )
+
+    # optional: theoretical max possible buoy-months given active buoys that year
+
+    annual_support["max_possible_buoy_months"] = 12 * annual_support["n_active_buoys_year"]
+
+    # optional: coverage fraction
+
+    annual_support["buoy_month_coverage_frac"] = (
+
+        annual_support["n_valid_buoy_months"] / annual_support["max_possible_buoy_months"]
+
+    )
+
+    # --------------------------------------------------------
+
+    # 5) annual means from valid region-month means
+
+    # --------------------------------------------------------
+
+    annual_means = (
+
+        monthly_region.groupby([region_col, "year"], as_index=False)[products]
+
+        .mean()
+
+    )
+
+    annual_df = (
+
+        annual_means
+
+        .merge(monthly_counts, on=[region_col, "year"], how="left")
+
+        .merge(annual_support, on=[region_col, "year"], how="left")
+
+    )
+
+    # if too few valid months, blank out annual means
+
+    bad = annual_df["n_valid_months"] < min_months_per_year
+
+    annual_df.loc[bad, products] = np.nan
+
+    annual_df = annual_df.sort_values([region_col, "year"]).reset_index(drop=True)
+
+    annual_by_region = {
+
+        reg: sub.drop(columns=[region_col]).reset_index(drop=True)
+
+        for reg, sub in annual_df.groupby(region_col)
+
+    }
+
+    return annual_by_region, annual_df
 #-------------------------------------------------------------------
 # ============================================================
 # Monthly anomaly scatter from the MONTHLY buoy-product table
@@ -9788,6 +10025,246 @@ def plot_interannual_variability_2x2_from_monthly_df(
     fig.tight_layout(rect=[0, 0.13, 1, 1])
     return fig
 
+#------------------------------------------------------------------
+def plot_interannual_variability_with_sample_counts_2x2(
+
+    annual_df,
+    regions,
+    products,
+    product_colors,
+    *,
+    ref=None,
+    region_labels=None,
+    figsize=(16.5, 9.5),
+    lw_ref=3.5,
+    lw_prod=3.5,
+    lw_count=2.5,
+    count_col="n_valid_months",
+    count_color="0.35",
+    count_ls="--",
+    count_marker="o",
+    count_label="Valid months",
+    show_count_on_all_panels=True,
+    right_ylabel="Valid months",
+    ncol_legend=3,
+    year_min=None,
+    year_max=None,
+    region_year_limits=None,
+    count_ylim=None,   # <-- changed default
+
+    rainfall_ylabel="[mm day$^{-1}$]",
+
+):
+
+    """
+
+    2x2 annual interannual variability plot with sample-count line on right y-axis.
+
+    """
+
+    if region_labels is None:
+
+        region_labels = {}
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
+
+    axes = axes.flatten()
+
+    all_handles = []
+
+    all_labels = []
+
+    # auto right-axis range from selected count column
+
+    if count_ylim is None and count_col in annual_df.columns:
+
+        cmax = annual_df[count_col].max()
+
+        if np.isfinite(cmax):
+
+            count_ylim = (0, cmax * 1.10)
+
+        else:
+
+            count_ylim = None
+
+    for i, ax in enumerate(axes):
+
+        if i >= len(regions):
+
+            ax.axis("off")
+
+            continue
+
+        region = regions[i]
+
+        dfr = annual_df[annual_df["region"] == region].copy().sort_values("year")
+
+        if region_year_limits is not None and region in region_year_limits:
+
+            yr0, yr1 = region_year_limits[region]
+
+            dfr = dfr[(dfr["year"] >= yr0) & (dfr["year"] <= yr1)].copy()
+
+        if year_min is not None:
+
+            dfr = dfr[dfr["year"] >= year_min].copy()
+
+        if year_max is not None:
+
+            dfr = dfr[dfr["year"] <= year_max].copy()
+
+        if dfr.empty:
+
+            ax.axis("off")
+
+            continue
+
+        # --- left axis: rainfall series ---
+
+        if ref is not None and ref in dfr.columns:
+
+            h = ax.plot(
+
+                dfr["year"],
+
+                dfr[ref],
+
+                lw=lw_ref,
+
+                color=product_colors.get(ref, "k"),
+
+                label=ref,
+
+                zorder=3,
+
+            )[0]
+
+            all_handles.append(h)
+
+            all_labels.append(ref)
+
+        for prod in products:
+
+            if prod not in dfr.columns:
+
+                continue
+
+            if ref is not None and prod == ref:
+
+                continue
+
+            h = ax.plot(
+
+                dfr["year"],
+
+                dfr[prod],
+
+                lw=lw_prod,
+
+                color=product_colors[prod],
+
+                label=prod,
+
+                zorder=2,
+
+            )[0]
+
+            all_handles.append(h)
+
+            all_labels.append(prod)
+
+        ax.set_title(region_labels.get(region, region), fontsize=16, fontweight="bold")
+
+        ax.set_ylabel(rainfall_ylabel, fontsize=15, fontweight="bold")
+
+        ax.grid(True, linestyle="--", alpha=0.5)
+
+        ax.tick_params(axis="both", labelsize=15)
+
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+        # --- right axis: count line ---
+
+        axr = ax.twinx()
+
+        if count_col in dfr.columns:
+
+            hc = axr.plot(
+
+                dfr["year"],
+
+                dfr[count_col],
+
+                color=count_color,
+
+                lw=lw_count,
+
+                ls=count_ls,
+
+                marker=count_marker,
+
+                ms=4.5,
+
+                label=count_label if i == 0 else None,
+
+                zorder=1,
+
+            )[0]
+
+            if i == 0:
+
+                all_handles.append(hc)
+
+                all_labels.append(count_label)
+
+        if count_ylim is not None:
+
+            axr.set_ylim(*count_ylim)
+
+        # sensible automatic ticks for right axis
+
+        axr.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
+
+        axr.tick_params(axis="y", labelsize=13, colors=count_color)
+
+        if show_count_on_all_panels:
+
+            axr.set_ylabel(right_ylabel, fontsize=13, fontweight="bold", color=count_color)
+
+        else:
+
+            if i % 2 == 1:
+
+                axr.set_ylabel(right_ylabel, fontsize=13, fontweight="bold", color=count_color)
+
+            else:
+
+                axr.set_ylabel("")
+
+    # deduplicate legend
+
+    uniq = {}
+
+    for lab, h in zip(all_labels, all_handles):
+
+        if lab not in uniq:
+
+            uniq[lab] = h
+
+    fig.legend(
+        uniq.values(),
+        uniq.keys(),
+        loc="lower center",
+        ncol=ncol_legend,
+        frameon=False,
+        fontsize=16,
+        bbox_to_anchor=(0.5, 0.02),
+    )
+
+    fig.tight_layout(rect=[0, 0.13, 1, 1])
+
+    return fig
 
 def plot_deseasonalized_anomaly_scatter_from_monthly_buoy_df(
     monthly_buoy_df,

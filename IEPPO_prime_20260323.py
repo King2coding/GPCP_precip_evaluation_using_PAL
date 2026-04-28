@@ -1891,6 +1891,36 @@ fig.savefig(svnme, dpi=300, bbox_inches='tight')
 
 gc.collect()
 
+#---------------------------------------------------------------------------
+# PLOT INTERANNUAL VARIABILITY WITH SAMPLE COUNTS
+#--------------------------------------------------------------------------
+annual_by_region_buoy_sm, annual_df_buoy_sm = build_annual_from_monthly_buoy_df_with_sample_counts(
+    df=all_buoy_product_monthly_df,
+    products=buoy_monthly_products,
+    buoy_col="Buoy",
+    min_days_per_month=20,
+    min_buoys_per_month=2,
+    min_months_per_year=4,
+    year_min=min_date.year,
+    year_max=max_date.year,
+    region_year_limits=region_year_limits,
+)
+
+fig = plot_interannual_variability_with_sample_counts_2x2(
+    annual_df=annual_df_buoy_sm,
+    regions=regions,
+    products=buoy_monthly_products,
+    product_colors=product_colors,
+    ref="Buoy",
+    count_col="n_valid_buoy_months",
+    count_label="Sample Count",
+    right_ylabel="Sample Count (Months)",
+    count_ylim=None,   # auto-scale
+    ncol_legend=5,
+)
+
+gc.collect()
+
 #%% INTERANNUAL VARIABILITY: PRODUCT BASED COMPARISON
 print('Starting Product-based matching...')
 
@@ -1902,13 +1932,15 @@ for region_name, buoy_files in buoy_files_by_region.items():
     region_tables = []
 
     for b, b_file in enumerate(buoy_files):
+        # define a unique buoy ID for THIS file
+        buoy_id = os.path.splitext(os.path.basename(b_file))[0]
         b_df, b_lat, b_lon = grab_Buoy_data_df(b_file)           
         # -----------------------------
         # Extract product monthly series
         # -----------------------------
         gpcp23_df = (
             gpcp_v2pt3_mnth_ds["precip"]
-            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(time=slice(min_date, max_date))  # ensure we only select the time range that overlaps with buoy data
             .sel(latitude=float(b_lat), longitude=float(b_lon), method="nearest")
             .to_dataframe()
             .reset_index()
@@ -1918,7 +1950,7 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
         gpcp32_df = (
             gpcp_v3pt2_mnth_ds["sat_gauge_precip"]
-            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(time=slice(min_date, max_date))  # ensure we only select the time range that overlaps with buoy data
             .sel(lat=float(b_lat), lon=float(b_lon), method="nearest")
             .to_dataframe()
             .reset_index()
@@ -1928,7 +1960,7 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
         gpcp33_df = (
             gpcp_v3pt3_mnth_ds["sat_gauge_precip"]
-            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(time=slice(min_date, max_date))  # ensure we only select the time range that overlaps with buoy data
             .sel(lat=float(b_lat), lon=float(b_lon), method="nearest")
             .to_dataframe()
             .reset_index()
@@ -1938,7 +1970,7 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
         era5_df = (
             era5_mnth_ds
-            .sel(valid_time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(valid_time=slice(min_date, max_date))  # ensure we only select the time range that overlaps with buoy data
             .sel(y=float(b_lat), x=float(b_lon), method="nearest")
             .to_dataframe()
             .reset_index()
@@ -1948,7 +1980,7 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
         imerg_df = (
             imerg_v07_mnthly_ds_xr
-            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(time=slice(min_date, max_date))  # ensure we only select the time range that overlaps with buoy data
             .sel(lat=float(b_lat), lon=float(b_lon), method="nearest")
             .to_dataframe()
             .reset_index()
@@ -1958,7 +1990,7 @@ for region_name, buoy_files in buoy_files_by_region.items():
 
         merra2_df = (
             mer2_ds_mnth_ds
-            .sel(time=slice(min_date, '2023-12-31'))  # ensure we only select the time range that overlaps with buoy data
+            .sel(time=slice(min_date, max_date))  # ensure we only select the time range that overlaps with buoy data
             .sel(y=float(b_lat), x=float(b_lon), method="nearest")
             .to_dataframe()
             .reset_index()
@@ -1997,7 +2029,15 @@ all_product_monthly_df = pd.concat(
 # save all_product_monthly_df to disk
 all_product_monthly_df.to_pickle(os.path.join(path_to_put_dfs, f'product_monthly_df_{cde_run_dte}.pkl'))
 
+all_product_monthly_df = globals().get("all_product_monthly_df", None)
+
+if all_product_monthly_df is None:
+    all_product_monthly_df = pd.read_pickle(
+        os.path.join(path_to_put_dfs, "product_monthly_df_20260423.pkl")
+    )
+
 gc.collect() 
+
 monthly_products = [  
     "GPCP v2.3",
     "GPCP v3.2",
@@ -2008,12 +2048,12 @@ monthly_products = [
 ]
 # prudtc_dfs = all_buoy_product_monthly_df.copy()
 # prudtc_dfs.drop(columns = ['Buoy', 'n_days','ID',], inplace=True)
-reg_dfs = []
-for ke in regional_product_monthly_dict.keys():
-     reg_df = pd.concat(regional_product_monthly_dict[ke], ignore_index=True)
-     reg_df['region'] = ke
-     reg_dfs.append(reg_df)
-all_product_monthly_df = pd.concat(reg_dfs, ignore_index=True)
+# reg_dfs = []
+# for ke in regional_product_monthly_dict.keys():
+#      reg_df = pd.concat(regional_product_monthly_dict[ke], ignore_index=True)
+#      reg_df['region'] = ke
+#      reg_dfs.append(reg_df)
+# all_product_monthly_df = pd.concat(reg_dfs, ignore_index=True)
 
 
 
@@ -2031,12 +2071,12 @@ annual_by_region, annual_product_df = build_annual_from_monthly_buoy_df(
     equal_weight_by_buoy=False
 )
 
-ann_df = all_product_monthly_df.groupby(['region', 'year'])[monthly_products].mean().reset_index()
+# ann_df = all_product_monthly_df.groupby(['region', 'year'])[monthly_products].mean().reset_index()
 region_year_limits = {
-    "ENP": (1998, 2023),
-    "WNP": (1998, 2023),
-    "IND": (1998, 2023),
-    "ATL": (1998, 2023),   # or (2001, 2024) if you want to remove the early spike more aggressively
+    "ENP": (1998, 2013),
+    "WNP": (1998, 2020),
+    "IND": (2008, 2025),
+    "ATL": (2003, 2025),   # or (2001, 2025) if you want to remove the early spike more aggressively
 }
 fig = plot_interannual_variability_2x2_from_monthly_df(
     annual_df=annual_product_df,
@@ -2053,6 +2093,38 @@ fig = plot_interannual_variability_2x2_from_monthly_df(
     year_max=2024,
     region_year_limits=region_year_limits,
 )
+gc.collect()
+
+
+#---------------------------------------------------------------------------
+# PLOT INTERANNUAL VARIABILITY WITH SAMPLE COUNTS
+#--------------------------------------------------------------------------
+annual_by_region_prdt_sm, annual_df_prdt_sm = build_annual_from_monthly_buoy_df_with_sample_counts(
+    df=all_product_monthly_df,
+    products=monthly_products,
+    buoy_col="GPCP v3.3",
+    min_days_per_month=20,
+    min_buoys_per_month=None,
+    min_months_per_year=12,
+    year_min=min_date.year,
+    year_max=max_date.year,
+    region_year_limits=region_year_limits,
+)
+
+fig = plot_interannual_variability_with_sample_counts_2x2(
+    annual_df=annual_df_prdt_sm,
+    regions=regions,
+    products=monthly_products,
+    product_colors=product_colors,
+    ref="GPCP v3.3",
+    count_col="n_valid_buoy_months",
+    count_label="Sample Count",
+    right_ylabel="Sample Count (Months)",
+    count_ylim=None,   # auto-scale
+    ncol_legend=5,
+)
+
+gc.collect()
 
 #%% Interannual Variability: Monthly Anomaly Scatterplots — Product vs Buoy
 # ============================================================
