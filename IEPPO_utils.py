@@ -2094,15 +2094,10 @@ def build_annual_from_monthly_buoy_df_with_sample_counts(
     annual_support = (
 
         dff.groupby([region_col, "year"], as_index=False)
-
            .agg(
-
                n_active_buoys_year=(id_col, "nunique"),
-
                n_valid_buoy_months=(id_col, "size"),
-
            )
-
     )
 
     # optional: theoretical max possible buoy-months given active buoys that year
@@ -2112,33 +2107,22 @@ def build_annual_from_monthly_buoy_df_with_sample_counts(
     # optional: coverage fraction
 
     annual_support["buoy_month_coverage_frac"] = (
-
         annual_support["n_valid_buoy_months"] / annual_support["max_possible_buoy_months"]
-
     )
 
     # --------------------------------------------------------
-
     # 5) annual means from valid region-month means
-
     # --------------------------------------------------------
 
     annual_means = (
-
         monthly_region.groupby([region_col, "year"], as_index=False)[products]
-
         .mean()
-
     )
 
     annual_df = (
-
         annual_means
-
         .merge(monthly_counts, on=[region_col, "year"], how="left")
-
         .merge(annual_support, on=[region_col, "year"], how="left")
-
     )
 
     # if too few valid months, blank out annual means
@@ -5548,6 +5532,189 @@ def plot_satellite_vs_groundtruth(
     return fig
 
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+import string
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def plot_combined_daily_mean_pal_buoy_scatter_black(
+    pal_df,
+    buoy_df,
+    truth_col,
+    product_cols,
+    product_labels=None,
+    pal_truth_label="PAL Observations",
+    buoy_truth_label="Buoy Observations",
+    pal_max_val=18,
+    buoy_max_val=15,
+    pal_ticks=(0, 6, 12, 18),
+    buoy_ticks=(0, 5, 10, 15),
+    figsize=(18, 20),
+    point_size=70,
+    point_alpha=0.85,
+    savepath=None,
+):
+    """
+    Manuscript-style combined scatter figure for multi-year mean daily precipitation.
+
+    Layout:
+        Panels (a)-(f): Product estimates versus PAL observations
+        Panels (g)-(l): Product estimates versus buoy observations
+
+    All points are plotted as filled black circles to avoid regional legends
+    and reduce visual complexity.
+    """
+
+    if product_labels is None:
+        product_labels = product_cols
+
+    if len(product_cols) != len(product_labels):
+        raise ValueError("product_cols and product_labels must have the same length.")
+
+    if len(product_cols) != 6:
+        raise ValueError("This layout expects exactly six products.")
+
+    fig, axes = plt.subplots(
+        4, 3,
+        figsize=figsize,
+        squeeze=False
+    )
+
+    axes_flat = axes.flatten()
+    panel_letters = list(string.ascii_lowercase)
+
+    def _plot_one_panel(
+        ax,
+        df,
+        prod,
+        label,
+        truth_label,
+        max_val,
+        ticks,
+        panel_letter,
+    ):
+        # Calculate metrics using your existing function.
+        qt_met = calculate_metrics(df, truth_col, prod)
+
+        ax.scatter(
+            df[truth_col].values,
+            df[prod].values,
+            marker="o",
+            s=point_size,
+            facecolor="black",
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=point_alpha,
+        )
+
+        ax.set_xlim(0, max_val)
+        ax.set_ylim(0, max_val)
+        ax.set_xticks(ticks)
+        ax.set_yticks(ticks)
+
+        ax.grid(True, which="major", linestyle="--", linewidth=0.7, alpha=0.6)
+        ax.minorticks_on()
+
+        ax.tick_params(axis="both", which="major", length=7, width=1.2, labelsize=14)
+        ax.tick_params(axis="both", which="minor", length=4, width=0.8)
+
+        # 1:1 line
+        xx = np.linspace(0, max_val, 100)
+        ax.plot(xx, xx, "--", color="0.5", linewidth=1.2)
+
+        # No subplot title; axes carry product/reference information.
+        ax.set_xlabel(
+            f"{truth_label} [mm day$^{{-1}}$]",
+            fontsize=18,
+            fontweight="bold"
+        )
+        ax.set_ylabel(
+            f"{label} Estimates\n[mm day$^{{-1}}$]",
+            fontsize=18,
+            fontweight="bold"
+        )
+
+        # Panel label above upper-left corner.
+        ax.text(
+            0.02, 1.04,
+            f"({panel_letter})",
+            transform=ax.transAxes,
+            fontsize=18,
+            fontweight="bold",
+            va="bottom",
+            ha="left",
+        )
+
+        # Stats annotation.
+        ax.text(
+            0.05, 0.95,
+            f"RB: {qt_met['Bias']:.2f}%\n"
+            f"RMSE: {qt_met['RMSE']:.2f} mm/day\n"
+            f"CC: {qt_met['CC']:.2f}",
+            transform=ax.transAxes,
+            fontsize=18,
+            fontweight="bold",
+            verticalalignment="top",
+        )
+
+        for tick in ax.get_xticklabels() + ax.get_yticklabels():
+            tick.set_fontweight("bold")
+
+    # Panels (a)-(f): PAL
+    for i, (prod, label) in enumerate(zip(product_cols, product_labels)):
+        _plot_one_panel(
+            ax=axes_flat[i],
+            df=pal_df,
+            prod=prod,
+            label=label,
+            truth_label=pal_truth_label,
+            max_val=pal_max_val,
+            ticks=pal_ticks,
+            panel_letter=panel_letters[i],
+        )
+
+    # Panels (g)-(l): Buoys
+    for j, (prod, label) in enumerate(zip(product_cols, product_labels)):
+        idx = j + len(product_cols)
+        _plot_one_panel(
+            ax=axes_flat[idx],
+            df=buoy_df,
+            prod=prod,
+            label=label,
+            truth_label=buoy_truth_label,
+            max_val=buoy_max_val,
+            ticks=buoy_ticks,
+            panel_letter=panel_letters[idx],
+        )
+
+    # Group labels.
+    fig.text(
+        0.015, 0.735,
+        "PAL",
+        rotation=90,
+        fontsize=18,
+        fontweight="bold",
+        va="center",
+        ha="center",
+    )
+
+    fig.text(
+        0.015, 0.285,
+        "Buoys",
+        rotation=90,
+        fontsize=18,
+        fontweight="bold",
+        va="center",
+        ha="center",
+    )
+
+    plt.tight_layout(rect=[0.035, 0.02, 1, 0.98])
+
+    if savepath:
+        fig.savefig(savepath, dpi=500, bbox_inches="tight")
+
+    return fig
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def plot_categorical_metrics_by_region(
     metrics_dict,
     products,
@@ -5682,23 +5849,23 @@ def plot_monthly_climatology_2x2(
             )
 
         ax.set_title(region_labels[region], fontsize=14, fontweight="bold")
-        ax.set_xlabel("Month", fontsize=12, fontweight="bold")
-        ax.set_ylabel("[mm day$^{-1}$]", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Month", fontsize=16, fontweight="bold")
+        ax.set_ylabel("[mm day$^{-1}$]", fontsize=16, fontweight="bold")
 
         ax.set_xticks(months)
         ax.set_xlim(1, 12)
 
         ax.grid(True, linestyle="--", alpha=0.5)
-        ax.tick_params(axis="both", labelsize=11)
+        ax.tick_params(axis="both", labelsize=16)
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(
     handles, labels,
     loc="lower center",
-    bbox_to_anchor=(0.5, 0.01),
+    bbox_to_anchor=(0.5, 0.004),
     ncol=ncol_legend,
     frameon=False,
-    fontsize=13
+    fontsize=16
 )
 
     fig.tight_layout(rect=[0, 0.07, 1, 1])
@@ -8935,20 +9102,29 @@ def add_row_colorbars_clean(
     metric_style,
     ax_context=None,
     *,
-    cb_width_frac=0.40,     # shorter bars
+    cb_width_frac=0.40,
     cb_height=0.011,
-    title_position="top",   # "top", "bottom", "right"
+    title_position="top",
     title_fontsize=12,
     tick_fontsize=10,
     tick_pad=1,
+    row_cb_y_offsets=None,   # NEW: optional per-row vertical adjustment
 ):
     """
     One shared horizontal colorbar per row.
     Uses many discrete color steps, but only labels selected ticks.
+
+    row_cb_y_offsets : dict, optional
+        Dictionary mapping row index to vertical offset in figure coordinates.
+        Negative values move the colorbar down; positive values move it up.
+        Example: {5: -0.018}
     """
 
     fig.canvas.draw()
     nrows = len(metrics)
+
+    if row_cb_y_offsets is None:
+        row_cb_y_offsets = {}
 
     for i, metric in enumerate(metrics):
         mappable = row_mappables[i]
@@ -8983,6 +9159,9 @@ def add_row_colorbars_clean(
                 cb_bottom = gap_mid - 0.5 * cb_height
             else:
                 cb_bottom = row_bottom - 0.03
+
+        # NEW: apply row-specific vertical offset
+        cb_bottom = cb_bottom + row_cb_y_offsets.get(i, 0.0)
 
         cax = fig.add_axes([cb_left, cb_bottom, cb_width, cb_height])
 
@@ -9190,8 +9369,464 @@ def plot_spatial_skill_panels_with_context(
         plt.savefig(savepath, dpi=300, bbox_inches="tight")
 
     return fig, axes, ax_context
+
 #----------------------------------------------------------------------------
 
+def plot_selected_daily_skill_maps_pal_buoy_main(
+    cat_df,
+    quant_df,
+    pals_classed_by_region,
+    buoy_files_by_region,
+    PAL_region_colors,
+    reference_types=("PAL", "Buoy"),
+    selected_rows=None,
+    metric_style=None,
+    figsize=(16, 14.5),
+    extent=(-180, 180, -30, 60),
+    marker_size=105,
+    marker_edge_width=0.7,
+    pal_context_track_stride=25,
+    savepath=None,
+):
+    """
+    Main-text selected daily skill maps for PAL and buoy references.
+
+    Expected dataframe columns:
+        reference_type, region, product, metric, value, lon, lat
+
+    Default rows:
+        1. HSS from categorical metrics
+        2. Detection bias / frequency bias from categorical metrics
+        3. CC from quantitative metrics
+        4. Relative bias from quantitative metrics
+
+    Columns:
+        PAL, Buoy
+    """
+
+    if metric_style is None:
+        metric_style = make_metric_style_dict()
+
+    if selected_rows is None:
+        selected_rows = [
+            {
+                "source": "cat",
+                "metric": "HSS",
+                "style_key": "HSS",
+                "label": "HSS",
+            },
+            {
+                "source": "cat",
+                "metric": "FreqBias",
+                "style_key": "FreqBias",
+                "label": "Detection bias",
+            },
+            {
+                "source": "quant",
+                "metric": "CC",
+                "style_key": "CC",
+                "label": "CC",
+            },
+            {
+                "source": "quant",
+                "metric": "Bias",
+                "style_key": "Bias",
+                "label": "Relative bias [%]",
+            },
+        ]
+
+    nrows = len(selected_rows)
+    ncols = len(reference_types)
+
+    fig = plt.figure(figsize=figsize)
+
+    gs = gridspec.GridSpec(
+        nrows=nrows + 1,
+        ncols=ncols,
+        height_ratios=[1] * nrows + [0.82],
+        hspace=0.72,
+        wspace=0.02,
+    )
+
+    axes = np.empty((nrows, ncols), dtype=object)
+
+    for i in range(nrows):
+        for j in range(ncols):
+            axes[i, j] = fig.add_subplot(gs[i, j], projection=ccrs.PlateCarree())
+
+    ax_context = fig.add_subplot(gs[-1, :], projection=ccrs.PlateCarree())
+
+    row_mappables = [None] * nrows
+
+    for i, row in enumerate(selected_rows):
+        source = row["source"]
+        metric = row["metric"]
+        style_key = row["style_key"]
+        label = row["label"]
+
+        if source == "cat":
+            df_source = cat_df
+        elif source == "quant":
+            df_source = quant_df
+        else:
+            raise ValueError("source must be either 'cat' or 'quant'.")
+
+        if style_key not in metric_style:
+            raise KeyError(
+                f"'{style_key}' is not in metric_style. "
+                f"Available keys are: {list(metric_style.keys())}"
+            )
+
+        style = metric_style[style_key]
+        cmap = style["cmap"]
+        bounds = np.asarray(style["bounds"])
+        norm = BoundaryNorm(bounds, cmap.N, clip=False)
+
+        for j, ref in enumerate(reference_types):
+            ax = axes[i, j]
+
+            add_base_map(
+                ax,
+                extent=extent,
+                show_left_labels=(j == 0),
+                show_bottom_labels=(i == nrows - 1),
+            )
+
+            dsub = df_source[
+                (df_source["metric"] == metric) &
+                (df_source["reference_type"] == ref)
+            ].copy()
+
+            if dsub.empty:
+                print(f"Warning: no data found for reference_type={ref}, metric={metric}")
+
+            for product, dprod in dsub.groupby("product"):
+                marker = product_markers.get(product, "o")
+                dx, dy = product_offsets.get(product, (0.0, 0.0))
+
+                sc = ax.scatter(
+                    dprod["lon"].values + dx,
+                    dprod["lat"].values + dy,
+                    c=dprod["value"].values,
+                    cmap=cmap,
+                    norm=norm,
+                    s=marker_size,
+                    marker=marker,
+                    edgecolor="black",
+                    linewidth=marker_edge_width,
+                    transform=ccrs.PlateCarree(),
+                    zorder=4,
+                )
+
+                if row_mappables[i] is None:
+                    row_mappables[i] = sc
+
+            ax.set_title(
+                f"{ref} — {label}",
+                fontsize=17,
+                fontweight="bold",
+                pad=10,
+            )
+
+    # Bottom context map
+    plot_pal_buoy_context_map(
+        ax=ax_context,
+        pals_classed_by_region=pals_classed_by_region,
+        buoy_files_by_region=buoy_files_by_region,
+        PAL_region_colors=PAL_region_colors,
+        extent=extent,
+        pal_track_stride=pal_context_track_stride,
+        add_legend=False,
+    )
+
+    # Product legend
+    legend_handles = [
+        Line2D(
+            [0], [0],
+            marker=marker,
+            linestyle="None",
+            color="black",
+            markerfacecolor="white",
+            markeredgecolor="black",
+            markersize=10,
+            label=product,
+        )
+        for product, marker in product_markers.items()
+    ]
+
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.03),
+        ncol=6,
+        frameon=False,
+        fontsize=15,
+        handletextpad=0.6,
+        columnspacing=1.5,
+    )
+
+    plt.subplots_adjust(
+        left=0.055,
+        right=0.985,
+        top=0.97,
+        bottom=0.12,
+    )
+
+    fig.canvas.draw()
+
+    add_row_colorbars_clean(
+        fig=fig,
+        axes=axes,
+        metrics=[row["style_key"] for row in selected_rows],
+        row_mappables=row_mappables,
+        metric_style=metric_style,
+        ax_context=ax_context,
+        cb_width_frac=0.40,
+        cb_height=0.011,
+        title_position="top",
+        title_fontsize=12,
+        tick_fontsize=10,
+    )
+
+    if savepath is not None:
+        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+
+    return fig, axes, ax_context
+#----------------------------------------------------------------------------
+
+def plot_main_daily_skill_maps_pal_buoy_six_metrics(
+    cat_df,
+    quant_df,
+    reference_types=("PAL", "Buoy"),
+    selected_rows=None,
+    metric_style=None,
+    figsize=(18, 20),
+    extent=(-180, 180, -30, 60),
+    marker_size=135,
+    marker_edge_width=0.8,
+    savepath=None,
+):
+    """
+    Main-text daily skill map figure for PAL and buoy references.
+
+    Expected dataframe columns:
+        reference_type, region, product, metric, value, lon, lat
+
+    Default rows:
+        1. POD from categorical metrics
+        2. HSS from categorical metrics
+        3. Detection bias / frequency bias from categorical metrics
+        4. CC from quantitative metrics
+        5. RMSE from quantitative metrics
+        6. Relative bias from quantitative metrics
+
+    Columns:
+        PAL, Buoy
+
+    Notes:
+        - No bottom context map is included.
+        - Panel titles are placed in the upper-left using letters.
+        - Product symbols are retained and enlarged for readability.
+    """
+
+    if metric_style is None:
+        metric_style = make_metric_style_dict()
+
+    if selected_rows is None:
+        selected_rows = [
+            {
+                "source": "cat",
+                "metric": "POD",
+                "style_key": "POD",
+                "label": "POD",
+            },
+            {
+                "source": "cat",
+                "metric": "HSS",
+                "style_key": "HSS",
+                "label": "HSS",
+            },
+            {
+                "source": "cat",
+                "metric": "FreqBias",
+                "style_key": "FreqBias",
+                "label": "Detection bias",
+            },
+            {
+                "source": "quant",
+                "metric": "CC",
+                "style_key": "CC",
+                "label": "CC",
+            },
+            {
+                "source": "quant",
+                "metric": "RMSE",
+                "style_key": "RMSE",
+                "label": "RMSE [mm day$^{-1}$]",
+            },
+            {
+                "source": "quant",
+                "metric": "Bias",
+                "style_key": "Bias",
+                "label": "Relative bias [%]",
+            },
+        ]
+
+    nrows = len(selected_rows)
+    ncols = len(reference_types)
+
+    fig = plt.figure(figsize=figsize)
+
+    gs = gridspec.GridSpec(
+        nrows=nrows,
+        ncols=ncols,
+        hspace=0.82,
+        wspace=0.04,
+    )
+
+    axes = np.empty((nrows, ncols), dtype=object)
+
+    for i in range(nrows):
+        for j in range(ncols):
+            axes[i, j] = fig.add_subplot(gs[i, j], projection=ccrs.PlateCarree())
+
+    row_mappables = [None] * nrows
+
+    panel_letters = "abcdefghijklmnopqrstuvwxyz"
+
+    for i, row in enumerate(selected_rows):
+        source = row["source"]
+        metric = row["metric"]
+        style_key = row["style_key"]
+        row_label = row["label"]
+
+        if source == "cat":
+            df_source = cat_df
+        elif source == "quant":
+            df_source = quant_df
+        else:
+            raise ValueError("source must be either 'cat' or 'quant'.")
+
+        if style_key not in metric_style:
+            raise KeyError(
+                f"'{style_key}' is not in metric_style. "
+                f"Available keys are: {list(metric_style.keys())}"
+            )
+
+        style = metric_style[style_key]
+        cmap = style["cmap"]
+        bounds = np.asarray(style["bounds"])
+        norm = BoundaryNorm(bounds, cmap.N, clip=False)
+
+        for j, ref in enumerate(reference_types):
+            ax = axes[i, j]
+
+            add_base_map(
+                ax,
+                extent=extent,
+                show_left_labels=(j == 0),
+                show_bottom_labels=(i == nrows - 1),
+            )
+
+            dsub = df_source[
+                (df_source["metric"] == metric) &
+                (df_source["reference_type"] == ref)
+            ].copy()
+
+            if dsub.empty:
+                print(f"Warning: no data found for reference_type={ref}, metric={metric}")
+
+            for product, dprod in dsub.groupby("product"):
+                marker = product_markers.get(product, "o")
+                dx, dy = product_offsets.get(product, (0.0, 0.0))
+
+                sc = ax.scatter(
+                    dprod["lon"].values + dx,
+                    dprod["lat"].values + dy,
+                    c=dprod["value"].values,
+                    cmap=cmap,
+                    norm=norm,
+                    s=marker_size,
+                    marker=marker,
+                    edgecolor="black",
+                    linewidth=marker_edge_width,
+                    transform=ccrs.PlateCarree(),
+                    zorder=4,
+                )
+
+                if row_mappables[i] is None:
+                    row_mappables[i] = sc
+
+            # Panel label and title in upper-left, not centered.
+            panel_id = panel_letters[i * ncols + j]
+            ax.text(
+                0.01,
+                1.06,
+                f"({panel_id}) {ref} — {row_label}",
+                transform=ax.transAxes,
+                fontsize=16,
+                fontweight="bold",
+                va="bottom",
+                ha="left",
+            )
+
+    # Product legend only.
+    legend_handles = [
+        Line2D(
+            [0], [0],
+            marker=marker,
+            linestyle="None",
+            color="black",
+            markerfacecolor="white",
+            markeredgecolor="black",
+            markersize=11,
+            label=product,
+        )
+        for product, marker in product_markers.items()
+    ]
+
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.018),   # lower legend
+        ncol=6,
+        frameon=False,
+        fontsize=18,
+        handletextpad=0.6,
+        columnspacing=1.5,
+    )
+
+    plt.subplots_adjust(
+        left=0.055,
+        right=0.985,
+        top=0.975,
+        bottom=0.125,   # more bottom space
+    )
+
+    fig.canvas.draw()
+
+    add_row_colorbars_clean(
+    fig=fig,
+    axes=axes,
+    metrics=[row["style_key"] for row in selected_rows],
+    row_mappables=row_mappables,
+    metric_style=metric_style,
+    ax_context=None,
+    cb_width_frac=0.40,
+    cb_height=0.010,
+    title_position="top",
+    title_fontsize=16,
+    tick_fontsize=10,
+    row_cb_y_offsets={
+        5: -0.020,   # moves only Relative bias colorbar lower
+    },
+    )
+
+    if savepath is not None:
+        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+
+    return fig, axes
+#----------------------------------------------------------------------------
 def plot_spatial_metric_panels(
     df,
     metrics,
@@ -9659,6 +10294,8 @@ def plot_intensity_metrics_cat_4x2(
         fig.savefig(savepath, dpi=300, bbox_inches='tight')
 
     return fig, axes
+#---------------------------------------------------------------------------------------------
+
 
 def plot_intensity_metrics_qt_4x2(
     pal_qt,
@@ -9764,6 +10401,223 @@ def plot_intensity_metrics_qt_4x2(
 
     return fig, axes
 
+#------------------------------------------------------------------------------------------------------------------------------------------
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def plot_intensity_metrics_selected_pal_buoy_4x2(
+    pal_cat,
+    buoy_cat,
+    pal_qt,
+    buoy_qt,
+    rainfall_bins,
+    products,
+    product_colors,
+    figsize=(17, 16),
+    linewidth=3.2,
+    markersize=7.5,
+    tick_fontsize=22,
+    label_fontsize=25,
+    title_fontsize=24,
+    panel_fontsize=20,
+    legend_fontsize=21,
+    savepath=None,
+):
+    """
+    Figure 6-style intensity-dependent daily skill plot.
+
+    Layout:
+        Row 1: HSS
+        Row 2: Frequency bias
+        Row 3: CC
+        Row 4: Relative bias
+
+    Columns:
+        Left: PAL
+        Right: Buoy
+
+    Inputs
+    ------
+    pal_cat, buoy_cat : dict
+        Product-keyed dictionaries of categorical metric DataFrames.
+        Each product DataFrame should be indexed by rainfall threshold and include:
+        POD, FAR, Bias, HSS.
+        Here categorical 'Bias' is plotted as frequency bias.
+
+    pal_qt, buoy_qt : dict
+        Product-keyed dictionaries of quantitative metric DataFrames.
+        Each product DataFrame should be indexed by rainfall threshold and include:
+        CC, RMSE, MAE, RB.
+
+    rainfall_bins : list-like
+        Rain-rate thresholds used as x-axis values.
+
+    products : list-like
+        Product names in plotting order.
+
+    product_colors : dict
+        Mapping from product name to color.
+
+    Returns
+    -------
+    fig, axes
+    """
+
+    rows = [
+        {
+            "source": "cat",
+            "metric": "HSS",
+            "ylabel": "HSS",
+            "ylim": (0.0, 0.46),
+            "yticks": [0.1, 0.2, 0.3, 0.4],
+        },
+        {
+            "source": "cat",
+            "metric": "Bias",
+            "ylabel": "Frequency bias",
+            "ylim": (0.2, 1.75),
+            "yticks": [0.2, 0.6, 1.0, 1.4],
+        },
+        {
+            "source": "qt",
+            "metric": "CC",
+            "ylabel": "CC",
+            "ylim": (-0.15, 0.45),
+            "yticks": [0, 0.2, 0.4],
+        },
+        {
+            "source": "qt",
+            "metric": "RB",
+            "ylabel": "Relative bias [%]",
+            "ylim": (-45, 35),
+            "yticks": [-40, -20, 0, 20],
+        },
+    ]
+
+    fig, axes = plt.subplots(
+        nrows=4,
+        ncols=2,
+        figsize=figsize,
+        sharex="col",
+        sharey=False
+    )
+
+    col_titles = ["PAL", "Buoy"]
+    sources = {
+        "PAL": {
+            "cat": pal_cat,
+            "qt": pal_qt,
+        },
+        "Buoy": {
+            "cat": buoy_cat,
+            "qt": buoy_qt,
+        },
+    }
+
+    panel_letters = list("abcdefghijklmnopqrstuvwxyz")
+
+    for j, ref in enumerate(col_titles):
+        for i, row in enumerate(rows):
+            ax = axes[i, j]
+            source = sources[ref][row["source"]]
+            metric = row["metric"]
+
+            for product in products:
+                dmet = source[product]
+
+                ax.plot(
+                    rainfall_bins,
+                    dmet.loc[rainfall_bins, metric].astype(float),
+                    marker="o",
+                    linewidth=linewidth,
+                    markersize=markersize,
+                    color=product_colors[product],
+                    label=product if (i == 0 and j == 0) else None,
+                )
+
+            # Column title only on first row.
+            if i == 0:
+                ax.set_title(
+                    ref,
+                    fontsize=title_fontsize,
+                    fontweight="bold",
+                    pad=12
+                )
+
+            # Panel labels inside upper-left.
+            panel_id = panel_letters[i * 2 + j]
+            ax.text(
+                0.025,
+                0.94,
+                f"({panel_id})",
+                transform=ax.transAxes,
+                fontsize=panel_fontsize,
+                fontweight="bold",
+                va="top",
+                ha="left",
+                bbox=dict(facecolor="white", edgecolor="none", alpha=0.70, pad=2.0),
+            )
+
+            # Y label on both columns because y-axis is not shared.
+            ax.set_ylabel(
+                row["ylabel"],
+                fontsize=label_fontsize,
+                fontweight="bold"
+            )
+
+            ax.set_ylim(*row["ylim"])
+            ax.set_yticks(row["yticks"])
+
+            ax.grid(True, linestyle="--", alpha=0.6)
+            ax.set_xscale("log")
+            ax.set_xticks(rainfall_bins)
+            ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+
+            ax.tick_params(
+                axis="both",
+                which="major",
+                labelsize=tick_fontsize,
+                width=1.6,
+                length=7
+            )
+
+            for tick in ax.get_xticklabels() + ax.get_yticklabels():
+                tick.set_fontweight("bold")
+
+            if i < len(rows) - 1:
+                ax.tick_params(axis="x", labelbottom=False)
+
+    for ax in axes[-1, :]:
+        ax.set_xlabel(
+            "[mm day$^{-1}$]",
+            fontsize=label_fontsize,
+            fontweight="bold"
+        )
+
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.018),
+        ncol=6,
+        fontsize=legend_fontsize,
+        frameon=False,
+        handlelength=2.4,
+        columnspacing=1.3,
+        handletextpad=0.5,
+    )
+
+    plt.tight_layout(rect=[0, 0.075, 1, 1])
+
+    if savepath:
+        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+
+    return fig, axes
+#------------------------------------------------------------------------------------------------------------------------------------------
+
 def plot_pdf_bundle_on_axis(
     ax,
     pdf_dict,
@@ -9815,7 +10669,7 @@ def plot_pdf_comparison_pal_buoy(
     buoy_year_range=(2000, 2020),
     figsize=(16, 6),
     dpi=300,
-    lw=4,
+    lw=5,                    # slightly thicker default
     savepath=None,
 ):
     """
@@ -9848,7 +10702,8 @@ def plot_pdf_comparison_pal_buoy(
     # -----------------------------
     # plot
     # -----------------------------
-    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharey=True)
+    # Do not share y-axis, so PAL and buoy panels can scale independently.
+    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharey=False)
 
     # left: PAL
     plot_pdf_bundle_on_axis(
@@ -9879,10 +10734,26 @@ def plot_pdf_comparison_pal_buoy(
     # -----------------------------
     # formatting
     # -----------------------------
-    for ax, ttl in zip(axes, ["PAL", "Buoy"]):
-        ax.set_title(ttl, fontsize=18, fontweight="bold")
+    panel_labels = ["(a) PAL", "(b) Buoy"]
+
+    for ax, panel_label in zip(axes, panel_labels):
+        # Remove centered title; use panel label inside upper-left instead.
+        ax.set_title("")
+
+        ax.text(
+            0.03,
+            0.96,
+            panel_label,
+            transform=ax.transAxes,
+            fontsize=20,
+            fontweight="bold",
+            va="top",
+            ha="left",
+            bbox=dict(facecolor="white", edgecolor="none", alpha=0.75, pad=2.5),
+        )
+
         ax.set_xscale("log")
-        ax.set_xlabel("Rain Rate [mm day$^{-1}$]", fontsize=18, fontweight="bold")
+        ax.set_xlabel("[mm day$^{-1}$]", fontsize=20, fontweight="bold")
         ax.grid(True, which="major", linestyle="--", alpha=0.6)
 
         ax.xaxis.set_major_locator(FixedLocator(list(bin_values)))
@@ -9891,12 +10762,16 @@ def plot_pdf_comparison_pal_buoy(
         )
         ax.xaxis.set_minor_locator(FixedLocator([]))
         ax.tick_params(axis="x", which="minor", bottom=False)
-        ax.tick_params(axis="both", which="major", labelsize=15, width=1.5, length=7)
+
+        # Larger tick labels
+        ax.tick_params(axis="both", which="major", labelsize=18, width=1.7, length=8)
 
         for tick in ax.get_xticklabels() + ax.get_yticklabels():
             tick.set_fontweight("bold")
 
-    axes[0].set_ylabel("PDF (%)", fontsize=18, fontweight="bold")
+    # Since y-axis is not shared, give both panels y-axis labels.
+    axes[0].set_ylabel("PDF (%)", fontsize=20, fontweight="bold")
+    axes[1].set_ylabel("PDF (%)", fontsize=20, fontweight="bold")
 
     # -----------------------------
     # common legend
@@ -9916,17 +10791,16 @@ def plot_pdf_comparison_pal_buoy(
         loc="lower center",
         bbox_to_anchor=(0.5, 0.01),
         ncol=8,
-        fontsize=15,
+        fontsize=16,
         frameon=False
     )
 
-    plt.tight_layout(rect=[0, 0.08, 1, 1])
+    plt.tight_layout(rect=[0, 0.09, 1, 1])
 
     if savepath is not None:
         fig.savefig(savepath, dpi=dpi, bbox_inches="tight")
 
     return fig, axes, pal_pdf_dict, buoy_pdf_dict
-
 
 # ============================================================
 # PLOT 2x2 INTERANNUAL VARIABILITY FROM MONTHLY-BASED ANNUAL DF
@@ -10057,35 +10931,25 @@ def plot_interannual_variability_with_sample_counts_2x2(
 ):
 
     """
-
     2x2 annual interannual variability plot with sample-count line on right y-axis.
-
     """
 
     if region_labels is None:
-
-        region_labels = {}
+        region_labels = Buoy_REGION_NAMES
 
     fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
 
     axes = axes.flatten()
-
     all_handles = []
-
     all_labels = []
 
     # auto right-axis range from selected count column
 
     if count_ylim is None and count_col in annual_df.columns:
-
         cmax = annual_df[count_col].max()
-
         if np.isfinite(cmax):
-
             count_ylim = (0, cmax * 1.10)
-
         else:
-
             count_ylim = None
 
     for i, ax in enumerate(axes):
@@ -10097,25 +10961,19 @@ def plot_interannual_variability_with_sample_counts_2x2(
             continue
 
         region = regions[i]
-
         dfr = annual_df[annual_df["region"] == region].copy().sort_values("year")
 
         if region_year_limits is not None and region in region_year_limits:
-
             yr0, yr1 = region_year_limits[region]
-
             dfr = dfr[(dfr["year"] >= yr0) & (dfr["year"] <= yr1)].copy()
 
         if year_min is not None:
-
             dfr = dfr[dfr["year"] >= year_min].copy()
 
         if year_max is not None:
-
             dfr = dfr[dfr["year"] <= year_max].copy()
 
         if dfr.empty:
-
             ax.axis("off")
 
             continue
@@ -10125,121 +10983,82 @@ def plot_interannual_variability_with_sample_counts_2x2(
         if ref is not None and ref in dfr.columns:
 
             h = ax.plot(
-
                 dfr["year"],
-
                 dfr[ref],
-
                 lw=lw_ref,
-
                 color=product_colors.get(ref, "k"),
-
                 label=ref,
-
                 zorder=3,
 
             )[0]
 
             all_handles.append(h)
-
             all_labels.append(ref)
 
         for prod in products:
 
             if prod not in dfr.columns:
-
                 continue
 
             if ref is not None and prod == ref:
-
                 continue
 
             h = ax.plot(
-
                 dfr["year"],
-
                 dfr[prod],
-
                 lw=lw_prod,
-
                 color=product_colors[prod],
-
                 label=prod,
-
                 zorder=2,
 
             )[0]
 
             all_handles.append(h)
-
             all_labels.append(prod)
 
         ax.set_title(region_labels.get(region, region), fontsize=16, fontweight="bold")
 
-        ax.set_ylabel(rainfall_ylabel, fontsize=15, fontweight="bold")
-
+        ax.set_ylabel(rainfall_ylabel, fontsize=16, fontweight="bold")
         ax.grid(True, linestyle="--", alpha=0.5)
-
-        ax.tick_params(axis="both", labelsize=15)
-
+        ax.tick_params(axis="both", labelsize=16)
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
         # --- right axis: count line ---
-
         axr = ax.twinx()
-
         if count_col in dfr.columns:
 
             hc = axr.plot(
-
                 dfr["year"],
-
                 dfr[count_col],
-
                 color=count_color,
-
                 lw=lw_count,
-
                 ls=count_ls,
-
                 marker=count_marker,
-
                 ms=4.5,
-
                 label=count_label if i == 0 else None,
-
                 zorder=1,
 
             )[0]
 
             if i == 0:
-
                 all_handles.append(hc)
-
                 all_labels.append(count_label)
 
         if count_ylim is not None:
-
             axr.set_ylim(*count_ylim)
 
         # sensible automatic ticks for right axis
 
         axr.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
-
-        axr.tick_params(axis="y", labelsize=13, colors=count_color)
-
+        axr.tick_params(axis="y", labelsize=16, colors=count_color)
         if show_count_on_all_panels:
-
-            axr.set_ylabel(right_ylabel, fontsize=13, fontweight="bold", color=count_color)
+            axr.set_ylabel(right_ylabel, fontsize=16, fontweight="bold", color=count_color)
 
         else:
-
             if i % 2 == 1:
-
-                axr.set_ylabel(right_ylabel, fontsize=13, fontweight="bold", color=count_color)
+                axr.set_ylabel(right_ylabel, fontsize=16, fontweight="bold", color=count_color)
 
             else:
-
                 axr.set_ylabel("")
 
     # deduplicate legend
@@ -10249,7 +11068,6 @@ def plot_interannual_variability_with_sample_counts_2x2(
     for lab, h in zip(all_labels, all_handles):
 
         if lab not in uniq:
-
             uniq[lab] = h
 
     fig.legend(
@@ -10258,7 +11076,7 @@ def plot_interannual_variability_with_sample_counts_2x2(
         loc="lower center",
         ncol=ncol_legend,
         frameon=False,
-        fontsize=16,
+        fontsize=18,
         bbox_to_anchor=(0.5, 0.02),
     )
 

@@ -78,7 +78,8 @@ gpcp_ds_v3pt2_xr = xr.open_mfdataset(all_gpcp_v3pt2_files,
                                     compat="override",
                                     parallel=True,
                                     engine="netcdf4",
-                                    chunks={"time": 120, "lat": 180, "lon": 360},  # <<< important
+                                    chunks={"time": 120, "lat": 180, 
+                                            "lon": 360},  # <<< important
                                     cache=False
                                     )
 
@@ -91,7 +92,8 @@ gpcp_ds_v3pt3_xr = xr.open_mfdataset(all_gpcp_v3pt3_files,
                                     compat="override",
                                     parallel=True,
                                     engine="netcdf4",
-                                    chunks={"time": 120, "lat": 180, "lon": 360},  # <<< important
+                                    chunks={"time": 120, "lat": 180, 
+                                            "lon": 360},  # <<< important
                                     cache=False
                                     )
 gpcp_ds_v3pt3_xr = ds_swaplon(gpcp_ds_v3pt3_xr)
@@ -103,7 +105,8 @@ gpcp_ds_v1pt3_xr = xr.open_mfdataset(all_gpcp_v1pt3_2000_2020_files,
                                     compat="override",
                                     parallel=True,
                                     engine="netcdf4",
-                                    chunks={"time": 120, "lat": 180, "lon": 360},  # <<< important
+                                    chunks={"time": 120, "lat": 180, 
+                                    "lon": 360},  # <<< important
                                     cache=False
                                     )
 
@@ -1197,6 +1200,38 @@ print("-" * 30 + "\n")
 
 gc.collect()
 
+#- - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - --- - -- - - - - - - - 
+
+fig3 = plot_combined_daily_mean_pal_buoy_scatter_black(
+    pal_df=pal_sate_daily_mean_df,
+    buoy_df=buoy_sate_daily_mean_df,
+    truth_col="rain_rate",
+    product_cols=plot_prdtc,
+    product_labels=[
+        "GPCP v1.3",
+        "GPCP v3.2",
+        "GPCP v3.3",
+        "IMERG v07",
+        "ERA5",
+        "MERRA-2",
+    ],
+
+    pal_truth_label="PAL Observations",
+    buoy_truth_label="Buoy Observations",
+    pal_max_val=18,
+    buoy_max_val=15,
+    pal_ticks=(0, 6, 12, 18),
+    buoy_ticks=(0, 5, 10, 15),
+    figsize=(18, 20),
+    point_size=70,
+    point_alpha=0.85,
+    savepath=os.path.join(
+        path_to_plots,
+        f"Figure03_DailyMean_PAL_Buoy_ProductComparison_{cde_run_dte}.png"
+    ),
+
+)
+gc.collect()
 #%% Daily-Scale Assessment: PAL-Buoy Bar Plot of Regional Metrics
 
 pal_region_based_cat_metrics = {}
@@ -1383,7 +1418,7 @@ df_qnt_plot = pd.concat([df_pal_qnt, df_buoy_qnt], ignore_index=True)
 #===================Plotting==========
 # Categorical Metrics Plot with Context
 cat_metrics = ["POD", "FAR", "FreqBias", "HSS"]
-svname = os.path.join(path_to_plots, f"spatial_skill_panels_with_context_{cde_run_dte}.png")
+svname = os.path.join(path_to_plots, f"FigureS05_DailyDetectionSkillMaps_PAL_Buoy_AllMetrics_{cde_run_dte}.png")
 metric_style = make_metric_style_dict()
 
 fig, axes, ax_context = plot_spatial_skill_panels_with_context(
@@ -1403,7 +1438,7 @@ gc.collect()
 
 # Quantitative Metrics Plot with Context
 
-svname = os.path.join(path_to_plots, f"spatial_quantitative_skill_panels_with_context_{cde_run_dte}.png")
+svname = os.path.join(path_to_plots, f"FigureS06_DailyQuantitativeSkillMaps_PAL_Buoy_AllMetrics_{cde_run_dte}.png")
 qnt_metrics = ["CC", "RMSE", "MAE", "Bias"]
 metric_style = make_metric_style_dict()
 
@@ -1418,6 +1453,37 @@ fig, axes, ax_context = plot_spatial_skill_panels_with_context(
     savepath=None
 )
 fig.savefig(svname, dpi=300, bbox_inches='tight')
+gc.collect()
+
+#------------------------------------------------------------------------------
+metric_style = make_metric_style_dict()
+
+# If your categorical detection bias style was previously stored as "Bias",
+# reuse it for FreqBias but relabel it.
+if "FreqBias" in metric_style:
+    metric_style["FreqBias"] = {
+        **metric_style["Bias"],
+        "label": "Frequency bias",
+    }
+
+# Make sure relative bias is labeled clearly.
+metric_style["Bias"] = {
+    **metric_style["Bias"],
+    "label": "Relative bias [%]",
+}
+
+fig4, axes4 = plot_main_daily_skill_maps_pal_buoy_six_metrics(
+    cat_df=df_cat_plot,
+    quant_df=df_qnt_plot,
+    metric_style=metric_style,
+    figsize=(18, 20),
+    marker_size=135,
+    savepath=os.path.join(
+        path_to_plots,
+        f"Figure05_DailySkill_Regional_PAL_Buoy_SixMetrics_{cde_run_dte}.png"
+    ),
+)
+
 gc.collect()
 #%% Daily Assessment: Metrics as a fucntion of intensity
 
@@ -1462,10 +1528,31 @@ fig2, axes2 = plot_intensity_metrics_qt_4x2(
 
 gc.collect()
 
+#------------------------------------------------------------------------------
+savepath = os.path.join(
+    path_to_plots,
+    f"Figure06_DailySkill_IntensityDependence_PAL_Buoy_SelectedMetrics_{cde_run_dte}.png"
+)
+
+fig6, axes6 = plot_intensity_metrics_selected_pal_buoy_4x2(
+    pal_cat=pal_cat,
+    buoy_cat=buoy_cat,
+    pal_qt=pal_qt,
+    buoy_qt=buoy_qt,
+    rainfall_bins=[0.5, 1, 2, 4, 8, 16, 32],
+    products=["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", 
+              "IMERG v07", "ERA5", "MERRA2"],
+    product_colors=product_colors,
+    figsize=(17, 16),
+    linewidth=3.2,
+    markersize=7.5,
+    savepath=savepath,
+)
+
 #%% #%%  Daily-Scale Assessment: PDF Assessment
 
 bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
-savepath=os.path.join(path_to_plots, f"PAL_Buoy_Satellite_PDF_Comparison_{cde_run_dte}.png")
+savepath=os.path.join(path_to_plots, f"Figure04_DailyRainfall_VolumePDF_PAL_Buoy_ProductComparison_{cde_run_dte}.png")
 fig, axes, pal_pdf_dict, buoy_pdf_dict = plot_pdf_comparison_pal_buoy(
     pal_df=pal_sate_daily_rainfall_colasped_df,
     buoy_df=buoy_sate_daily_rainfall_colasped_df,
@@ -1824,10 +1911,10 @@ fig = plot_monthly_climatology_2x2(
 
 svnme = os.path.join(
     path_to_plots,
-    f'Buoy_vs_Satellite_Monthly_Climatology_2x2_{cde_run_dte}.png'
+    f'Figure07_BuoyMonthly_SeasonalCycle_ProductComparison_{cde_run_dte}.png'
 )
 fig.savefig(svnme, dpi=300, bbox_inches='tight')
-
+gc.collect()
 #%% Interanual Variability
 # ============================================================
 # BUILD ANNUAL SERIES FROM MONTHLY-SCREENED BUOY-PRODUCT TABLE
@@ -1918,6 +2005,12 @@ fig = plot_interannual_variability_with_sample_counts_2x2(
     count_ylim=None,   # auto-scale
     ncol_legend=5,
 )
+
+svnme = os.path.join(
+    path_to_plots,
+    f"Figure08_Buoy_AnnualRegionalPrecip_ProductComparison_{cde_run_dte}.png"
+)
+fig.savefig(svnme, dpi=500, bbox_inches='tight')
 
 gc.collect()
 
@@ -2123,7 +2216,7 @@ fig = plot_interannual_variability_with_sample_counts_2x2(
     count_ylim=None,   # auto-scale
     ncol_legend=5,
 )
-
+svnme = os.path.join(path_to_plots, f"FigureS5_Buoy_AnnualRegionalPrecip_ProductOnlyAnalog_{cde_run_dte}.png")
 gc.collect()
 
 #%% Interannual Variability: Monthly Anomaly Scatterplots — Product vs Buoy
@@ -2161,12 +2254,13 @@ fig, monthly_region_buoy, monthly_region_buoy_anom = (
         figsize=(20, 12),
         savepath=os.path.join(
             path_to_plots,
-            f"deseasonalized_monthly_anomaly_scatter_monthlybuoydf_{cde_run_dte}.png"
+            f"Figure09_BuoyMonthlyAnomaly_Scatter_ProductComparison_{cde_run_dte}.png"
         )
     )
 )
 
 gc.collect()
+
 
 #%% Poleward Assessment: OceanRAIN (≥45°)
 
