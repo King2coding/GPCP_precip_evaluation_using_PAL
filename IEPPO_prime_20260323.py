@@ -118,7 +118,7 @@ print("-" * 30 + "\n")
 
 # Use multiprocessing to process ERA5 files in parallel
 era5_ds_xr_list = []
-with Pool(processes=18) as pool:  # Adjust the number of processes as needed
+with Pool(processes=2) as pool:  # Adjust the number of processes as needed
     era5_ds_xr_list = pool.map(process_era5_file, enumerate(all_era5_tp_files))
 # Combine all processed batches into a single xarray dataset - simple version
 if era5_ds_xr_list:
@@ -132,7 +132,7 @@ gc.collect()
 
 # Use multiprocessing to process MERRA2 files in parallel
 mer2_ds_xr_list = []
-with Pool(processes=18) as pool:  # Adjust the number of processes as needed
+with Pool(processes=2) as pool:  # Adjust the number of processes as needed
     mer2_ds_xr_list = pool.map(process_merra2_file, enumerate(all_merra2_files))
 # Combine all processed batches into a single xarray dataset - simple version
 if mer2_ds_xr_list:
@@ -158,7 +158,7 @@ gc.collect()
 #     imerg_v06_ds_xr = xr.concat(imerg_v06_ds_xr_list, dim="time")
 
 imerg_v07_ds_xr_list = []
-with Pool(processes=18) as pool:
+with Pool(processes=2) as pool:
     imerg_v07_ds_xr_list = pool.map(
         process_imerg_file,
         [(idx, file_path, 'v07') for idx, file_path in enumerate(all_imerg_v07_files)]
@@ -521,9 +521,9 @@ plt.subplots_adjust(bottom=0.30)
 
 svname = os.path.join(
     path_to_plots,
-    f'insitu_distribution_over_oceans_{cde_run_dte}.png'
+    f'Fig02_Spatial_distribution_of_the_in_situ_ocean_precipitation_references_{cde_run_dte}.png'
 )
-plt.savefig(svname, bbox_inches='tight', dpi=500)
+plt.savefig(svname, bbox_inches='tight', dpi=250)
 # plt.show()
 gc.collect()
 
@@ -1157,10 +1157,15 @@ if buoy_sate_daily_rainfall_colasped_df is None:
         os.path.join(path_to_put_dfs, "buoy_sate_daily_rainfall_from_all_regions_and_all_IDs_20260407.pkl")
     )
 
+pal_sate_daily_rainfall_colasped_df = pal_sate_daily_rainfall_colasped_df.rename(
+    columns={'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
+
+buoy_sate_daily_rainfall_colasped_df = buoy_sate_daily_rainfall_colasped_df.rename(
+    columns={'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
 #%% Daily-Scale Assessment: SCATTER PLOT of Multi-Year Means
 
 # Create scatter plots for PAL vs satellite products
-plot_prdtc = ['GPCP v1.3', 'GPCP v3.2', 'GPCP v3.3', 'IMERG v07','ERA5', 'MERRA2']
+plot_prdtc = ['GPCP v1.3', 'GPCP v3.2', 'GPCP v3.3', 'IMERG v07','ERA5', 'MERRA-2']
 scatter_fig = plot_satellite_vs_groundtruth(pal_sate_daily_mean_df,
                                             truth_col='rain_rate',
                                             product_cols=plot_prdtc,
@@ -1240,12 +1245,13 @@ pal_region_based_qt_metrics = {}
 for region_name in pal_sate_daily_rainfall_colasped_df['region'].unique():
 
     region_df = pal_sate_daily_rainfall_colasped_df[pal_sate_daily_rainfall_colasped_df['region'] == region_name]
+    region_df = region_df.rename(columns = {'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
 
     # region_name = region_df['region'].unique()[0]
 
     print(f"Processing region: {region_name}")
 
-    for product in ['GPCP v1.3','GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2']:
+    for product in ['GPCP v1.3','GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA-2']:
         forcast = region_df[product]
         observed = region_df['rain_rate']
 
@@ -1276,12 +1282,13 @@ buoy_region_based_qt_metrics = {}
 for region_name in buoy_sate_daily_rainfall_colasped_df_overlap['region'].unique():
 
     region_df = buoy_sate_daily_rainfall_colasped_df_overlap[buoy_sate_daily_rainfall_colasped_df_overlap['region'] == region_name]
+    region_df = region_df.rename(columns = {'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
 
     # region_name = region_df['region'].unique()[0]
 
     print(f"Processing region: {region_name}")
 
-    for product in ['GPCP v1.3','GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA2']:
+    for product in ['GPCP v1.3','GPCP v3.2', 'GPCP v3.3', 'ERA5', 'IMERG v07', 'MERRA-2']:
         forcast = region_df[product]
         observed = region_df['rain_rate']
 
@@ -1460,11 +1467,11 @@ metric_style = make_metric_style_dict()
 
 # If your categorical detection bias style was previously stored as "Bias",
 # reuse it for FreqBias but relabel it.
-if "FreqBias" in metric_style:
-    metric_style["FreqBias"] = {
-        **metric_style["Bias"],
-        "label": "Frequency bias",
-    }
+# if "FreqBias" in metric_style:
+#     metric_style["FreqBias"] = {
+#         **metric_style["Bias"],
+#         "label": "Frequency bias",
+#     }
 
 # Make sure relative bias is labeled clearly.
 metric_style["Bias"] = {
@@ -1488,7 +1495,7 @@ gc.collect()
 #%% Daily Assessment: Metrics as a fucntion of intensity
 
 rainfall_bins = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
-products = ['GPCP v1.3', 'GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA2']
+products = ['GPCP v1.3', 'GPCP v3.2', 'GPCP v3.3', 'IMERG v07', 'ERA5', 'MERRA-2']
 
 pal_cat, pal_qt = compute_metrics_by_intensity_for_df(
     pal_sate_daily_rainfall_colasped_df.copy(),
@@ -1541,14 +1548,14 @@ fig6, axes6 = plot_intensity_metrics_selected_pal_buoy_4x2(
     buoy_qt=buoy_qt,
     rainfall_bins=[0.5, 1, 2, 4, 8, 16, 32],
     products=["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", 
-              "IMERG v07", "ERA5", "MERRA2"],
+              "IMERG v07", "ERA5", "MERRA-2"],
     product_colors=product_colors,
     figsize=(17, 16),
     linewidth=3.2,
     markersize=7.5,
     savepath=savepath,
 )
-
+gc.collect()
 #%% #%%  Daily-Scale Assessment: PDF Assessment
 
 bin_values = [0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256]
@@ -1557,14 +1564,14 @@ fig, axes, pal_pdf_dict, buoy_pdf_dict = plot_pdf_comparison_pal_buoy(
     pal_df=pal_sate_daily_rainfall_colasped_df,
     buoy_df=buoy_sate_daily_rainfall_colasped_df,
     obs_col="rain_rate",
-    products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"),
+    products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA-2"),
     product_colors=product_colors,
     bin_values=bin_values,
     pdf_kind="pdfv",                 # use "pdfc" if needed
     pal_year_range=None,
     buoy_year_range=(2000, 2020),
     figsize=(16, 6),
-    dpi=300,
+    dpi=150,
     lw=4,
     savepath=savepath
     
@@ -1855,6 +1862,9 @@ all_buoy_product_monthly_df = pd.concat(
     ignore_index=True
 ) if regional_buoy_product_monthly_list else pd.DataFrame()
 
+all_buoy_product_monthly_df = all_buoy_product_monthly_df.rename(columns={
+    "MERRA2": "MERRA-2"
+})
 # save all_buoy_product_monthly_df to disk
 all_buoy_product_monthly_df.to_pickle(os.path.join(path_to_put_dfs, f'buoy_monthly_df_{cde_run_dte}.pkl'))
 
@@ -1869,7 +1879,7 @@ products = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",   
-    "MERRA2",
+    "MERRA-2",
 ]
 
 monthly_clim_by_region = compute_monthly_climatology_from_monthly_buoy_df(
@@ -1895,7 +1905,7 @@ buoy_monthly_products = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",    
-    "MERRA2",
+    "MERRA-2",
 ]
 
 fig = plot_monthly_climatology_2x2(
@@ -1913,7 +1923,7 @@ svnme = os.path.join(
     path_to_plots,
     f'Figure07_BuoyMonthly_SeasonalCycle_ProductComparison_{cde_run_dte}.png'
 )
-fig.savefig(svnme, dpi=300, bbox_inches='tight')
+fig.savefig(svnme, dpi=150, bbox_inches='tight')
 gc.collect()
 #%% Interanual Variability
 # ============================================================
@@ -1926,7 +1936,7 @@ buoy_monthly_products = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",
-    "MERRA2",
+    "MERRA-2",
 ]
 
 annual_by_region, annual_buoy_product_df = build_annual_from_monthly_buoy_df(
@@ -2010,7 +2020,7 @@ svnme = os.path.join(
     path_to_plots,
     f"Figure08_Buoy_AnnualRegionalPrecip_ProductComparison_{cde_run_dte}.png"
 )
-fig.savefig(svnme, dpi=500, bbox_inches='tight')
+fig.savefig(svnme, dpi=150, bbox_inches='tight')
 
 gc.collect()
 
@@ -2114,18 +2124,21 @@ for region_name, buoy_files in buoy_files_by_region.items():
     regional_product_monthly_dict[region_name] = region_tables
 
 # combine all product monthly tables
-all_product_monthly_df = pd.concat(
+prodt_bsed_all_product_monthly_df = pd.concat(
     regional_product_monthly_list,
     ignore_index=True
 ) if regional_product_monthly_list else pd.DataFrame()
 
+prodt_bsed_all_product_monthly_df = prodt_bsed_all_product_monthly_df.rename(columns={
+    "MERRA2": "MERRA-2"})
+
 # save all_product_monthly_df to disk
-all_product_monthly_df.to_pickle(os.path.join(path_to_put_dfs, f'product_monthly_df_{cde_run_dte}.pkl'))
+prodt_bsed_all_product_monthly_df.to_pickle(os.path.join(path_to_put_dfs, f'product_monthly_df_{cde_run_dte}.pkl'))
 
-all_product_monthly_df = globals().get("all_product_monthly_df", None)
+prodt_bsed_all_product_monthly_df = globals().get("prodt_bsed_all_product_monthly_df", None)
 
-if all_product_monthly_df is None:
-    all_product_monthly_df = pd.read_pickle(
+if prodt_bsed_all_product_monthly_df is None:
+    prodt_bsed_all_product_monthly_df = pd.read_pickle(
         os.path.join(path_to_put_dfs, "product_monthly_df_20260423.pkl")
     )
 
@@ -2151,7 +2164,7 @@ monthly_products = [
 
 
 annual_by_region, annual_product_df = build_annual_from_monthly_buoy_df(
-    all_product_monthly_df,
+    prodt_bsed_all_product_monthly_df,
     products=monthly_products,
     region_col="region",
     id_col="ID",
@@ -2193,10 +2206,10 @@ gc.collect()
 # PLOT INTERANNUAL VARIABILITY WITH SAMPLE COUNTS
 #--------------------------------------------------------------------------
 annual_by_region_prdt_sm, annual_df_prdt_sm = build_annual_from_monthly_buoy_df_with_sample_counts(
-    df=all_product_monthly_df,
+    df=prodt_bsed_all_product_monthly_df,
     products=monthly_products,
     buoy_col="GPCP v3.3",
-    min_days_per_month=20,
+    min_days_per_month=None,
     min_buoys_per_month=None,
     min_months_per_year=12,
     year_min=min_date.year,
@@ -2217,6 +2230,7 @@ fig = plot_interannual_variability_with_sample_counts_2x2(
     ncol_legend=5,
 )
 svnme = os.path.join(path_to_plots, f"FigureS5_Buoy_AnnualRegionalPrecip_ProductOnlyAnalog_{cde_run_dte}.png")
+fig.savefig(svnme, dpi=150, bbox_inches='tight')
 gc.collect()
 
 #%% Interannual Variability: Monthly Anomaly Scatterplots — Product vs Buoy
@@ -2232,7 +2246,7 @@ buoy_monthly_products = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",    
-    "MERRA2",
+    "MERRA-2",
 ]
 
 fig, monthly_region_buoy, monthly_region_buoy_anom = (
@@ -2241,7 +2255,7 @@ fig, monthly_region_buoy, monthly_region_buoy_anom = (
         products=buoy_monthly_products,
         regions=["ENP", "WNP", "IND", "ATL"],
         ref_col="Buoy",
-        product_cols=["GPCP v2.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"],
+        product_cols=["GPCP v2.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA-2"],
         region_labels=Buoy_REGION_NAMES,
         product_colors=product_colors,
         region_col="region",
@@ -2283,12 +2297,13 @@ daily_or_all, daily_or_usable = oceanrain_daily_aggregate_to_gpcp_main(
     lat_abs_min=45.0,
     coverage_frac=0.5,
 )
-
+gc.collect()
 
 
 #--------------------------------------------------------------
 gpcp_ds_v1pt3_al_res = gpcp_ds_v1pt3_al['precip'].copy()
 gpcp_ds_v1pt3_al_res = gpcp_ds_v1pt3_al_res.where(gpcp_ds_v1pt3_al_res >= 0)
+
 # gpcp_ds_v1pt3_al_res = gpcp_ds_v1pt3_al_res.where(gpcp_ds_v1pt3_al_res != -9999.0)
 
 # gpcp_ds_v1pt3_al_res.rio.write_crs(cc.to_string(), inplace=True)
@@ -2315,6 +2330,7 @@ gpcp_ds_v3pt2_al_res = gpcp_ds_v3pt2_al_res.rio.reproject(
 )
 gpcp_ds_v3pt2_al_res = gpcp_ds_v3pt2_al_res.rename({'y': 'lat', 'x': 'lon'})
 
+gpcp_ds_v3pt2_al_res = gpcp_ds_v3pt2_al_res.where(gpcp_ds_v3pt2_al_res >= 0)
 
 gpcp_ds_v3pt3_al_res = gpcp_ds_v3pt3_al['precip'].copy()
 gpcp_ds_v3pt3_al_res.rio.write_crs(cc.to_string(), inplace=True)
@@ -2328,7 +2344,7 @@ gpcp_ds_v3pt3_al_res = gpcp_ds_v3pt3_al_res.rio.reproject(
 )
 # rename spatial dims back to latlon
 gpcp_ds_v3pt3_al_res = gpcp_ds_v3pt3_al_res.rename({'y': 'lat', 'x': 'lon'})
-
+gpcp_ds_v3pt3_al_res = gpcp_ds_v3pt3_al_res.where(gpcp_ds_v3pt3_al_res >= 0)
 
 era5_ds_res = era5_ds_al['tp'].copy()
 era5_ds_res.rio.write_crs(cc.to_string(), inplace=True)
@@ -2342,6 +2358,7 @@ era5_ds_res = era5_ds_res.rio.reproject(
 )
 # rename spatial dims back to latlon
 era5_ds_res = era5_ds_res.rename({'y': 'lat', 'x': 'lon'})
+era5_ds_res = era5_ds_res.where(era5_ds_res >= 0)
 
 
 imerg_ds_res = imerg_v07_al.copy()
@@ -2356,6 +2373,7 @@ imerg_ds_res = imerg_ds_res.rio.reproject(
 )
 # rename spatial dims back to latlon
 imerg_ds_res = imerg_ds_res.rename({'y': 'lat', 'x': 'lon'})
+imerg_ds_res = imerg_ds_res.where(imerg_ds_res >= 0)
 
 merra_ds_res = mer2_ds_al.copy()
 merra_ds_res.rio.write_crs(cc.to_string(), inplace=True)
@@ -2369,6 +2387,7 @@ merra_ds_res = merra_ds_res.rio.reproject(
 )
 # rename spatial dims back to latlon
 merra_ds_res = merra_ds_res.rename({'y': 'lat', 'x': 'lon'})
+merra_ds_res = merra_ds_res.where(merra_ds_res >= 0)
 
 product_map = {
     "GPCP v1.3": (gpcp_ds_v1pt3_al, {"GPCP v1.3": 'precip'}),
@@ -2626,7 +2645,7 @@ colors = {
 names = list(segments_by_dataset.keys())
 ypos = list(range(len(names)))[::-1]
 
-fig, ax = plt.subplots(figsize=(12, 5), dpi=200)
+fig, ax = plt.subplots(figsize=(12, 8), dpi=200)
 
 for name, y in zip(names, ypos):
     segs = segments_by_dataset[name]
@@ -2652,7 +2671,7 @@ for name, y in zip(names, ypos):
         ax.plot([x0, x1], [y, y], "o", ms=3, color=colors[res], zorder=4)
 
 ax.set_yticks(ypos)
-ax.set_yticklabels(names, fontsize=11)
+ax.set_yticklabels(names, fontsize=15)
 ax.set_xlim(1983, 2025)
 ax.set_xticks(np.arange(1983, 2028, 6))
 
@@ -2673,11 +2692,17 @@ style_handles = [
 style_labels = ["Base availability", "Subset (higher-res window)"]
 
 # two-row legend (same bottom center location)
-fig.legend(res_handles, res_labels, loc="lower center", bbox_to_anchor=(0.5, 0.06),
-           ncol=4, frameon=False, fontsize=12, handlelength=2.5, columnspacing=1.8)
+fig.legend(res_handles, res_labels, loc="lower center", bbox_to_anchor=(0.5, 0.08),
+           ncol=4, frameon=False, fontsize=18, handlelength=2.5, columnspacing=1.8)
 # fig.legend(style_handles, style_labels, loc="lower center", bbox_to_anchor=(0.5, 0.01),
 #            ncol=2, frameon=False, fontsize=12, handlelength=2.5, columnspacing=2.0)
 
 fig.tight_layout(rect=[0.02, 0.15, 0.98, 0.95])
-plt.show()
+svnme = os.path.join(
+    path_to_plots,
+    f"Figure01_DatasetTemporalCoverage_Resolution_{cde_run_dte}.png"
+)
+fig.savefig(svnme, dpi=150, bbox_inches='tight')
+# plt.show()
+gc.collect()
 

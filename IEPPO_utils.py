@@ -50,7 +50,7 @@ product_markers = {
     "GPCP v3.3": "^",
     "IMERG v07": "D",
     "ERA5": "P",
-    "MERRA2": "X",
+    "MERRA-2": "X",
 }
 
 # Wider spacing for clarity
@@ -60,7 +60,7 @@ product_offsets = {
     "GPCP v3.3": ( 10.0,  3.0),
     "IMERG v07": (-6.0, -1.0),
     "ERA5":      ( 0.0, -8.0),
-    "MERRA2":    ( 12.0, -3.0),
+    "MERRA-2":    ( 12.0, -3.0),
 }
 
 
@@ -130,7 +130,7 @@ products = [
     "GPCP v3.3",
     "ERA5",
     "IMERG v07",
-    "MERRA2",
+    "MERRA-2",
 ]
 
 Buoy_PRODUCT_COLS = {
@@ -139,7 +139,7 @@ Buoy_PRODUCT_COLS = {
     "GPCP v3.3": "GPCP v3.3",
     "ERA5": "ERA5",
     "IMERG v07": "IMERG v07",
-    "MERRA2": "MERRA2",
+    "MERRA-2": "MERRA-2",
 }
 
 cc = CRS.from_authority(code=4326, auth_name='EPSG')
@@ -208,7 +208,7 @@ product_colors = {
     "GPCP v3.3": "#1f77b4",   # blue
     "ERA5": "#d62728",       # red
     "IMERG v07": "#2ca02c",  # green
-    "MERRA2": "#ff7f0e",     # orange
+    "MERRA-2": "#ff7f0e",     # orange
     'PAL': "#0820d4",         # deep blue
     'Buoy': "#0820d4",       # deep blue
 }
@@ -635,7 +635,7 @@ def make_metric_style_dict():
         "FreqBias": {
             "bounds": np.arange(0.20, 1.8,0.08), # np.array([0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.25, 1.50])
             "cmap": plt.cm.RdBu_r,
-            "label": "Bias",
+            "label": "Frequency bias",
             "extend": "both",
             "tick_labels": [0.20, 0.44, 0.68, 0.92, 1.16, 1.40, 1.64, 1.80],
         },
@@ -5692,7 +5692,7 @@ def plot_combined_daily_mean_pal_buoy_scatter_black(
         0.015, 0.735,
         "PAL",
         rotation=90,
-        fontsize=18,
+        fontsize=25,
         fontweight="bold",
         va="center",
         ha="center",
@@ -5702,7 +5702,7 @@ def plot_combined_daily_mean_pal_buoy_scatter_black(
         0.015, 0.285,
         "Buoys",
         rotation=90,
-        fontsize=18,
+        fontsize=25,
         fontweight="bold",
         va="center",
         ha="center",
@@ -5711,7 +5711,7 @@ def plot_combined_daily_mean_pal_buoy_scatter_black(
     plt.tight_layout(rect=[0.035, 0.02, 1, 0.98])
 
     if savepath:
-        fig.savefig(savepath, dpi=500, bbox_inches="tight")
+        fig.savefig(savepath, dpi=150, bbox_inches="tight")
 
     return fig
 #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -7981,23 +7981,23 @@ def plot_deseasonalized_anomaly_scatter(
             )
 
             if i == 0:
-                ax.set_title(prod, fontsize=14, fontweight="bold")
+                ax.set_title(prod, fontsize=15, fontweight="bold")
 
             if j == 0:
                 reglbl = region_labels.get(region, region) if region_labels else region
                 ax.set_ylabel(f"{reglbl}\nProduct anomaly\n[mm day$^{{-1}}$]",
-                              fontsize=13, fontweight="bold")
+                              fontsize=15, fontweight="bold")
 
             if i == nrows - 1:
                 ax.set_xlabel("Buoy anomaly [mm day$^{-1}$]",
-                              fontsize=13, fontweight="bold")
+                              fontsize=15, fontweight="bold")
 
-            ax.tick_params(labelsize=10)
+            ax.tick_params(labelsize=14)
 
     plt.tight_layout()
 
     if savepath:
-        fig.savefig(savepath, dpi=400, bbox_inches="tight")
+        fig.savefig(savepath, dpi=150, bbox_inches="tight")
 
     return fig
 
@@ -9640,17 +9640,18 @@ def plot_main_daily_skill_maps_pal_buoy_six_metrics(
                 "style_key": "POD",
                 "label": "POD",
             },
+            
+            {
+                "source": "cat",
+                "metric": "FreqBias",
+                "style_key": "FreqBias",
+                "label": "Frequency bias",
+            },
             {
                 "source": "cat",
                 "metric": "HSS",
                 "style_key": "HSS",
                 "label": "HSS",
-            },
-            {
-                "source": "cat",
-                "metric": "FreqBias",
-                "style_key": "FreqBias",
-                "label": "Detection bias",
             },
             {
                 "source": "quant",
@@ -9823,7 +9824,7 @@ def plot_main_daily_skill_maps_pal_buoy_six_metrics(
     )
 
     if savepath is not None:
-        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+        fig.savefig(savepath, dpi=200, bbox_inches="tight")
 
     return fig, axes
 #----------------------------------------------------------------------------
@@ -10402,8 +10403,6 @@ def plot_intensity_metrics_qt_4x2(
     return fig, axes
 
 #------------------------------------------------------------------------------------------------------------------------------------------
-import numpy as np
-import matplotlib.pyplot as plt
 
 
 def plot_intensity_metrics_selected_pal_buoy_4x2(
@@ -10613,7 +10612,7 @@ def plot_intensity_metrics_selected_pal_buoy_4x2(
     plt.tight_layout(rect=[0, 0.075, 1, 1])
 
     if savepath:
-        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+        fig.savefig(savepath, dpi=150, bbox_inches="tight")
 
     return fig, axes
 #------------------------------------------------------------------------------------------------------------------------------------------
@@ -10764,7 +10763,7 @@ def plot_pdf_comparison_pal_buoy(
         ax.tick_params(axis="x", which="minor", bottom=False)
 
         # Larger tick labels
-        ax.tick_params(axis="both", which="major", labelsize=18, width=1.7, length=8)
+        ax.tick_params(axis="both", which="major", labelsize=20, width=1.7, length=8)
 
         for tick in ax.get_xticklabels() + ax.get_yticklabels():
             tick.set_fontweight("bold")
@@ -10786,16 +10785,21 @@ def plot_pdf_comparison_pal_buoy(
         for p in products
     ])
 
+    # More bottom space is needed because the legend has two rows.
     fig.legend(
         handles=legend_handles,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.01),
-        ncol=8,
-        fontsize=16,
-        frameon=False
+        bbox_to_anchor=(0.5, -0.015),
+        ncol=4,
+        fontsize=20,
+        frameon=False,
+        handlelength=2.8,
+        columnspacing=1.6,
+        handletextpad=0.6,
     )
 
-    plt.tight_layout(rect=[0, 0.09, 1, 1])
+    # Reserve enough bottom margin for the legend.
+    plt.tight_layout(rect=[0, 0.17, 1, 1])
 
     if savepath is not None:
         fig.savefig(savepath, dpi=dpi, bbox_inches="tight")

@@ -469,6 +469,8 @@ def plot_oceanrain_monthly_availability_raw(
     return fig, ax
 # ------------------------------------------------------------------
 
+path_to_plots = r'/home/kkumah/Projects/Satellite_eval_over_Oceans/Results/plots_27Jan2026'
+
 # =========================================================
 # 3. BUILD MONTHLY AVAILABILITY FOR BUOY AND PAL
 # =========================================================
@@ -520,7 +522,9 @@ fig_buoy, ax_buoy = plot_monthly_availability_lines(
     legend_ncol=4
 )
 
-plt.show()
+svnme = os.path.join(path_to_plots, f'Figure_S2_buoy_availability_{cde_run_dte}.png')
+fig_buoy.savefig(svnme, dpi=150, bbox_inches='tight')
+# plt.show()
 
 gc.collect()
 
@@ -547,8 +551,9 @@ fig_pal, ax_pal = plot_monthly_availability_lines(
     legend_fontsize=13,
     legend_ncol=3
 )
-
-plt.show()
+svnme = os.path.join(path_to_plots, f'Figure_S1_pal_availability_{cde_run_dte}.png')
+fig_pal.savefig(svnme, dpi=150, bbox_inches='tight')
+# plt.show()
 gc.collect()
 
 # Example:
@@ -579,7 +584,9 @@ fig_or, ax_or = plot_oceanrain_monthly_availability_raw(
     label_fontsize=17,
     legend_fontsize=18
 )
-plt.show()
+svnme = os.path.join(path_to_plots, f'Figure_S4_oceanrain_availability_{cde_run_dte}.png')
+fig_or.savefig(svnme, dpi=150, bbox_inches='tight')
+# plt.show()
 
 gc.collect()
 #%%
