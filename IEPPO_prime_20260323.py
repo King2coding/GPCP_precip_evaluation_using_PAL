@@ -2390,12 +2390,12 @@ merra_ds_res = merra_ds_res.rename({'y': 'lat', 'x': 'lon'})
 merra_ds_res = merra_ds_res.where(merra_ds_res >= 0)
 
 product_map = {
-    "GPCP v1.3": (gpcp_ds_v1pt3_al, {"GPCP v1.3": 'precip'}),
-    "GPCP v3.2": (gpcp_ds_v3pt2_al, {"GPCP v3.2": "precip"}),
-    "GPCP v3.3": (gpcp_ds_v3pt3_al, {"GPCP v3.3": "precip"}),
-    "ERA5": (era5_ds_al, {"ERA5": "tp"}),
-    "IMERG v07": (imerg_v07_al, {"IMERG v07": None}),
-    "MERRA2": (mer2_ds_al, {"MERRA2": None}),
+    "GPCP v1.3": (gpcp_ds_v1pt3_al_res, {"GPCP v1.3": 'precip'}),
+    "GPCP v3.2": (gpcp_ds_v3pt2_al_res, {"GPCP v3.2": "precip"}),
+    "GPCP v3.3": (gpcp_ds_v3pt3_al_res, {"GPCP v3.3": "precip"}),
+    "ERA5": (era5_ds_res, {"ERA5": "tp"}),
+    "IMERG v07": (imerg_ds_res, {"IMERG v07": None}),
+    "MERRA2": (merra_ds_res, {"MERRA2": None}),
 }
 
 # print(type(product_map))
@@ -2416,8 +2416,8 @@ daily_or_attached = step2_attach_products_oceanrain(
 daily_or_attached = daily_or_attached[daily_or_attached["main_mmday"] !=  -99999.0]
 
 #--------------------------------------------------------------
-products_eval = ["GPCP v1.3", 'GPCP v3.2', 'GPCP v3.3', 
-                 'IMERG v07', 'ERA5', 'MERRA2']
+products_eval = ["GPCP v1.3", 'GPCP v3.2', 'GPCP v3.3',  'IMERG v07', 
+                 'ERA5','MERRA2']
 
 cat_metrics_hemi, qt_metrics_hemi = compute_hemi_metrics_oceanrain(
     daily_or_attached,
@@ -2428,8 +2428,8 @@ cat_metrics_hemi, qt_metrics_hemi = compute_hemi_metrics_oceanrain(
 )
 
 #--------------------------------------------------------------
-products_order = ["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"]
-
+products_order = ["GPCP v1.3", "GPCP v3.2", "GPCP v3.3",  'IMERG v07', 
+                  "ERA5", "MERRA2"] 
 # 1) categorical table
 cat_table = categorical_dict_to_table(
     cat_metrics_hemi,   # replace with your categorical dict variable name
@@ -2453,6 +2453,46 @@ cat_table.to_csv(
     index=False,    
 )
 
+#--------------------------------------------------------------
+# Roebber / performance diagram for OceanRAIN categorical metrics
+#--------------------------------------------------------------
+
+products_roebber = [
+    "GPCP v1.3",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+    "ERA5",
+    "MERRA2",
+]
+
+fig, axes = plot_oceanrain_roebber_diagram(
+    cat_metrics_hemi=cat_metrics_hemi,
+    products=products_roebber,
+    product_colors=product_colors,
+    hemis=("NH", "SH"),
+    figsize=(15, 6.2),
+    marker_size=95,
+    annotate=False,
+    title=None,
+    contour_label_fontsize=10,
+    bias_label_fontsize=10,
+    axis_label_fontsize=14,
+    tick_fontsize=14,
+    legend_fontsize=14,
+)
+
+fig.savefig(
+    os.path.join(
+        path_to_plots,
+        f"oceanrain_roebber_performance_diagram_{cde_run_dte}.png"
+    ),
+    dpi=150,
+    bbox_inches="tight",
+)
+
+plt.show()
+gc.collect()
 
 # 4) quantitative summary plot
 products_plot = ["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"]
@@ -2500,6 +2540,316 @@ print(dist_table_nh)
 
 print("\nSH distribution summary")
 print(dist_table_sh)
+
+# 5) Supplementary OceanRAIN daily distribution boxplot
+#    This replaces the descriptive distribution table in the supplement.
+#    Box = 25th–75th percentile, center line = median,
+#    whiskers = 5th–95th percentile, black circle = mean.
+
+fig, axes = plot_oceanrain_distribution_boxplot(
+    daily_or_attached,
+    obs_col="main_mmday",
+    product_cols=products_order,
+    product_colors=product_colors,
+    hemi_col="hemi",
+    hemis=("NH", "SH"),
+    wet_only=False,
+    wet_threshold=0.3,
+    figsize=(13.5, 6),
+    ylabel="Daily precipitation [mm day$^{-1}$]",
+    ylimit=(0, 3.0),
+    use_symlog=False,
+    panel_label_fontsize=15,
+    axis_label_fontsize=14,
+    tick_fontsize=12,
+    legend_fontsize=11,
+    median_color="lime",
+    median_linewidth=3.0,
+    mean_marker_size=36,
+    legend_ax_index=1,
+)
+
+fig.savefig(
+    os.path.join(
+        path_to_plots,
+        f"oceanrain_daily_distribution_boxplot_IQR_mean_median_{cde_run_dte}.png"
+    ),
+    dpi=150,
+    bbox_inches="tight",
+)
+
+gc.collect()
+
+#%%
+# -------------------------------------------------------------
+# OceanRAIN PAL-like native-grid sensitivity:
+# attach products at minute locations first, then daily aggregate
+# -------------------------------------------------------------
+
+product_map_native_minute = {
+    "GPCP v1.3": (
+        gpcp_ds_v1pt3_al["precip"].where(gpcp_ds_v1pt3_al["precip"] >= 0),
+        {"GPCP v1.3": None},
+    ),
+    "GPCP v3.2": (
+        gpcp_ds_v3pt2_al["precip"].where(gpcp_ds_v3pt2_al["precip"] >= 0),
+        {"GPCP v3.2": None},
+    ),
+    "GPCP v3.3": (
+        gpcp_ds_v3pt3_al["precip"].where(gpcp_ds_v3pt3_al["precip"] >= 0),
+        {"GPCP v3.3": None},
+    ),
+    "IMERG v07": (
+        imerg_v07_al.where(imerg_v07_al >= 0),
+        {"IMERG v07": None},
+    ),
+    "ERA5": (
+        era5_ds_al["tp"].where(era5_ds_al["tp"] >= 0),
+        {"ERA5": None},
+    ),
+    "MERRA2": (
+        mer2_ds_al.where(mer2_ds_al >= 0),
+        {"MERRA2": None},
+    ),
+}
+
+daily_or_attached_native_minute, minute_or_attached_native = (
+    oceanrain_attach_products_minute_native_then_daily(
+        df_qc,
+        products=product_map_native_minute,
+        time_col="time_utc",
+        lat_col="lat",
+        lon_col="lon",
+        ship_col="ship",
+        obs_rate_col="rate_main_mmph",
+        precip_flag_col="precip_flag",
+        gpcp_lat_1d=np.arange(89.5, -90.0, -1.0, dtype=np.float32),
+        gpcp_lon_1d=np.arange(-179.5, 180.0, 1.0, dtype=np.float32),
+        lat_abs_min=45.0,
+        coverage_frac=0.5,
+        group_mode="ship_grid_day",
+        method="nearest",
+    )
+)
+
+products_eval = [
+    "GPCP v1.3",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+    "ERA5",
+    "MERRA2",
+]
+
+cat_native_minute, qt_native_minute = compute_hemi_metrics_oceanrain(
+    daily_or_attached_native_minute,
+    products=products_eval,
+    obs_col="main_mmday",
+    hemis=("NH", "SH"),
+    cat_thr=0.3,
+)
+
+cat_native_minute_table = categorical_dict_to_table(
+    cat_native_minute,
+    products_order=products_eval,
+)
+cat_native_minute_table["sampling_method"] = "minute_native_then_daily"
+
+qt_native_minute_table = quantitative_dict_to_table(
+    qt_native_minute,
+    products_order=products_eval,
+)
+qt_native_minute_table["sampling_method"] = "minute_native_then_daily"
+
+cat_native_minute_table.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"oceanrain_cat_metrics_minute_native_then_daily_{cde_run_dte}.csv",
+    ),
+    index=False,
+)
+
+qt_native_minute_table.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"oceanrain_qt_metrics_minute_native_then_daily_{cde_run_dte}.csv",
+    ),
+    index=False,
+)
+
+print(cat_native_minute_table)
+print(qt_native_minute_table)
+
+# -------------------------------------------------------------
+# Plot native-minute OceanRAIN categorical metrics:
+# Roebber diagram + categorical bar panel
+# -------------------------------------------------------------
+
+cat_native_minute_for_plot = (
+    cat_native_minute_table
+    .drop(columns=["sampling_method"], errors="ignore")
+    .copy()
+)
+
+cat_metrics_hemi_native_minute = {
+    hemi: (
+        cat_native_minute_for_plot[cat_native_minute_for_plot["hemi"] == hemi]
+        .set_index("product")
+        .drop(columns=["hemi"], errors="ignore")
+        .to_dict(orient="index")
+    )
+    for hemi in ["NH", "SH"]
+}
+
+products_roebber = [
+    "GPCP v1.3",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+    "ERA5",
+    "MERRA2",
+]
+
+fig, axes = plot_oceanrain_roebber_diagram(
+    cat_metrics_hemi=cat_metrics_hemi_native_minute,
+    products=products_roebber,
+    product_colors=product_colors,
+    hemis=("NH", "SH"),
+    figsize=(15, 6.2),
+    marker_size=95,
+    annotate=False,
+    title=None,
+    contour_label_fontsize=10,
+    bias_label_fontsize=10,
+    axis_label_fontsize=14,
+    tick_fontsize=14,
+    legend_fontsize=14,
+)
+
+fig.savefig(
+    os.path.join(
+        path_to_plots,
+        f"oceanrain_roebber_native_minute_then_daily_{cde_run_dte}.png"
+    ),
+    dpi=150,
+    bbox_inches="tight",
+)
+
+gc.collect()
+
+
+# -------------------------------------------------------------
+# Quantitative bar panel for native-minute OceanRAIN sensitivity
+# using existing plot_oceanrain_quant_summary_panel()
+# -------------------------------------------------------------
+
+products_eval = [
+    "GPCP v1.3",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+    "ERA5",
+    "MERRA2",
+]
+
+qt_native_minute_for_plot = (
+    qt_native_minute_table
+    .drop(columns=["sampling_method"], errors="ignore")
+    .copy()
+)
+
+# Convert flat table back to the dictionary structure expected by
+# plot_oceanrain_quant_summary_panel()
+qt_metrics_hemi_native_minute = {
+    hemi: (
+        qt_native_minute_for_plot[qt_native_minute_for_plot["hemi"] == hemi]
+        .set_index("product")
+        .drop(columns=["hemi"], errors="ignore")
+        .to_dict(orient="index")
+    )
+    for hemi in ["NH", "SH"]
+}
+
+fig, axes = plot_oceanrain_quant_summary_panel(
+    qt_metrics_hemi_native_minute,
+    products=products_eval,
+    product_colors=product_colors,
+    hemis=("NH", "SH"),
+    metrics=("CC", "Bias", "RMSE"),
+    figsize=(12, 9),
+    ylims={
+        "CC": (0, 0.7),
+        "Bias": (-60, 40),
+        "RMSE": (0, 15),
+    },
+    ylabel_map={
+        "CC": "CC",
+        "Bias": "Bias [%]",
+        "RMSE": "RMSE\n[mm day$^{-1}$]",
+    },
+    add_zero_line_for_bias=True,
+)
+
+fig.savefig(
+    os.path.join(
+        path_to_plots,
+        f"oceanrain_quant_summary_native_minute_then_daily_{cde_run_dte}.png"
+    ),
+    dpi=300,
+    bbox_inches="tight",
+)
+
+
+plt.show()
+
+
+sample_summary_native_minute = compute_oceanrain_sample_distribution_summary(
+    daily_or_attached_native_minute,
+    obs_col="main_mmday",
+    product_cols=products_eval,
+    hemi_col="hemi",
+    hemis=("NH", "SH"),
+    wet_only=False,
+    wet_threshold=0.3,
+)
+
+sample_summary_native_minute.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"oceanrain_sample_summary_native_minute_then_daily_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+print(sample_summary_native_minute)
+
+sample_summary_native_minute_rounded = sample_summary_native_minute.copy()
+
+round_cols = [
+    "mean",
+    "median",
+    "std",
+    "p95",
+    "sum",
+    "sum_ratio_to_OceanRAIN",
+    "sum_bias_percent_vs_OceanRAIN",
+]
+
+sample_summary_native_minute_rounded[round_cols] = (
+    sample_summary_native_minute_rounded[round_cols].round(2)
+)
+
+sample_summary_native_minute_rounded.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"oceanrain_sample_summary_native_minute_then_daily_rounded_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+print(sample_summary_native_minute_rounded)
+
+#%%
 
 #--------------------------------------------------------------
 fig1 = plot_hemi_cat_metrics_barpanel(
