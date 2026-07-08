@@ -311,8 +311,6 @@ print("\nGenerating spatial distribution plot of in-situ observations...")
 # ------------------------------------------------------------
 # figure/axes
 # ------------------------------------------------------------
-mpl.rcParams['font.family'] = 'serif'
-mpl.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
 
 fig = plt.figure(figsize=(18, 10))
 ax = plt.axes(projection=ccrs.PlateCarree())
@@ -2278,6 +2276,23 @@ gc.collect()
 
 #%% Poleward Assessment: OceanRAIN (≥45°)
 
+# -------------------------------------------------------------
+# OceanRAIN common 1° analysis grid
+# -------------------------------------------------------------
+# This is the grid used to assign OceanRAIN minute samples to daily
+# ship–grid-cell records. It is also the grid used for product
+# collocation after all products are harmonized to 1°.
+
+or_grid_1deg = xr.Dataset(
+    coords={
+        "lat": np.arange(89.5, -90.0, -1.0, dtype=np.float32),
+        "lon": np.arange(-179.5, 180.0, 1.0, dtype=np.float32),
+    }
+)
+
+or_lat_1d = or_grid_1deg["lat"].values
+or_lon_1d = or_grid_1deg["lon"].values
+
 df_qc = oceanrain_step0_qc_precip_main(
     ocRain_df,
     drop_harbor_inop=True,
@@ -2292,15 +2307,18 @@ df_qc = oceanrain_step0_qc_precip_main(
 
 daily_or_all, daily_or_usable = oceanrain_daily_aggregate_to_gpcp_main(
     oc_df_minute=df_qc,
-    gpcp_lat_1d=np.arange(89.5, -90.0, -1.0, dtype=np.float32),#gpcp_ds_v3pt2_al.lat.values,
-    gpcp_lon_1d=np.arange(-179.5, 180.0, 1.0, dtype=np.float32),#gpcp_ds_v3pt2_al.lon.values,
+    gpcp_lat_1d=or_lat_1d,
+    gpcp_lon_1d=or_lon_1d, 
     lat_abs_min=45.0,
     coverage_frac=0.5,
 )
 gc.collect()
 
 
-#--------------------------------------------------------------
+# -------------------------------------------------------------
+# products harmonized to common 1° support
+# -------------------------------------------------------------
+
 gpcp_ds_v1pt3_al_res = gpcp_ds_v1pt3_al['precip'].copy()
 gpcp_ds_v1pt3_al_res = gpcp_ds_v1pt3_al_res.where(gpcp_ds_v1pt3_al_res >= 0)
 
@@ -2389,31 +2407,65 @@ merra_ds_res = merra_ds_res.rio.reproject(
 merra_ds_res = merra_ds_res.rename({'y': 'lat', 'x': 'lon'})
 merra_ds_res = merra_ds_res.where(merra_ds_res >= 0)
 
-product_map = {
-    "GPCP v1.3": (gpcp_ds_v1pt3_al_res, {"GPCP v1.3": 'precip'}),
-    "GPCP v3.2": (gpcp_ds_v3pt2_al_res, {"GPCP v3.2": "precip"}),
-    "GPCP v3.3": (gpcp_ds_v3pt3_al_res, {"GPCP v3.3": "precip"}),
-    "ERA5": (era5_ds_res, {"ERA5": "tp"}),
-    "IMERG v07": (imerg_ds_res, {"IMERG v07": None}),
-    "MERRA2": (merra_ds_res, {"MERRA2": None}),
+# -------------------------------------------------------------
+# Official manuscript OceanRAIN product map:
+# products harmonized to common 1° support
+# -------------------------------------------------------------
+
+product_map_common1deg = {
+    "GPCP v1.3": (
+        gpcp_ds_v1pt3_al_res.where(gpcp_ds_v1pt3_al_res >= 0),
+        {"GPCP v1.3": None},
+    ),
+
+    "GPCP v3.2": (
+        gpcp_ds_v3pt2_al_res.where(gpcp_ds_v3pt2_al_res >= 0),
+        {"GPCP v3.2": None},
+    ),
+
+    "GPCP v3.3": (
+        gpcp_ds_v3pt3_al_res.where(gpcp_ds_v3pt3_al_res >= 0),
+        {"GPCP v3.3": None},
+    ),
+
+    "IMERG v07": (
+        imerg_ds_res.where(imerg_ds_res >= 0),
+        {"IMERG v07": None},
+    ),
+
+    "ERA5": (
+        era5_ds_res.where(era5_ds_res >= 0),
+        {"ERA5": None},
+    ),
+
+    "MERRA2": (
+        merra_ds_res.where(merra_ds_res >= 0),
+        {"MERRA2": None},
+    ),
 }
-
-# print(type(product_map))
-
-# daily_or_usable_common, common_start, common_end = subset_to_common_time_range(
-#     daily_or_usable,
-#     products,
-#     date_col="date",
-# )
+# -------------------------------------------------------------
+# Attach common-1° products to daily OceanRAIN ship–grid-cell samples
+# -------------------------------------------------------------
 
 daily_or_attached = step2_attach_products_oceanrain(
     daily_or_usable,
-    gpcp_grid_ds=gpcp_ds_v3pt2_al,
-    products=product_map,
+    gpcp_grid_ds=or_grid_1deg,              # only used for lat_c/lon_c from ilat/ilon
+    products=product_map_common1deg,        # official common-1° product fields
     ref_col="main_mmday",
+    method="nearest",
 )
 
-daily_or_attached = daily_or_attached[daily_or_attached["main_mmday"] !=  -99999.0]
+daily_or_attached = daily_or_attached[
+    daily_or_attached["main_mmday"] != -99999.0
+].copy()
+
+daily_or_attached.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"oceanrain_daily_common1deg_matched_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
 
 #--------------------------------------------------------------
 products_eval = ["GPCP v1.3", 'GPCP v3.2', 'GPCP v3.3',  'IMERG v07', 
@@ -2449,7 +2501,7 @@ print(cat_table_sh)
 # svve the categorical table
 cat_table.to_csv(
     os.path.join(path_to_put_dfs, 
-                 f"oceanrain_cat_metrics_{cde_run_dte}.csv"),
+                f"oceanrain_cat_metrics_common1deg_{cde_run_dte}.csv"),
     index=False,    
 )
 
@@ -2485,7 +2537,7 @@ fig, axes = plot_oceanrain_roebber_diagram(
 fig.savefig(
     os.path.join(
         path_to_plots,
-        f"oceanrain_roebber_performance_diagram_{cde_run_dte}.png"
+        f"oceanrain_roebber_performance_diagram_common1deg_{cde_run_dte}.png"
     ),
     dpi=150,
     bbox_inches="tight",
@@ -2495,6 +2547,27 @@ plt.show()
 gc.collect()
 
 # 4) quantitative summary plot
+
+qt_1deg_table = quantitative_dict_to_table(
+    qt_metrics_hemi,
+    products_order=products_eval,
+)
+qt_table_nh = qt_1deg_table[qt_1deg_table["hemi"] == "NH"].reset_index(drop=True)
+qt_table_sh = qt_1deg_table[qt_1deg_table["hemi"] == "SH"].reset_index(drop=True)
+
+print("\nNH categorical metrics")
+print(cat_table_nh)
+
+print("\nSH categorical metrics")
+print(cat_table_sh)
+# svve the categorical table
+qt_1deg_table.to_csv(
+    os.path.join(path_to_put_dfs, 
+                f"oceanrain_cat_metrics_common1deg_{cde_run_dte}.csv"),
+    index=False,    
+)
+
+
 products_plot = ["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"]
 
 fig, axes = plot_oceanrain_quant_summary_panel(
@@ -2510,8 +2583,16 @@ fig, axes = plot_oceanrain_quant_summary_panel(
         "RMSE": (0, 15),
     }
 )
-
-plt.show()
+svnme = os.path.join(
+    path_to_plots,
+    f"oceanrain_quant_summary_panel_common1deg_{cde_run_dte}.png"
+)
+fig.savefig(
+    svnme,
+    dpi=150,
+    bbox_inches="tight",
+)
+gc.collect()
 
 
 # 5) compact descriptive distribution table
@@ -2528,7 +2609,7 @@ dist_table = round_metric_table(dist_table, ["median", "p90", "p95", "p99", "max
 #sve the distribution table
 dist_table.to_csv(
     os.path.join(path_to_put_dfs, 
-                 f"oceanrain_descriptive_stats_{cde_run_dte}.csv"),
+                 f"oceanrain_descriptive_stats_common1deg_{cde_run_dte}.csv"),
     index=False,    
 )
 
@@ -2567,18 +2648,69 @@ fig, axes = plot_oceanrain_distribution_boxplot(
     median_linewidth=3.0,
     mean_marker_size=36,
     legend_ax_index=1,
+     whisker_mode="p5_p95",
 )
 
 fig.savefig(
     os.path.join(
         path_to_plots,
-        f"oceanrain_daily_distribution_boxplot_IQR_mean_median_{cde_run_dte}.png"
+        f"oceanrain_daily_distribution_boxplot_IQR_mean_median_common1deg_{cde_run_dte}.png"
     ),
     dpi=150,
     bbox_inches="tight",
 )
 
 gc.collect()
+
+# -------------------------------------------------------------
+# sample summary
+# -------------------------------------------------------------
+
+sample_summary_native_minute = compute_oceanrain_sample_distribution_summary(
+    daily_or_attached,
+    obs_col="main_mmday",
+    product_cols=products_eval,
+    hemi_col="hemi",
+    hemis=("NH", "SH"),
+    wet_only=False,
+    wet_threshold=0.3,
+)
+
+sample_summary_native_minute.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"oceanrain_sample_summary_common1deg_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+print(sample_summary_native_minute)
+
+sample_summary_native_minute_rounded = sample_summary_native_minute.copy()
+
+round_cols = [
+    "mean",
+    "median",
+    "std",
+    "p95",
+    "sum",
+    "sum_ratio_to_OceanRAIN",
+    "sum_bias_percent_vs_OceanRAIN",
+]
+
+sample_summary_native_minute_rounded[round_cols] = (
+    sample_summary_native_minute_rounded[round_cols].round(2)
+)
+
+sample_summary_native_minute_rounded.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"oceanrain_sample_summary_common1deg_rounded_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+print(sample_summary_native_minute_rounded)
 
 #%%
 # -------------------------------------------------------------
@@ -2715,7 +2847,7 @@ fig, axes = plot_oceanrain_roebber_diagram(
     products=products_roebber,
     product_colors=product_colors,
     hemis=("NH", "SH"),
-    figsize=(15, 6.2),
+    figsize=(15, 6.2), 
     marker_size=95,
     annotate=False,
     title=None,
