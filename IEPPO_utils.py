@@ -11435,7 +11435,7 @@ def plot_oceanrain_roebber_diagram(
     product_colors,
     *,
     hemis=("NH", "SH"),
-    figsize=(13.5, 6.2),
+    figsize=(13.5, 7.2),
     marker_size=95,
     annotate=True,
     title=None,
