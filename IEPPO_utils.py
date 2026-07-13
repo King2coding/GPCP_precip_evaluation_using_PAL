@@ -41,6 +41,9 @@ import xarray as xr
 from pyproj import CRS
 from rasterio.warp import Resampling
 
+
+from rasterio.enums import Resampling
+
 from multiprocessing import Pool
 
 #%% DEFINE GLOBAL VARIABLES
@@ -3081,6 +3084,271 @@ def _mmday_from_mmph_mean24(series):
     return np.nanmean(x) * 24.0
 
 #------------------------------------------------------------
+
+def oceanrain_minute_match_common1deg_then_daily_xr(
+    oc_df_minute: pd.DataFrame,
+    *,
+    products,
+    grid_lat_1d,
+    grid_lon_1d,
+    time_col="time_utc",
+    date_col="date",
+    lat_col="lat",
+    lon_col="lon",
+    ship_col="ship",
+    obs_rate_col="rate_main_mmph",
+    precip_flag_col="precip_flag",
+    lat_abs_min=45.0,
+    coverage_frac=0.5,
+    method="nearest",
+    tolerance_time=None,
+    dropna_product_cols=False,
+    product_dropna_mode="all",
+    chunk_size=200_000,
+):
+    """
+    PAL-like OceanRAIN common-1° workflow.
+
+    This explicitly matches each OceanRAIN minute sample to the common 1°
+    analysis grid and attaches product values at the minute level before
+    daily aggregation.
+
+    Workflow:
+        OceanRAIN minute observation
+            -> nearest common 1° grid cell
+            -> product value at that date/grid cell
+            -> daily ship-grid-cell aggregation
+
+    This avoids using a daily mean ship lat/lon to sample products.
+    """
+
+    import numpy as np
+    import pandas as pd
+    import xarray as xr
+
+    df = oc_df_minute.copy()
+
+    # -------------------------------------------------------------
+    # 1. Basic cleaning
+    # -------------------------------------------------------------
+    df[time_col] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
+    df = df.dropna(subset=[time_col, lat_col, lon_col, ship_col]).copy()
+
+    if obs_rate_col not in df.columns:
+        raise ValueError(f"Input dataframe must contain '{obs_rate_col}'.")
+
+    df[obs_rate_col] = pd.to_numeric(df[obs_rate_col], errors="coerce")
+    df = df[np.isfinite(df[obs_rate_col])].copy()
+
+    if lat_abs_min is not None:
+        df = df[df[lat_col].abs() >= float(lat_abs_min)].copy()
+
+    if df.empty:
+        empty = pd.DataFrame()
+        return empty, empty, empty
+
+    # Daily product timestamp
+    df[date_col] = df[time_col].dt.floor("D").dt.tz_localize(None)
+
+    # Wrap OceanRAIN longitude to -180..180
+    df[lon_col] = ((df[lon_col].to_numpy(dtype="float64") + 180.0) % 360.0) - 180.0
+
+    # -------------------------------------------------------------
+    # 2. Assign each minute to nearest common 1° grid cell using xarray
+    # -------------------------------------------------------------
+    grid_lat_1d = np.asarray(grid_lat_1d)
+    grid_lon_1d = np.asarray(grid_lon_1d)
+
+    grid_da = xr.DataArray(
+        np.zeros((len(grid_lat_1d), len(grid_lon_1d)), dtype=np.float32),
+        coords={"lat": grid_lat_1d, "lon": grid_lon_1d},
+        dims=("lat", "lon"),
+        name="grid_id_dummy",
+    )
+
+    lat_points = xr.DataArray(df[lat_col].to_numpy(dtype="float64"), dims="points")
+    lon_points = xr.DataArray(df[lon_col].to_numpy(dtype="float64"), dims="points")
+
+    grid_sel = grid_da.sel(
+        lat=lat_points,
+        lon=lon_points,
+        method="nearest",
+    )
+
+    df["lat_c"] = grid_sel["lat"].to_numpy()
+    df["lon_c"] = grid_sel["lon"].to_numpy()
+    df["lon_c"] = ((df["lon_c"].to_numpy(dtype="float64") + 180.0) % 360.0) - 180.0
+    df["hemi"] = np.where(df["lat_c"] >= 0, "NH", "SH")
+
+    # Optional integer indices, useful for stable grouping and debugging
+    lat_index = {float(v): i for i, v in enumerate(grid_lat_1d)}
+    lon_index = {float(((v + 180.0) % 360.0) - 180.0): i for i, v in enumerate(grid_lon_1d)}
+
+    df["ilat"] = [lat_index[float(v)] for v in df["lat_c"].to_numpy()]
+    df["ilon"] = [lon_index[float(v)] for v in df["lon_c"].to_numpy()]
+
+    # -------------------------------------------------------------
+    # 3. Attach product values at minute level
+    # -------------------------------------------------------------
+    minute_matched = df.copy()
+
+    if isinstance(products, dict):
+        iterable = products.items()
+    elif isinstance(products, list):
+        iterable = products
+    else:
+        raise TypeError(f"`products` must be dict or list, got {type(products)}")
+
+    for item in iterable:
+        if isinstance(products, dict):
+            name, (xr_obj, var_map) = item
+        else:
+            name, xr_obj, var_map = item
+
+        print(f"Minute common-1° attaching: {name}")
+
+        minute_matched = attach_satellite_vars_pointwise_chunked(
+            minute_matched,
+            xr_obj,
+            var_map=var_map,
+            date_col=date_col,
+            lat_col="lat_c",
+            lon_col="lon_c",
+            method=method,
+            tolerance_time=tolerance_time,
+            chunk_size=chunk_size,
+        )
+
+    # Product columns
+    product_cols = []
+    if isinstance(products, dict):
+        for _, (_, var_map) in products.items():
+            product_cols.extend(list(var_map.keys()))
+    else:
+        for _, _, var_map in products:
+            product_cols.extend(list(var_map.keys()))
+
+    product_cols = list(dict.fromkeys(product_cols))
+
+    # Mask negative product values
+    for col in product_cols:
+        if col in minute_matched.columns:
+            minute_matched[col] = pd.to_numeric(minute_matched[col], errors="coerce")
+            minute_matched.loc[minute_matched[col] < 0, col] = np.nan
+
+    # Optional product NaN filtering
+    if dropna_product_cols and len(product_cols) > 0:
+        if product_dropna_mode == "all":
+            minute_matched = minute_matched.dropna(subset=product_cols, how="all").copy()
+        elif product_dropna_mode == "any":
+            minute_matched = minute_matched.dropna(subset=product_cols, how="any").copy()
+        else:
+            raise ValueError("product_dropna_mode must be 'all' or 'any'.")
+
+    if minute_matched.empty:
+        empty = pd.DataFrame()
+        return empty, empty, minute_matched
+
+    # -------------------------------------------------------------
+    # 4. Aggregate matched minute records to daily ship-grid-cell values
+    # -------------------------------------------------------------
+    grp_keys = [date_col, "ilat", "ilon", ship_col]
+
+    agg_dict = {
+        "n_min_total": (obs_rate_col, "size"),
+        "n_min_valid_rate": (
+            obs_rate_col,
+            lambda s: np.sum(np.isfinite(pd.to_numeric(s, errors="coerce"))),
+        ),
+        "main_mean_mmph": (obs_rate_col, "mean"),
+        "main_median_mmph": (obs_rate_col, "median"),
+        "main_max_mmph": (obs_rate_col, "max"),
+        "main_mmday": (obs_rate_col, _mmday_from_mmph),
+        "lat_mean": (lat_col, "mean"),
+        "lon_mean": (lon_col, "mean"),
+        "lat_c": ("lat_c", "first"),
+        "lon_c": ("lon_c", "first"),
+        "hemi": ("hemi", "first"),
+    }
+
+    if precip_flag_col in minute_matched.columns:
+        agg_dict.update({
+            "n_min_zero": (precip_flag_col, lambda s: np.sum(s.to_numpy() == 3)),
+            "n_min_rain": (precip_flag_col, lambda s: np.sum(s.to_numpy() == 0)),
+            "n_min_snow": (precip_flag_col, lambda s: np.sum(s.to_numpy() == 1)),
+            "n_min_mixed": (precip_flag_col, lambda s: np.sum(s.to_numpy() == 2)),
+            "frac_zero": (precip_flag_col, lambda s: np.mean(s.to_numpy() == 3)),
+            "frac_rain": (precip_flag_col, lambda s: np.mean(s.to_numpy() == 0)),
+            "frac_snow": (precip_flag_col, lambda s: np.mean(s.to_numpy() == 1)),
+            "frac_mixed": (precip_flag_col, lambda s: np.mean(s.to_numpy() == 2)),
+        })
+
+    if "rate_phasebest_mmph" in minute_matched.columns:
+        agg_dict.update({
+            "phasebest_mean_mmph": ("rate_phasebest_mmph", "mean"),
+            "phasebest_mmday": ("rate_phasebest_mmph", _mmday_from_mmph),
+        })
+
+    if "rate_odm_mmph" in minute_matched.columns:
+        agg_dict.update({
+            "odm_mean_mmph": ("rate_odm_mmph", "mean"),
+            "odm_mmday": ("rate_odm_mmph", _mmday_from_mmph),
+        })
+
+    if "rate_gag_mmph" in minute_matched.columns:
+        agg_dict.update({
+            "gag_mean_mmph": ("rate_gag_mmph", "mean"),
+            "gag_mmday": ("rate_gag_mmph", _mmday_from_mmph),
+        })
+
+    if "rain_prob" in minute_matched.columns:
+        agg_dict["rain_prob_mean"] = ("rain_prob", "mean")
+
+    if "snow_prob" in minute_matched.columns:
+        agg_dict["snow_prob_mean"] = ("snow_prob", "mean")
+
+    if "mixed_prob" in minute_matched.columns:
+        agg_dict["mixed_prob_mean"] = ("mixed_prob", "mean")
+
+    # Product values are daily precipitation fields.
+    # Mean over matched minutes gives the ship-sampled daily product value.
+    for col in product_cols:
+        if col in minute_matched.columns:
+            agg_dict[col] = (col, "mean")
+
+    daily_all = (
+        minute_matched
+        .groupby(grp_keys, as_index=False)
+        .agg(**agg_dict)
+    )
+
+    daily_all["coverage_frac_day"] = daily_all["n_min_total"] / 1440.0
+
+    if all(c in daily_all.columns for c in ["n_min_rain", "n_min_snow", "n_min_mixed"]):
+        daily_all["n_min_precip_phase"] = (
+            daily_all["n_min_rain"] +
+            daily_all["n_min_snow"] +
+            daily_all["n_min_mixed"]
+        )
+
+        daily_all["frac_precip_phase"] = (
+            daily_all["frac_rain"] +
+            daily_all["frac_snow"] +
+            daily_all["frac_mixed"]
+        )
+
+        phase_cols = ["frac_rain", "frac_snow", "frac_mixed", "frac_zero"]
+        phase_names = ["rain", "snow", "mixed", "zero"]
+
+        phase_arr = daily_all[phase_cols].to_numpy(dtype="float64")
+        phase_idx = np.nanargmax(phase_arr, axis=1)
+        daily_all["dominant_phase"] = np.array(phase_names, dtype=object)[phase_idx]
+
+    min_minutes = float(coverage_frac) * 1440.0
+    daily_usable = daily_all[daily_all["n_min_total"] >= min_minutes].copy()
+
+    return daily_all, daily_usable, minute_matched
+
 # ============================================================
 # helper: categorical metrics dict -> tidy table
 # ============================================================
@@ -3289,47 +3557,38 @@ def plot_oceanrain_quant_summary_panel(
     ylims=None,
     ylabel_map=None,
     add_zero_line_for_bias=True,
+    auto_ylim=True,
+    tick_fontsize=12,
+    axis_label_fontsize=14,
+    title_fontsize=16,
+    legend_fontsize=13,
 ):
     """
     Compact NH/SH quantitative summary panel for OceanRAIN comparison.
 
-    Parameters
-    ----------
-    qt_metrics_hemi : dict
-        Example structure:
-        qt_metrics_hemi["NH"]["GPCP v1.3"]["CC"] = 0.49
-        qt_metrics_hemi["NH"]["GPCP v1.3"]["Bias"] = -42.0
-        qt_metrics_hemi["NH"]["GPCP v1.3"]["RMSE"] = 11.15
+    Uses independent y-axis limits for each hemisphere/metric panel unless
+    ylims are explicitly supplied.
 
-    products : list
-        Product order to plot.
+    ylims can be either:
+        {"CC": (0, 0.7), "Bias": (-60, 40), "RMSE": (0, 18)}
 
-    product_colors : dict
-        Mapping from product name to color.
-
-    hemis : tuple
-        Usually ("NH", "SH").
-
-    metrics : tuple
-        Metrics to plot in rows. Recommended: ("CC", "Bias", "RMSE")
-
-    ylims : dict or None
-        Optional metric-specific limits, e.g.
+    or hemisphere-specific:
         {
-            "CC": (0, 0.6),
-            "Bias": (-50, 25),
-            "RMSE": (0, 15),
+            "CC": {"NH": (0, 0.6), "SH": (0, 0.5)},
+            "Bias": {"NH": (-60, 5), "SH": (-20, 20)},
+            "RMSE": {"NH": (0, 18), "SH": (0, 12)}
         }
-
-    ylabel_map : dict or None
-        Optional prettier y labels.
     """
+
+    import numpy as np
+    import matplotlib.pyplot as plt
 
     if ylabel_map is None:
         ylabel_map = {
             "CC": "CC",
             "Bias": "Bias [%]",
             "RMSE": "RMSE\n[mm day$^{-1}$]",
+            "MAE": "MAE\n[mm day$^{-1}$]",
         }
 
     nrows = len(metrics)
@@ -3340,10 +3599,60 @@ def plot_oceanrain_quant_summary_panel(
         ncols=ncols,
         figsize=figsize,
         sharex=True,
-        squeeze=False
+        sharey=False,
+        squeeze=False,
     )
 
     x = np.arange(len(products))
+
+    def _auto_ylim(vals, metric):
+        vals = np.asarray(vals, dtype=float)
+        vals = vals[np.isfinite(vals)]
+
+        if len(vals) == 0:
+            return None
+
+        vmin = np.nanmin(vals)
+        vmax = np.nanmax(vals)
+
+        if metric == "CC":
+            lo = max(0.0, vmin - 0.08)
+            hi = min(1.0, vmax + 0.08)
+            if hi <= lo:
+                hi = min(1.0, lo + 0.2)
+            return lo, hi
+
+        if metric in ["RMSE", "MAE"]:
+            lo = 0.0
+            hi = vmax * 1.15 if vmax > 0 else 1.0
+            return lo, hi
+
+        if metric == "Bias":
+            # Always include zero for bias.
+            vmin = min(vmin, 0.0)
+            vmax = max(vmax, 0.0)
+            pad = 0.15 * (vmax - vmin) if vmax > vmin else 5.0
+            return vmin - pad, vmax + pad
+
+        pad = 0.12 * (vmax - vmin) if vmax > vmin else 1.0
+        return vmin - pad, vmax + pad
+
+    def _get_ylim(metric, hemi, vals):
+        if ylims is not None and metric in ylims:
+            # Option 1: ylims["CC"] = (0, 0.7)
+            if isinstance(ylims[metric], tuple):
+                return ylims[metric]
+
+            # Option 2: ylims["CC"]["NH"] = (0, 0.6)
+            if isinstance(ylims[metric], dict) and hemi in ylims[metric]:
+                return ylims[metric][hemi]
+
+        if auto_ylim:
+            return _auto_ylim(vals, metric)
+
+        return None
+
+    panel_labels = ["(a)", "(b)", "(c)", "(d)", "(e)", "(f)", "(g)", "(h)"]
 
     for j, hemi in enumerate(hemis):
         for i, met in enumerate(metrics):
@@ -3354,49 +3663,111 @@ def plot_oceanrain_quant_summary_panel(
                 d = qt_metrics_hemi.get(hemi, {}).get(p, {})
                 vals.append(d.get(met, np.nan) if isinstance(d, dict) else np.nan)
 
+            colors = [
+                _get_product_color(p, product_colors, default="0.7")
+                for p in products
+            ]
+
             ax.bar(
                 x,
                 vals,
-                color=[product_colors.get(p, "0.7") for p in products],
+                color=colors,
                 edgecolor="black",
-                linewidth=0.5
+                linewidth=0.5,
+            )
+
+            panel_idx = i * len(hemis) + j
+
+            ax.text(
+                0.02,
+                0.95,
+                panel_labels[panel_idx],
+                transform=ax.transAxes,
+                fontsize=axis_label_fontsize,
+                fontweight="bold",
+                ha="left",
+                va="top",
             )
 
             if i == 0:
-                ax.set_title(hemi, fontsize=16, fontweight="bold")
+                ax.set_title(
+                    hemi,
+                    fontsize=title_fontsize,
+                    fontweight="bold",
+                )
 
-            ax.set_ylabel(ylabel_map.get(met, met), fontsize=14, fontweight="bold")
-            ax.grid(True, axis="y", linestyle="--", alpha=0.35)
+            ax.set_ylabel(
+                ylabel_map.get(met, met),
+                fontsize=axis_label_fontsize,
+                fontweight="bold",
+            )
+
+            ax.grid(
+                True,
+                axis="y",
+                linestyle="--",
+                alpha=0.35,
+            )
 
             if met == "Bias" and add_zero_line_for_bias:
-                ax.axhline(0, color="k", linestyle="--", linewidth=1)
+                ax.axhline(
+                    0,
+                    color="k",
+                    linestyle="--",
+                    linewidth=1,
+                )
 
-            if ylims is not None and met in ylims:
-                ax.set_ylim(*ylims[met])
+            panel_ylim = _get_ylim(met, hemi, vals)
+            if panel_ylim is not None:
+                ax.set_ylim(*panel_ylim)
 
-            ax.tick_params(axis="y", labelsize=12)
+            ax.tick_params(
+                axis="both",
+                labelsize=tick_fontsize,
+                direction="in",
+                top=True,
+                right=True,
+            )
+
+            for tick in ax.get_yticklabels():
+                tick.set_fontweight("bold")
+                tick.set_fontsize(tick_fontsize)
 
             if i == nrows - 1:
                 ax.set_xticks(x)
-                ax.set_xticklabels(products, rotation=25, ha="right", fontsize=13, fontweight="bold")
+                ax.set_xticklabels(
+                    products,
+                    rotation=25,
+                    ha="right",
+                    fontsize=tick_fontsize + 1,
+                    fontweight="bold",
+                )
             else:
                 ax.tick_params(axis="x", labelbottom=False)
 
-    # shared legend
     handles = [
-        plt.Rectangle((0, 0), 1, 1, facecolor=product_colors.get(p, "0.7"), edgecolor="black", label=p)
+        plt.Rectangle(
+            (0, 0),
+            1,
+            1,
+            facecolor=_get_product_color(p, product_colors, default="0.7"),
+            edgecolor="black",
+            label=p,
+        )
         for p in products
     ]
+
     fig.legend(
         handles=handles,
         loc="lower center",
         bbox_to_anchor=(0.5, 0.01),
         ncol=len(products),
         frameon=False,
-        fontsize=13
+        fontsize=legend_fontsize,
     )
 
     fig.tight_layout(rect=[0, 0.07, 1, 1])
+
     return fig, axes
 
 #------------------------------------------------------------
@@ -5126,25 +5497,9 @@ def compute_hemi_metrics_oceanrain(
     products,
     obs_col="main_mmday",
     hemis=("NH", "SH"),
-    cat_thr=0.1,   # mm/day threshold for rain occurrence
+    cat_thr=1.0,
+    qt_sample="all_valid",  # options: "all_valid", "hits"
 ):
-    """
-    Compute hemisphere-based categorical and quantitative metrics.
-
-    Expected:
-      daily_or_attached contains:
-        - hemi
-        - obs_col (OceanRAIN daily precipitation)
-        - one column per product
-
-    Returns
-    -------
-    cat_metrics_hemi : dict
-        cat_metrics_hemi[hemi][product] -> dict
-    qt_metrics_hemi : dict
-        qt_metrics_hemi[hemi][product] -> dict
-    """
-
     cat_metrics_hemi = {}
     qt_metrics_hemi = {}
 
@@ -5175,9 +5530,13 @@ def compute_hemi_metrics_oceanrain(
                 forecast, observed, cat_thr
             )
 
-            # quantitative metrics:
-            # usually more meaningful on precip-present pairs
-            sub_qt = sub[(sub[obs_col] >= cat_thr) & (sub[product] >= cat_thr)].copy()
+            # quantitative metrics
+            if qt_sample == "hits":
+                sub_qt = sub[(sub[obs_col] >= cat_thr) & (sub[product] >= cat_thr)].copy()
+            elif qt_sample == "all_valid":
+                sub_qt = sub.copy()
+            else:
+                raise ValueError("qt_sample must be 'all_valid' or 'hits'.")
 
             if len(sub_qt) == 0:
                 qt_metrics_hemi[hemi][product] = {
@@ -5189,19 +5548,12 @@ def compute_hemi_metrics_oceanrain(
                 }
             else:
                 qt = calculate_metrics(sub_qt, obs_col, product)
-
-                # optionally attach N
                 if isinstance(qt, dict):
                     qt["N"] = len(sub_qt)
-
                 qt_metrics_hemi[hemi][product] = qt
 
     return cat_metrics_hemi, qt_metrics_hemi
-
 #------------------------------------------------------------------------------
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import numpy as np
 
 def plot_hemi_cat_metrics_barpanel(
     cat_metrics_hemi,
@@ -11186,7 +11538,7 @@ def draw_perf_background(
     *,
     contour_label_fontsize=10,
     bias_label_fontsize=10,
-    axis_label_fontsize=12,
+    axis_label_fontsize=14,
     tick_fontsize=12,
     csi_color="brown",
     bias_color="steelblue",
@@ -11369,22 +11721,22 @@ def draw_perf_background(
     # This avoids twinx() problems.
     # ---------------------------------------------------------
     if show_csi_right_axis:
-        for level in csi_levels:
-            ax.text(
-                1.01,
-                level,
-                f"{level:.1f}",
-                transform=ax.transData,
-                color=csi_color,
-                fontsize=tick_fontsize,
-                fontweight="bold",
-                ha="left",
-                va="center",
-                clip_on=False,
-            )
+        # for level in csi_levels:
+        #     ax.text(
+        #         1.01,
+        #         level,
+        #         f"{level:.1f}",
+        #         transform=ax.transData,
+        #         color=csi_color,
+        #         fontsize=tick_fontsize,
+        #         fontweight="bold",
+        #         ha="left",
+        #         va="center",
+        #         clip_on=False,
+        #     )
 
         ax.text(
-            1.085,
+            1.05,
             0.5,
             "CSI",
             transform=ax.transAxes,
@@ -11439,11 +11791,11 @@ def plot_oceanrain_roebber_diagram(
     marker_size=95,
     annotate=True,
     title=None,
-    contour_label_fontsize=8,
-    bias_label_fontsize=8,
-    axis_label_fontsize=11,
-    tick_fontsize=10,
-    legend_fontsize=12,
+    contour_label_fontsize=10,
+    bias_label_fontsize=10,
+    axis_label_fontsize=14,
+    tick_fontsize=12,
+    legend_fontsize=14,
 ):
     """
     Plot OceanRAIN categorical metrics on a Roebber/performance diagram.
@@ -11605,7 +11957,7 @@ def plot_oceanrain_roebber_diagram(
         ncol=min(len(products), 6),
         frameon=False,
         fontsize=legend_fontsize,
-        bbox_to_anchor=(0.5, -0.05),
+        bbox_to_anchor=(0.5, -0.04),
     )
 
     # # Add explanatory mini-legend for background
@@ -12174,7 +12526,10 @@ def compute_oceanrain_sample_distribution_summary(
             s = s.replace([np.inf, -np.inf], np.nan).dropna()
 
             if wet_only:
-                s = s[s >= wet_threshold]
+                if wet_threshold == 0:
+                    s = s[s > 0]
+                else:
+                    s = s[s >= wet_threshold]
 
             if len(s) == 0:
                 rows.append({
@@ -12552,3 +12907,373 @@ def categorical_dict_to_table(
             rows.append(row)
 
     return pd.DataFrame(rows)
+
+
+#-----------------------------------------------------------
+def compute_native_daily_spatial_mean_timeseries(
+    product_map,
+    *,
+    region="highlat_all",
+    lat_abs_min=45.0,
+    start_date=None,
+    end_date=None,
+    join="inner",
+    mask_negative=True,
+):
+    """
+    Compute native-resolution daily spatial-mean precipitation time series.
+
+    Each product remains on its native grid. For each day, the spatial field is
+    collapsed to one area-weighted mean value using cos(latitude) weights.
+
+    Parameters
+    ----------
+    product_map : dict
+        Example:
+        {
+            "GPCP v3.3": gpcp_ds_v3pt3_al["precip"],
+            "IMERG v07": imerg_v07_al,
+            "ERA5": era5_ds_al["tp"],
+        }
+
+        Values can be xarray DataArrays or (xarray object, variable name).
+
+    region : {"global", "NH", "SH", "highlat_all"}
+        Region to average.
+
+    lat_abs_min : float
+        Used when region="highlat_all", "NH", or "SH".
+
+    join : {"inner", "outer"}
+        How to combine product time series.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Daily time series with columns:
+        date, product1, product2, ...
+    """ 
+
+    def _as_dataarray(obj):
+        if isinstance(obj, tuple):
+            xr_obj = obj[0]
+            varinfo = obj[1] if len(obj) > 1 else None
+
+            if isinstance(xr_obj, xr.DataArray):
+                return xr_obj
+
+            if isinstance(xr_obj, xr.Dataset):
+                if isinstance(varinfo, str):
+                    return xr_obj[varinfo]
+
+                if isinstance(varinfo, dict):
+                    # Use first non-None variable name if provided.
+                    varnames = [v for v in varinfo.values() if v is not None]
+                    if len(varnames) > 0:
+                        return xr_obj[varnames[0]]
+
+                raise ValueError(
+                    "Dataset tuple input needs a variable name, e.g. (dataset, 'precip') "
+                    "or a var_map with a non-None variable name."
+                )
+
+            raise TypeError(f"Unsupported tuple xarray object type: {type(xr_obj)}")
+
+        if isinstance(obj, xr.DataArray):
+            return obj
+
+        if isinstance(obj, xr.Dataset):
+            raise ValueError(
+                "Dataset input needs a variable name: use (dataset, 'varname')."
+            )
+
+        raise TypeError(f"Unsupported product_map value type: {type(obj)}")
+
+    def _infer_time_lat_lon_dims(da):
+        dims = list(da.dims)
+
+        time_candidates = [
+            "time",
+            "valid_time",
+            "date",
+            "datetime",
+        ]
+
+        lat_candidates = [
+            "lat",
+            "latitude",
+            "y",
+        ]
+
+        lon_candidates = [
+            "lon",
+            "longitude",
+            "x",
+        ]
+
+        tdim = next((d for d in time_candidates if d in dims), None)
+        ydim = next((d for d in lat_candidates if d in dims), None)
+        xdim = next((d for d in lon_candidates if d in dims), None)
+
+        if tdim is None or ydim is None or xdim is None:
+            raise ValueError(
+                f"Could not infer time/lat/lon dims from {da.dims}. "
+                "Expected time/valid_time, lat/y, lon/x."
+            )
+
+        return tdim, ydim, xdim
+
+    series_list = []
+
+    for product, obj in product_map.items():
+        print(f"Computing native daily spatial mean: {product}")
+
+        da = _as_dataarray(obj).copy()
+        tdim, ydim, xdim = _infer_time_lat_lon_dims(da)
+
+        # Rename internally for easier handling
+        rename_dict = {}
+
+        if tdim != "time":
+            rename_dict[tdim] = "time"
+
+        if ydim != "lat":
+            rename_dict[ydim] = "lat"
+
+        if xdim != "lon":
+            rename_dict[xdim] = "lon"
+
+        if rename_dict:
+            da = da.rename(rename_dict)
+
+        da["time"] = pd.to_datetime(da["time"].values)
+
+        if start_date is not None or end_date is not None:
+            da = da.sel(
+                time=slice(
+                    pd.to_datetime(start_date) if start_date is not None else None,
+                    pd.to_datetime(end_date) if end_date is not None else None,
+                )
+            )
+
+        if mask_negative:
+            da = da.where(da >= 0)
+
+        lat = da["lat"]
+
+        if region == "global":
+            region_mask = xr.ones_like(lat, dtype=bool)
+
+        elif region == "highlat_all":
+            region_mask = abs(lat) >= lat_abs_min
+
+        elif region == "NH":
+            region_mask = lat >= lat_abs_min
+
+        elif region == "SH":
+            region_mask = lat <= -lat_abs_min
+
+        else:
+            raise ValueError(
+                "region must be one of: 'global', 'highlat_all', 'NH', 'SH'"
+            )
+
+        # Mask data outside selected region
+        da_reg = da.where(region_mask)
+
+        # Area weights for regular lat-lon grids.
+        # xarray.weighted() cannot accept NaNs in weights, so fill missing values with 0.
+        weights = np.cos(np.deg2rad(lat))
+        weights = weights.where(region_mask, 0.0)
+        weights = weights.where(np.isfinite(weights), 0.0)
+        weights = weights.clip(min=0.0)
+        weights = weights.fillna(0.0)
+
+        ts = da_reg.weighted(weights).mean(
+            dim=("lat", "lon"),
+            skipna=True,
+        )
+
+        s = ts.to_series()
+        s.name = product
+        series_list.append(s)
+
+    ts_df = pd.concat(series_list, axis=1, join=join)
+    ts_df = ts_df.reset_index().rename(columns={"time": "date"})
+
+    return ts_df
+
+def plot_native_daily_spatial_mean_timeseries(
+    ts_df,
+    *,
+    products,
+    product_colors,
+    date_col="date",
+    rolling=None,
+    figsize=(13, 5.5),
+    ylabel="Area-weighted mean precipitation [mm day$^{-1}$]",
+    title=None,
+    tick_fontsize=12,
+    axis_label_fontsize=13,
+    legend_fontsize=12,
+):
+    """
+    Plot native-resolution daily spatial-mean product time series.
+    """
+
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = ts_df.copy()
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.sort_values(date_col)
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    for product in products:
+        if product not in df.columns:
+            continue
+
+        y = pd.to_numeric(df[product], errors="coerce")
+
+        if rolling is not None and rolling > 1:
+            y = y.rolling(rolling, center=True, min_periods=max(1, rolling // 2)).mean()
+
+        ax.plot(
+            df[date_col],
+            y,
+            label=product,
+            color=_get_product_color(product, product_colors, default="0.7"),
+            linewidth=3.0,
+            alpha=0.95,
+        )
+
+    ax.set_ylabel(
+        ylabel,
+        fontsize=axis_label_fontsize,
+        fontweight="bold",
+    )
+
+    ax.set_xlabel(
+        "Date",
+        fontsize=axis_label_fontsize,
+        fontweight="bold",
+    )
+
+    if title is not None:
+        ax.set_title(title, fontsize=axis_label_fontsize + 2, fontweight="bold")
+
+    ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.35)
+
+    ax.tick_params(
+        axis="both",
+        labelsize=tick_fontsize,
+        direction="in",
+        top=True,
+        right=True,
+    )
+
+    for tick in ax.get_xticklabels() + ax.get_yticklabels():
+        tick.set_fontweight("bold")
+        tick.set_fontsize(tick_fontsize)
+
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.18),
+        ncol=min(len(products), 6),
+        frameon=False,
+        fontsize=legend_fontsize,
+    )
+
+    fig.tight_layout()
+
+    return fig, ax
+
+
+def mask_common05deg_product_map(product_map, spatial_mask):
+    """
+    Apply a common 2-D categorical mask to each product.
+
+    The mask is sampled to each product grid using nearest-neighbor
+    selection and then assigned the product's exact coordinate labels
+    before xarray alignment.
+    """
+
+    masked_map = {}
+
+    for product, obj in product_map.items():
+
+        if isinstance(obj, tuple):
+            xr_obj = obj[0]
+            var_map = obj[1]
+        else:
+            xr_obj = obj
+            var_map = {product: None}
+
+        if isinstance(xr_obj, xr.DataArray):
+            da = xr_obj
+
+        elif isinstance(xr_obj, xr.Dataset):
+            source_vars = [
+                source_var
+                for source_var in var_map.values()
+                if source_var is not None
+            ]
+
+            if len(source_vars) != 1:
+                raise ValueError(
+                    f"Could not identify one source variable for {product}"
+                )
+
+            da = xr_obj[source_vars[0]]
+
+        else:
+            raise TypeError(
+                f"Unsupported object for {product}: {type(xr_obj)}"
+            )
+
+        # Normalize longitude convention if needed
+        if float(da["lon"].max()) > 180:
+            da = da.assign_coords(
+                lon=((da["lon"] + 180.0) % 360.0) - 180.0
+            ).sortby("lon")
+
+        # Sample categorical mask to the product grid
+        mask_aligned = spatial_mask.sel(
+            lat=xr.DataArray(da["lat"].values, dims="lat"),
+            lon=xr.DataArray(da["lon"].values, dims="lon"),
+            method="nearest",
+        )
+
+        # Critical step:
+        # sel(method="nearest") may retain the source mask coordinate labels.
+        # Replace them with the product's exact labels before where().
+        mask_aligned = mask_aligned.assign_coords(
+            lat=da["lat"],
+            lon=da["lon"],
+        )
+
+        # Remove scalar coordinates introduced by rioxarray, if present
+        mask_aligned = mask_aligned.drop_vars(
+            ["spatial_ref"],
+            errors="ignore",
+        )
+
+        masked_da = da.where(mask_aligned.astype(bool))
+
+        print(
+            product,
+            "product shape:",
+            da.shape,
+            "mask shape:",
+            mask_aligned.shape,
+            "masked shape:",
+            masked_da.shape,
+        )
+
+        masked_map[product] = (
+            masked_da,
+            var_map,
+        )
+
+    return masked_map

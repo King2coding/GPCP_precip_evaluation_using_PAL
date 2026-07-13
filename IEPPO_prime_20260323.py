@@ -2305,14 +2305,14 @@ df_qc = oceanrain_step0_qc_precip_main(
     qclip_hi=0.999,
 )
 
-daily_or_all, daily_or_usable = oceanrain_daily_aggregate_to_gpcp_main(
-    oc_df_minute=df_qc,
-    gpcp_lat_1d=or_lat_1d,
-    gpcp_lon_1d=or_lon_1d, 
-    lat_abs_min=45.0,
-    coverage_frac=0.5,
-)
-gc.collect()
+# daily_or_all, daily_or_usable = oceanrain_daily_aggregate_to_gpcp_main(
+#     oc_df_minute=df_qc,
+#     gpcp_lat_1d=or_lat_1d,
+#     gpcp_lon_1d=or_lon_1d, 
+#     lat_abs_min=45.0,
+#     coverage_frac=0.5,
+# )
+# gc.collect()
 
 
 # -------------------------------------------------------------
@@ -2438,21 +2438,47 @@ product_map_common1deg = {
         {"ERA5": None},
     ),
 
-    "MERRA2": (
+    "MERRA-2": (
         merra_ds_res.where(merra_ds_res >= 0),
-        {"MERRA2": None},
+        {"MERRA-2": None},
     ),
 }
 # -------------------------------------------------------------
 # Attach common-1° products to daily OceanRAIN ship–grid-cell samples
 # -------------------------------------------------------------
 
-daily_or_attached = step2_attach_products_oceanrain(
-    daily_or_usable,
-    gpcp_grid_ds=or_grid_1deg,              # only used for lat_c/lon_c from ilat/ilon
-    products=product_map_common1deg,        # official common-1° product fields
-    ref_col="main_mmday",
-    method="nearest",
+# daily_or_attached = step2_attach_products_oceanrain(
+#     daily_or_usable,
+#     gpcp_grid_ds=or_grid_1deg,              # only used for lat_c/lon_c from ilat/ilon
+#     products=product_map_common1deg,        # official common-1° product fields
+#     ref_col="main_mmday",
+#     method="nearest",
+# )
+
+# -------------------------------------------------------------
+# OceanRAIN PAL-like common-1° matching:
+# minute-level match to common 1° grid/products, then daily aggregation
+# -------------------------------------------------------------
+
+daily_or_all, daily_or_attached, minute_or_matched_common1deg = (
+    oceanrain_minute_match_common1deg_then_daily_xr(
+        df_qc,
+        products=product_map_common1deg,
+        grid_lat_1d=or_lat_1d,
+        grid_lon_1d=or_lon_1d,
+        time_col="time_utc",
+        date_col="date",
+        lat_col="lat",
+        lon_col="lon",
+        ship_col="ship",
+        obs_rate_col="rate_main_mmph",
+        precip_flag_col="precip_flag",
+        lat_abs_min=45.0,
+        coverage_frac=0.5,
+        method="nearest",
+        dropna_product_cols=False,
+        chunk_size=200_000,
+    )
 )
 
 daily_or_attached = daily_or_attached[
@@ -2469,20 +2495,23 @@ daily_or_attached.to_csv(
 
 #--------------------------------------------------------------
 products_eval = ["GPCP v1.3", 'GPCP v3.2', 'GPCP v3.3',  'IMERG v07', 
-                 'ERA5','MERRA2']
+                 'ERA5','MERRA-2']
 
 cat_metrics_hemi, qt_metrics_hemi = compute_hemi_metrics_oceanrain(
     daily_or_attached,
     products=products_eval,
     obs_col="main_mmday",
     hemis=("NH", "SH"),
-    cat_thr=0.3,
+    cat_thr=1.0,
 )
 
 #--------------------------------------------------------------
 products_order = ["GPCP v1.3", "GPCP v3.2", "GPCP v3.3",  'IMERG v07', 
-                  "ERA5", "MERRA2"] 
+                  "ERA5", "MERRA-2"] 
+#--------------------------------------------------------------
 # 1) categorical table
+#--------------------------------------------------------------
+
 cat_table = categorical_dict_to_table(
     cat_metrics_hemi,   # replace with your categorical dict variable name
     products_order=products_order
@@ -2515,7 +2544,7 @@ products_roebber = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",
-    "MERRA2",
+    "MERRA-2",
 ]
 
 fig, axes = plot_oceanrain_roebber_diagram(
@@ -2524,29 +2553,32 @@ fig, axes = plot_oceanrain_roebber_diagram(
     product_colors=product_colors,
     hemis=("NH", "SH"),
     figsize=(15, 6.2),
-    marker_size=95,
+    marker_size=115,
     annotate=False,
     title=None,
-    contour_label_fontsize=10,
-    bias_label_fontsize=10,
-    axis_label_fontsize=14,
-    tick_fontsize=14,
-    legend_fontsize=14,
+    contour_label_fontsize=12,
+    bias_label_fontsize=12,
+    axis_label_fontsize=15,
+    tick_fontsize=15,
+    legend_fontsize=15,
 )
 
 fig.savefig(
     os.path.join(
         path_to_plots,
-        f"oceanrain_roebber_performance_diagram_common1deg_{cde_run_dte}.png"
+        f"Fig10_OceanRAIN_occurrence_performance_roebber_{cde_run_dte}.png"
     ),
     dpi=150,
     bbox_inches="tight",
 )
 
-plt.show()
+
+# plt.show()
 gc.collect()
 
+#--------------------------------------------------------------
 # 4) quantitative summary plot
+#--------------------------------------------------------------
 
 qt_1deg_table = quantitative_dict_to_table(
     qt_metrics_hemi,
@@ -2555,43 +2587,52 @@ qt_1deg_table = quantitative_dict_to_table(
 qt_table_nh = qt_1deg_table[qt_1deg_table["hemi"] == "NH"].reset_index(drop=True)
 qt_table_sh = qt_1deg_table[qt_1deg_table["hemi"] == "SH"].reset_index(drop=True)
 
-print("\nNH categorical metrics")
-print(cat_table_nh)
+print("\nNH quantitative metrics")
+print(qt_table_nh)
 
-print("\nSH categorical metrics")
-print(cat_table_sh)
-# svve the categorical table
+print("\nSH quantitative metrics")
+print(qt_table_sh)
+# save the quantitative table
 qt_1deg_table.to_csv(
     os.path.join(path_to_put_dfs, 
-                f"oceanrain_cat_metrics_common1deg_{cde_run_dte}.csv"),
+                f"oceanrain_quant_metrics_common1deg_{cde_run_dte}.csv"),
     index=False,    
 )
 
 
-products_plot = ["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"]
+products_plot = ["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA-2"]
 
 fig, axes = plot_oceanrain_quant_summary_panel(
-    qt_metrics_hemi=qt_metrics_hemi,
-    products=products_plot,
+    qt_metrics_hemi,
+    products=products_eval,
     product_colors=product_colors,
     hemis=("NH", "SH"),
     metrics=("CC", "Bias", "RMSE"),
     figsize=(12, 9),
     ylims={
         "CC": (0, 0.6),
-        "Bias": (-50, 25),
-        "RMSE": (0, 15),
-    }
+        # "Bias": (-60, 15),
+        "RMSE": (0, 8),
+    },
+    auto_ylim=True,
+    ylabel_map={
+        "CC": "CC",
+        "Bias": "Bias [%]",
+        "RMSE": "RMSE\n[mm day$^{-1}$]",
+    },
+    add_zero_line_for_bias=True,
 )
-svnme = os.path.join(
-    path_to_plots,
-    f"oceanrain_quant_summary_panel_common1deg_{cde_run_dte}.png"
-)
+
 fig.savefig(
-    svnme,
+    os.path.join(
+        path_to_plots,
+        f"Fig11_OceanRAIN_quantitative_metrics_{cde_run_dte}.png"
+    ),
     dpi=150,
     bbox_inches="tight",
 )
+
+
 gc.collect()
 
 
@@ -2673,18 +2714,8 @@ sample_summary_native_minute = compute_oceanrain_sample_distribution_summary(
     hemi_col="hemi",
     hemis=("NH", "SH"),
     wet_only=False,
-    wet_threshold=0.3,
+    wet_threshold=0,
 )
-
-sample_summary_native_minute.to_csv(
-    os.path.join(
-        path_to_put_dfs,
-        f"oceanrain_sample_summary_common1deg_{cde_run_dte}.csv"
-    ),
-    index=False,
-)
-
-print(sample_summary_native_minute)
 
 sample_summary_native_minute_rounded = sample_summary_native_minute.copy()
 
@@ -2705,7 +2736,7 @@ sample_summary_native_minute_rounded[round_cols] = (
 sample_summary_native_minute_rounded.to_csv(
     os.path.join(
         path_to_put_dfs,
-        f"oceanrain_sample_summary_common1deg_rounded_{cde_run_dte}.csv"
+        f"TableC1_oceanrain_sample_summary_common1deg_rounded_{cde_run_dte}.csv"
     ),
     index=False,
 )
@@ -2717,6 +2748,16 @@ print(sample_summary_native_minute_rounded)
 # OceanRAIN PAL-like native-grid sensitivity:
 # attach products at minute locations first, then daily aggregate
 # -------------------------------------------------------------
+
+
+products_eval = [
+    "GPCP v1.3",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+    "ERA5",
+    "MERRA-2",
+]
 
 product_map_native_minute = {
     "GPCP v1.3": (
@@ -2739,9 +2780,9 @@ product_map_native_minute = {
         era5_ds_al["tp"].where(era5_ds_al["tp"] >= 0),
         {"ERA5": None},
     ),
-    "MERRA2": (
+    "MERRA-2": (
         mer2_ds_al.where(mer2_ds_al >= 0),
-        {"MERRA2": None},
+        {"MERRA-2": None},
     ),
 }
 
@@ -2770,7 +2811,7 @@ products_eval = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",
-    "MERRA2",
+    "MERRA-2",
 ]
 
 cat_native_minute, qt_native_minute = compute_hemi_metrics_oceanrain(
@@ -2881,7 +2922,7 @@ products_eval = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",
-    "MERRA2",
+    "MERRA-2",
 ]
 
 qt_native_minute_for_plot = (
@@ -2982,6 +3023,396 @@ sample_summary_native_minute_rounded.to_csv(
 print(sample_summary_native_minute_rounded)
 
 #%%
+# -------------------------------------------------------------
+# Common 0.5°-resolution daily spatial-mean product time series
+# Separate NH and SH diagnostics
+# Independent diagnostic: not sampled by OceanRAIN
+# -------------------------------------------------------------
+product_map_common05deg = {
+    "GPCP v3.2": (
+        gpcp_ds_v3pt2_al["precip"]
+        .where(gpcp_ds_v3pt2_al["precip"] >= 0),
+        {"GPCP v3.2": None},
+    ),
+    "GPCP v3.3": (
+        gpcp_ds_v3pt3_al["precip"]
+        .where(gpcp_ds_v3pt3_al["precip"] >= 0),
+        {"GPCP v3.3": None},
+    ),
+    "IMERG v07": (
+        imerg_v07_al.where(imerg_v07_al >= 0),
+        {"IMERG v07": None},
+    ),
+}
+
+ts_common05deg_nh = compute_native_daily_spatial_mean_timeseries(
+    product_map_common05deg,
+    region="NH",
+    lat_abs_min=45.0,
+    start_date="2010-01-01",
+    end_date="2020-12-31",
+    join="inner",
+    mask_negative=True,
+)
+
+ts_common05deg_sh = compute_native_daily_spatial_mean_timeseries(
+    product_map_common05deg,
+    region="SH",
+    lat_abs_min=45.0,
+    start_date="2010-01-01",
+    end_date="2020-12-31",
+    join="inner",
+    mask_negative=True,
+)
+
+ts_common05deg_nh.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"common05deg_product_daily_spatial_mean_NH_poleward45_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+ts_common05deg_sh.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"common05deg_product_daily_spatial_mean_SH_poleward45_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+ts_common05deg_highlat = compute_native_daily_spatial_mean_timeseries(
+    product_map_common05deg,
+    region="highlat_all",
+    lat_abs_min=45.0,
+    start_date="2010-01-01",
+    end_date="2020-12-31",
+    join="inner",
+    mask_negative=True,
+)
+
+ts_common05deg_highlat.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"common05deg_product_daily_spatial_mean_highlat_all_{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+fig, ax = plot_native_daily_spatial_mean_timeseries(
+    ts_common05deg_highlat,
+    products=['GPCP v3.2', 'GPCP v3.3', 'IMERG v07',],
+    product_colors=product_colors,
+    rolling=30,
+    figsize=(13.5, 5.5),
+    ylabel="mm day$^{-1}$",
+    title="Common 0.5° daily spatial means poleward of 45°",
+    tick_fontsize=12,
+    axis_label_fontsize=13,
+    legend_fontsize=12,
+)
+
+fig.savefig(
+    os.path.join(
+        path_to_plots,
+        f"common05deg_product_daily_spatial_mean_highlat_all_30day_{cde_run_dte}.png"
+    ),
+    dpi=150,
+    bbox_inches="tight",
+)
+# plt.close()
+
+gc.collect()
+
+fig, ax = plot_native_daily_spatial_mean_timeseries(
+    ts_common05deg_nh,
+    products=['GPCP v3.2', 'GPCP v3.3', 'IMERG v07',],
+    product_colors=product_colors,
+    rolling=30,
+    figsize=(13.5, 5.5),
+    ylabel="mm day$^{-1}$",
+    title="Common 0.5° daily spatial means poleward of 45°N",
+    tick_fontsize=12,
+    axis_label_fontsize=13,
+    legend_fontsize=12,
+)
+
+fig.savefig(
+    os.path.join(
+        path_to_plots,
+        f"common05deg_product_daily_spatial_mean_NH_poleward45_30day_{cde_run_dte}.png"
+    ),
+    dpi=150,
+    bbox_inches="tight",
+)
+gc.collect()
+
+fig, ax = plot_native_daily_spatial_mean_timeseries(
+    ts_common05deg_sh,
+    products=['GPCP v3.2', 'GPCP v3.3', 'IMERG v07',],
+    product_colors=product_colors,
+    rolling=30,
+    figsize=(13.5, 5.5),
+    ylabel="mm day$^{-1}$",
+    title="Common 0.5° daily spatial means poleward of 45°S",
+    tick_fontsize=12,
+    axis_label_fontsize=13,
+    legend_fontsize=12,
+)
+
+fig.savefig(
+    os.path.join(
+        path_to_plots,
+        f"common05deg_product_daily_spatial_mean_SH_poleward45_30day_{cde_run_dte}.png"
+    ),
+    dpi=150,
+    bbox_inches="tight",
+)
+gc.collect()
+
+
+# -------------------------------------------------------------
+# A Land-Sea separate analysis
+# -------------------------------------------------------------
+land_sea_mask_path = (
+    "/ra1/pubdat/AVHRR_CloudSat_proj/IMERG/"
+    "ancillary_imerg_data/GPM_IMERG_LandSeaMask.2.nc4"
+)
+
+lsm_ds = xr.open_dataset(land_sea_mask_path)
+
+lsm_native = lsm_ds["landseamask"].transpose("lat", "lon")
+
+if lsm_native["lat"][0] > lsm_native["lat"][-1]:
+    lsm_native = lsm_native.sortby("lat")
+
+if float(lsm_native["lon"].max()) > 180:
+    lsm_native = lsm_native.assign_coords(
+        lon=((lsm_native["lon"] + 180) % 360) - 180
+    ).sortby("lon")
+
+ocean_mask_imerg_native = lsm_native < 25
+land_mask_imerg_native = lsm_native >= 25
+
+
+cc = CRS.from_epsg(4326)
+
+lsm_binary = xr.where(lsm_native < 25, 1, 0).astype("uint8")
+# 1 = ocean, 0 = land
+
+lsm_binary.rio.write_crs(cc.to_string(), inplace=True)
+lsm_binary = lsm_binary.rio.set_spatial_dims(
+    x_dim="lon",
+    y_dim="lat",
+    inplace=True,
+)
+
+lsm_gpcp = lsm_binary.rio.reproject(
+    lsm_binary.rio.crs,
+    shape=(
+        gpcp_ds_v3pt3_al["precip"].sizes["lat"],
+        gpcp_ds_v3pt3_al["precip"].sizes["lon"],
+    ),
+    resampling=Resampling.mode,
+)
+
+lsm_gpcp = lsm_gpcp.rename({"y": "lat", "x": "lon"})
+
+# -------------------------------------------------------------
+# Match the reprojected mask orientation and coordinates exactly
+# to the common 0.5° GPCP/IMERG grid
+# -------------------------------------------------------------
+
+target_lat = gpcp_ds_v3pt3_al["precip"]["lat"]
+target_lon = gpcp_ds_v3pt3_al["precip"]["lon"]
+
+# Match latitude orientation
+target_lat_descending = bool(target_lat[0] > target_lat[-1])
+mask_lat_descending = bool(lsm_gpcp["lat"][0] > lsm_gpcp["lat"][-1])
+
+if target_lat_descending != mask_lat_descending:
+    lsm_gpcp = lsm_gpcp.isel(lat=slice(None, None, -1))
+
+# Match longitude orientation if needed
+target_lon_ascending = bool(target_lon[0] < target_lon[-1])
+mask_lon_ascending = bool(lsm_gpcp["lon"][0] < lsm_gpcp["lon"][-1])
+
+if target_lon_ascending != mask_lon_ascending:
+    lsm_gpcp = lsm_gpcp.isel(lon=slice(None, None, -1))
+
+# The reprojected array already has the required 360 × 720 shape.
+# Assign the exact common-grid coordinates to prevent alignment errors.
+lsm_gpcp = lsm_gpcp.assign_coords(
+    lat=target_lat,
+    lon=target_lon,
+)
+
+lsm_gpcp = lsm_gpcp.astype("uint8")
+
+# 1 = ocean, 0 = land
+ocean_mask_common05deg = lsm_gpcp == 1
+land_mask_common05deg = lsm_gpcp == 0
+
+print("Common 0.5° mask shape:", lsm_gpcp.shape)
+print(
+    "Ocean fraction:",
+    float(ocean_mask_common05deg.mean().values),
+)
+print(
+    "Land fraction:",
+    float(land_mask_common05deg.mean().values),
+)
+
+print(
+    "Mask fraction sum:",
+    float(
+        ocean_mask_common05deg.mean().values
+        + land_mask_common05deg.mean().values
+    ),
+)
+
+product_map_common05deg_ocean = mask_common05deg_product_map(
+    product_map_common05deg,
+    ocean_mask_common05deg,
+)
+
+product_map_common05deg_land = mask_common05deg_product_map(
+    product_map_common05deg,
+    land_mask_common05deg,
+)
+
+common05deg_surface_results = {}
+
+for region in ["NH", "SH"]:
+    for surface, product_map_surface in [
+        ("ocean", product_map_common05deg_ocean),
+        ("land", product_map_common05deg_land),
+    ]:
+
+        result_key = f"{region}_{surface}"
+
+        print(
+            f"\nCalculating common 0.5° daily spatial means: "
+            f"{region}, {surface}"
+        )
+
+        ts_surface = compute_native_daily_spatial_mean_timeseries(
+            product_map_surface,
+            region=region,
+            lat_abs_min=45.0,
+            start_date="2010-01-01",
+            end_date="2020-12-31",
+            join="inner",
+            mask_negative=True,
+        )
+
+        ts_surface["hemisphere"] = region
+        ts_surface["surface"] = surface
+
+        common05deg_surface_results[result_key] = ts_surface
+
+        ts_surface.to_csv(
+            os.path.join(
+                path_to_put_dfs,
+                f"common05deg_product_daily_spatial_mean_"
+                f"{region}_{surface}_poleward45_"
+                f"{cde_run_dte}.csv"
+            ),
+            index=False,
+        )
+
+        gc.collect()
+
+
+products_common05deg = [
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+]
+
+for region in ["NH", "SH"]:
+    for surface in ["ocean", "land"]:
+
+        result_key = f"{region}_{surface}"
+        ts_surface = common05deg_surface_results[result_key]
+
+        latitude_label = "45°N" if region == "NH" else "45°S"
+        surface_title = surface.capitalize()
+
+        fig, ax = plot_native_daily_spatial_mean_timeseries(
+            ts_surface,
+            products=products_common05deg,
+            product_colors=product_colors,
+            rolling=30,
+            figsize=(13.5, 5.5),
+            ylabel="mm day$^{-1}$",
+            title=(
+                f"Common 0.5° daily {surface} spatial means "
+                f"poleward of {latitude_label}"
+            ),
+            tick_fontsize=12,
+            axis_label_fontsize=13,
+            legend_fontsize=12,
+        )
+
+        fig.savefig(
+            os.path.join(
+                path_to_plots,
+                f"common05deg_product_daily_spatial_mean_"
+                f"{region}_{surface}_poleward45_30day_"
+                f"{cde_run_dte}.png"
+            ),
+            dpi=150,
+            bbox_inches="tight",
+        )
+
+        plt.show()
+        # plt.close(fig)
+        gc.collect()
+
+
+surface_summary_rows = []
+
+for result_key, ts_df in common05deg_surface_results.items():
+
+    region, surface = result_key.split("_", 1)
+
+    for product in products_common05deg:
+
+        values = pd.to_numeric(
+            ts_df[product],
+            errors="coerce",
+        ).dropna()
+
+        surface_summary_rows.append(
+            {
+                "hemisphere": region,
+                "surface": surface,
+                "product": product,
+                "N_days": len(values),
+                "mean_mm_day": values.mean(),
+                "median_mm_day": values.median(),
+                "std_mm_day": values.std(),
+            }
+        )
+
+common05deg_surface_summary = pd.DataFrame(
+    surface_summary_rows
+)
+
+common05deg_surface_summary.to_csv(
+    os.path.join(
+        path_to_put_dfs,
+        f"common05deg_GPCP_IMERG_land_ocean_summary_"
+        f"{cde_run_dte}.csv"
+    ),
+    index=False,
+)
+
+print(
+    common05deg_surface_summary.round(3)
+)
+#%%
 
 #--------------------------------------------------------------
 fig1 = plot_hemi_cat_metrics_barpanel(
@@ -3045,6 +3476,7 @@ ship_month_metrics = compute_metrics_from_ship_month_climatology(
     products=products_eval,
     obs_col="main_mmday",
 )
+
 
 #%% Data Visualization plots
 
