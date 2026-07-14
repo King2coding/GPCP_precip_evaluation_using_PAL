@@ -3172,88 +3172,59 @@ gc.collect()
 
 
 # -------------------------------------------------------------
-# A Land-Sea separate analysis
+# Common 0.5° binary land-sea mask
+# 1 = ocean, 0 = land
 # -------------------------------------------------------------
+
 land_sea_mask_path = (
     "/ra1/pubdat/AVHRR_CloudSat_proj/IMERG/"
     "ancillary_imerg_data/GPM_IMERG_LandSeaMask.2.nc4"
 )
 
 lsm_ds = xr.open_dataset(land_sea_mask_path)
+lsm_arr = lsm_ds["landseamask"]
 
-lsm_native = lsm_ds["landseamask"].transpose("lat", "lon")
+# Put longitude on x-axis
+lsm_transposed = lsm_arr.transpose("lat", "lon")
 
-if lsm_native["lat"][0] > lsm_native["lat"][-1]:
-    lsm_native = lsm_native.sortby("lat")
+# Preserve the orientation used in the previously working code
+lsm_flipped = lsm_transposed.isel(lat=slice(None, None, -1))
 
-if float(lsm_native["lon"].max()) > 180:
-    lsm_native = lsm_native.assign_coords(
-        lon=((lsm_native["lon"] + 180) % 360) - 180
-    ).sortby("lon")
-
-ocean_mask_imerg_native = lsm_native < 25
-land_mask_imerg_native = lsm_native >= 25
-
-
-cc = CRS.from_epsg(4326)
-
-lsm_binary = xr.where(lsm_native < 25, 1, 0).astype("uint8")
+# Binary classification:
 # 1 = ocean, 0 = land
+lsm = xr.where(lsm_flipped < 25, 1, 0).astype("uint8")
 
-lsm_binary.rio.write_crs(cc.to_string(), inplace=True)
-lsm_binary = lsm_binary.rio.set_spatial_dims(
+cc = CRS.from_authority(
+    code=4326,
+    auth_name="EPSG",
+)
+
+lsm.rio.write_crs(
+    cc.to_string(),
+    inplace=True,
+)
+
+lsm.rio.set_spatial_dims(
     x_dim="lon",
     y_dim="lat",
     inplace=True,
 )
 
-lsm_gpcp = lsm_binary.rio.reproject(
-    lsm_binary.rio.crs,
-    shape=(
-        gpcp_ds_v3pt3_al["precip"].sizes["lat"],
-        gpcp_ds_v3pt3_al["precip"].sizes["lon"],
-    ),
+lsm_common05deg = lsm.rio.reproject(
+    lsm.rio.crs,
+    shape=(360, 720),
     resampling=Resampling.mode,
 )
 
-lsm_gpcp = lsm_gpcp.rename({"y": "lat", "x": "lon"})
-
-# -------------------------------------------------------------
-# Match the reprojected mask orientation and coordinates exactly
-# to the common 0.5° GPCP/IMERG grid
-# -------------------------------------------------------------
-
-target_lat = gpcp_ds_v3pt3_al["precip"]["lat"]
-target_lon = gpcp_ds_v3pt3_al["precip"]["lon"]
-
-# Match latitude orientation
-target_lat_descending = bool(target_lat[0] > target_lat[-1])
-mask_lat_descending = bool(lsm_gpcp["lat"][0] > lsm_gpcp["lat"][-1])
-
-if target_lat_descending != mask_lat_descending:
-    lsm_gpcp = lsm_gpcp.isel(lat=slice(None, None, -1))
-
-# Match longitude orientation if needed
-target_lon_ascending = bool(target_lon[0] < target_lon[-1])
-mask_lon_ascending = bool(lsm_gpcp["lon"][0] < lsm_gpcp["lon"][-1])
-
-if target_lon_ascending != mask_lon_ascending:
-    lsm_gpcp = lsm_gpcp.isel(lon=slice(None, None, -1))
-
-# The reprojected array already has the required 360 × 720 shape.
-# Assign the exact common-grid coordinates to prevent alignment errors.
-lsm_gpcp = lsm_gpcp.assign_coords(
-    lat=target_lat,
-    lon=target_lon,
+lsm_common05deg = lsm_common05deg.rename(
+    {"x": "lon", "y": "lat"}
 )
 
-lsm_gpcp = lsm_gpcp.astype("uint8")
+# Final masks
+ocean_mask_common05deg = lsm_common05deg == 0
+land_mask_common05deg = lsm_common05deg == 1
 
-# 1 = ocean, 0 = land
-ocean_mask_common05deg = lsm_gpcp == 1
-land_mask_common05deg = lsm_gpcp == 0
-
-print("Common 0.5° mask shape:", lsm_gpcp.shape)
+print("Common 0.5° mask shape:", lsm_common05deg.shape)
 print(
     "Ocean fraction:",
     float(ocean_mask_common05deg.mean().values),
