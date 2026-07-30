@@ -118,7 +118,7 @@ print("-" * 30 + "\n")
 
 # Use multiprocessing to process ERA5 files in parallel
 era5_ds_xr_list = []
-with Pool(processes=2) as pool:  # Adjust the number of processes as needed
+with Pool(processes=5) as pool:  # Adjust the number of processes as needed
     era5_ds_xr_list = pool.map(process_era5_file, enumerate(all_era5_tp_files))
 # Combine all processed batches into a single xarray dataset - simple version
 if era5_ds_xr_list:
@@ -132,7 +132,7 @@ gc.collect()
 
 # Use multiprocessing to process MERRA2 files in parallel
 mer2_ds_xr_list = []
-with Pool(processes=2) as pool:  # Adjust the number of processes as needed
+with Pool(processes=5) as pool:  # Adjust the number of processes as needed
     mer2_ds_xr_list = pool.map(process_merra2_file, enumerate(all_merra2_files))
 # Combine all processed batches into a single xarray dataset - simple version
 if mer2_ds_xr_list:
@@ -1870,6 +1870,9 @@ gc.collect()
 
 #%% Monthly to Interannual Variability: Monthly Clim Cycles
 all_buoy_product_monthly_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_monthly_df_20260407.pkl'))
+all_buoy_product_monthly_df = all_buoy_product_monthly_df.rename(columns={
+    "MERRA2": "MERRA-2"
+})
 products = [
     "Buoy",
     "GPCP v2.3",
@@ -1946,8 +1949,8 @@ annual_by_region, annual_buoy_product_df = build_annual_from_monthly_buoy_df(
     buoy_col="Buoy",
     n_days_col="n_days",
     min_days_per_month=20,
-    min_buoys_per_month=2, # 2
-    min_months_per_year=4, # 4     # can change to 10 if you want stricter
+    min_buoys_per_month=1, # 2
+    min_months_per_year=10, # 4     # can change to 10 if you want stricter
     equal_weight_by_buoy=True
 )
 
@@ -1973,8 +1976,8 @@ fig = plot_interannual_variability_2x2_from_monthly_df(
     lw_ref=3.5,
     lw_prod=3.0,
     ncol_legend=5,
-    year_min=min_date.year,
-    year_max=max_date.year,
+    year_min=1998, #min_date.year,
+    year_max=2022, #max_date.year,
     region_year_limits=region_year_limits,
 )
 
@@ -2742,6 +2745,1262 @@ sample_summary_native_minute_rounded.to_csv(
 )
 
 print(sample_summary_native_minute_rounded)
+
+#%% A Diagnostic Check
+# ==============================================================
+# OceanRAIN categorical threshold-sensitivity audit
+#
+# Required object already in memory:
+#     daily_or_attached
+#
+# Expected columns:
+#     hemi
+#     main_mmday
+#     GPCP v1.3
+#     GPCP v3.2
+#     GPCP v3.3
+#     IMERG v07
+#     ERA5
+#     MERRA-2
+#
+# Optional columns used when available:
+#     date
+#     coverage_frac_day
+# ==============================================================
+
+from pathlib import Path
+
+
+# --------------------------------------------------------------
+# Configuration
+# --------------------------------------------------------------
+
+OBS_COL = "main_mmday"
+
+PRODUCTS = [
+    "GPCP v1.3",
+    "GPCP v3.2",
+    "GPCP v3.3",
+    "IMERG v07",
+    "ERA5",
+    "MERRA-2",
+]
+
+HEMISPHERES = ["NH", "SH"]
+
+# Include the old 0.3 threshold, the current 1.0 threshold,
+# and intermediate / heavier-rain thresholds.
+THRESHOLDS = np.array([
+    0.1, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0
+])
+
+# Change this to your preferred folder.
+OUTPUT_DIR = Path("./oceanrain_threshold_sensitivity")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# --------------------------------------------------------------
+# Input checks and cleanup
+# --------------------------------------------------------------
+
+required_columns = ["hemi", OBS_COL] + PRODUCTS
+missing_columns = [
+    col for col in required_columns
+    if col not in daily_or_attached.columns
+]
+
+if missing_columns:
+    raise KeyError(
+        "daily_or_attached is missing required columns:\n"
+        + "\n".join(missing_columns)
+    )
+
+df_or = daily_or_attached.copy()
+
+# Standardize hemisphere labels.
+df_or["hemi"] = (
+    df_or["hemi"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+# Convert relevant fields to numeric.
+for col in [OBS_COL] + PRODUCTS:
+    df_or[col] = pd.to_numeric(df_or[col], errors="coerce")
+
+# Convert date when present.
+if "date" in df_or.columns:
+    df_or["date"] = pd.to_datetime(
+        df_or["date"],
+        errors="coerce"
+    )
+    df_or["year"] = df_or["date"].dt.year
+
+# Remove invalid OceanRAIN sentinel values and negative precipitation.
+df_or = df_or[
+    np.isfinite(df_or[OBS_COL])
+    & (df_or[OBS_COL] >= 0)
+].copy()
+
+print("Rows available after OceanRAIN reference filtering:")
+print(df_or.groupby("hemi").size())
+print()
+
+
+# --------------------------------------------------------------
+# Calculate threshold sensitivity
+# --------------------------------------------------------------
+
+sensitivity_rows = []
+
+for hemisphere in HEMISPHERES:
+
+    hemi_df = df_or[
+        df_or["hemi"] == hemisphere
+    ].copy()
+
+    for product in PRODUCTS:
+
+        product_df = hemi_df[
+            [OBS_COL, product]
+        ].dropna()
+
+        for threshold in THRESHOLDS:
+
+            metrics = categorical_metrics_with_counts(
+                forecast=product_df[product],
+                observation=product_df[OBS_COL],
+                threshold=threshold,
+            )
+
+            sensitivity_rows.append({
+                "Hemisphere": hemisphere,
+                "Product": product,
+                "Threshold_mmday": threshold,
+                **metrics,
+            })
+
+sensitivity_df = pd.DataFrame(sensitivity_rows)
+
+sensitivity_df.to_csv(
+    OUTPUT_DIR / "oceanrain_threshold_sensitivity_all_metrics.csv",
+    index=False,
+)
+
+print("Threshold-sensitivity table:")
+print(
+    sensitivity_df[
+        sensitivity_df["Threshold_mmday"].isin(
+            [0.3, 1.0]
+        )
+    ][
+        [
+            "Hemisphere",
+            "Product",
+            "Threshold_mmday",
+            "POD",
+            "FAR",
+            "Frequency_bias",
+            "HSS",
+            "Hits",
+            "Misses",
+            "False_alarms",
+            "Observed_events",
+        ]
+    ].round(3)
+)
+
+print()
+
+
+# --------------------------------------------------------------
+# Direct 0.3 versus 1.0 comparison
+# --------------------------------------------------------------
+
+comparison_03_10 = (
+    sensitivity_df[
+        sensitivity_df["Threshold_mmday"].isin(
+            [0.3, 1.0]
+        )
+    ]
+    .pivot(
+        index=["Hemisphere", "Product"],
+        columns="Threshold_mmday",
+        values=[
+            "POD",
+            "FAR",
+            "Frequency_bias",
+            "HSS",
+            "Hits",
+            "Misses",
+        ],
+    )
+)
+
+# Flatten multi-index columns.
+comparison_03_10.columns = [
+    f"{metric}_{threshold:g}"
+    for metric, threshold
+    in comparison_03_10.columns
+]
+
+comparison_03_10 = comparison_03_10.reset_index()
+
+comparison_03_10["POD_change_0.3_to_1.0"] = (
+    comparison_03_10["POD_1"]
+    - comparison_03_10["POD_0.3"]
+)
+
+comparison_03_10["POD_relative_change_percent"] = (
+    100
+    * (
+        comparison_03_10["POD_1"]
+        - comparison_03_10["POD_0.3"]
+    )
+    / comparison_03_10["POD_0.3"]
+)
+
+comparison_03_10.to_csv(
+    OUTPUT_DIR / "oceanrain_comparison_threshold_0p3_vs_1p0.csv",
+    index=False,
+)
+
+print("Direct comparison: 0.3 versus 1.0 mm/day")
+print(
+    comparison_03_10[
+        [
+            "Hemisphere",
+            "Product",
+            "POD_0.3",
+            "POD_1",
+            "POD_change_0.3_to_1.0",
+            "POD_relative_change_percent",
+            "Hits_0.3",
+            "Hits_1",
+            "Misses_0.3",
+            "Misses_1",
+        ]
+    ].round(3)
+)
+print()
+
+
+# --------------------------------------------------------------
+# Plot 1: POD sensitivity for all products
+# --------------------------------------------------------------
+
+for hemisphere in HEMISPHERES:
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    plot_df = sensitivity_df[
+        sensitivity_df["Hemisphere"] == hemisphere
+    ]
+
+    for product in PRODUCTS:
+
+        product_df = plot_df[
+            plot_df["Product"] == product
+        ]
+
+        ax.plot(
+            product_df["Threshold_mmday"],
+            product_df["POD"],
+            marker="o",
+            linewidth=2,
+            label=product,
+        )
+
+    ax.axvline(
+        0.3,
+        linestyle="--",
+        linewidth=1,
+        label="Old threshold: 0.3",
+    )
+
+    ax.axvline(
+        1.0,
+        linestyle=":",
+        linewidth=1.5,
+        label="Current threshold: 1.0",
+    )
+
+    ax.set_xlabel(
+        "Rain-event threshold [mm day$^{-1}$]"
+    )
+    ax.set_ylabel("Probability of detection")
+    ax.set_ylim(0, 1.02)
+    ax.set_title(
+        f"OceanRAIN POD sensitivity — {hemisphere}"
+    )
+    ax.grid(True, alpha=0.3)
+    ax.legend(
+        frameon=False,
+        ncol=2,
+    )
+
+    fig.tight_layout()
+    fig.savefig(
+        OUTPUT_DIR
+        / f"pod_threshold_sensitivity_{hemisphere}.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.show()
+
+
+# --------------------------------------------------------------
+# Plot 2: POD, FAR, frequency bias and HSS
+#         ERA5 versus MERRA-2
+# --------------------------------------------------------------
+
+key_products = ["ERA5", "MERRA-2"]
+key_metrics = [
+    ("POD", "Probability of detection"),
+    ("FAR", "False alarm ratio"),
+    ("Frequency_bias", "Frequency bias"),
+    ("HSS", "Heidke skill score"),
+]
+
+for hemisphere in HEMISPHERES:
+
+    for metric, ylabel in key_metrics:
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        for product in key_products:
+
+            product_df = sensitivity_df[
+                (
+                    sensitivity_df["Hemisphere"]
+                    == hemisphere
+                )
+                & (
+                    sensitivity_df["Product"]
+                    == product
+                )
+            ]
+
+            ax.plot(
+                product_df["Threshold_mmday"],
+                product_df[metric],
+                marker="o",
+                linewidth=2.2,
+                label=product,
+            )
+
+        ax.axvline(
+            0.3,
+            linestyle="--",
+            linewidth=1,
+        )
+        ax.axvline(
+            1.0,
+            linestyle=":",
+            linewidth=1.5,
+        )
+
+        ax.set_xlabel(
+            "Rain-event threshold [mm day$^{-1}$]"
+        )
+        ax.set_ylabel(ylabel)
+        ax.set_title(
+            f"{ylabel}: ERA5 versus MERRA-2 — "
+            f"{hemisphere}"
+        )
+        ax.grid(True, alpha=0.3)
+        ax.legend(frameon=False)
+
+        if metric in ["POD", "FAR", "HSS"]:
+            ax.set_ylim(0, 1.02)
+
+        fig.tight_layout()
+        fig.savefig(
+            OUTPUT_DIR
+            / (
+                f"{metric.lower()}_ERA5_MERRA2_"
+                f"{hemisphere}.png"
+            ),
+            dpi=300,
+            bbox_inches="tight",
+        )
+        plt.show()
+
+
+# --------------------------------------------------------------
+# Plot 3: Fraction of OceanRAIN event days detected
+#
+# This is numerically equivalent to POD, but the event counts
+# are shown explicitly to make the threshold effect intuitive.
+# --------------------------------------------------------------
+
+for hemisphere in HEMISPHERES:
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+
+    for product in ["ERA5", "MERRA-2", "IMERG v07"]:
+
+        product_df = sensitivity_df[
+            (
+                sensitivity_df["Hemisphere"]
+                == hemisphere
+            )
+            & (
+                sensitivity_df["Product"]
+                == product
+            )
+        ]
+
+        ax.plot(
+            product_df["Threshold_mmday"],
+            100 * product_df["POD"],
+            marker="o",
+            linewidth=2,
+            label=product,
+        )
+
+    ax.axvline(
+        0.3,
+        linestyle="--",
+        linewidth=1,
+    )
+    ax.axvline(
+        1.0,
+        linestyle=":",
+        linewidth=1.5,
+    )
+
+    ax.set_xlabel(
+        "Rain-event threshold [mm day$^{-1}$]"
+    )
+    ax.set_ylabel(
+        "Observed OceanRAIN events detected [%]"
+    )
+    ax.set_ylim(0, 100)
+    ax.set_title(
+        f"Fraction of OceanRAIN events detected — "
+        f"{hemisphere}"
+    )
+    ax.grid(True, alpha=0.3)
+    ax.legend(frameon=False)
+
+    fig.tight_layout()
+    fig.savefig(
+        OUTPUT_DIR
+        / f"observed_events_detected_{hemisphere}.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.show()
+
+
+# --------------------------------------------------------------
+# Diagnostic 4:
+# Product rainfall distribution on OceanRAIN rainy days
+#
+# For each reference threshold, this isolates days on which
+# OceanRAIN reports an event and examines the matched product
+# rainfall values.
+# --------------------------------------------------------------
+
+rain_day_thresholds = [0.3, 1.0]
+
+distribution_summary_rows = []
+
+for hemisphere in HEMISPHERES:
+
+    hemi_df = df_or[
+        df_or["hemi"] == hemisphere
+    ].copy()
+
+    for obs_threshold in rain_day_thresholds:
+
+        observed_event_df = hemi_df[
+            hemi_df[OBS_COL] >= obs_threshold
+        ].copy()
+
+        for product in ["ERA5", "MERRA-2", "IMERG v07"]:
+
+            values = (
+                observed_event_df[product]
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+            )
+
+            if values.empty:
+                continue
+
+            distribution_summary_rows.append({
+                "Hemisphere": hemisphere,
+                "OceanRAIN_event_threshold": obs_threshold,
+                "Product": product,
+                "N": len(values),
+                "Mean": values.mean(),
+                "Median": values.median(),
+                "P10": values.quantile(0.10),
+                "P25": values.quantile(0.25),
+                "P75": values.quantile(0.75),
+                "P90": values.quantile(0.90),
+                "Fraction_below_0.3": (
+                    values < 0.3
+                ).mean(),
+                "Fraction_below_1.0": (
+                    values < 1.0
+                ).mean(),
+            })
+
+distribution_summary_df = pd.DataFrame(
+    distribution_summary_rows
+)
+
+distribution_summary_df.to_csv(
+    OUTPUT_DIR
+    / "product_distribution_on_oceanrain_event_days.csv",
+    index=False,
+)
+
+print(
+    "Product rainfall on OceanRAIN event days:"
+)
+print(
+    distribution_summary_df.round(3)
+)
+print()
+
+
+# --------------------------------------------------------------
+# Plot 4: Histograms for ERA5 and MERRA-2 on OceanRAIN
+#         rain-event days
+#
+# Separate plots are used for each hemisphere and reference
+# event threshold.
+# --------------------------------------------------------------
+
+histogram_bins = np.array([
+    0.0, 0.1, 0.3, 0.5, 0.75,
+    1.0, 1.5, 2.0, 3.0, 5.0,
+    8.0, 12.0, 20.0, 40.0,
+])
+
+for hemisphere in HEMISPHERES:
+
+    hemi_df = df_or[
+        df_or["hemi"] == hemisphere
+    ].copy()
+
+    for obs_threshold in rain_day_thresholds:
+
+        event_df = hemi_df[
+            hemi_df[OBS_COL] >= obs_threshold
+        ].copy()
+
+        fig, ax = plt.subplots(figsize=(9, 6))
+
+        for product in ["ERA5", "MERRA-2"]:
+
+            values = (
+                event_df[product]
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+            )
+
+            ax.hist(
+                values,
+                bins=histogram_bins,
+                density=True,
+                histtype="step",
+                linewidth=2,
+                label=product,
+            )
+
+        ax.axvline(
+            0.3,
+            linestyle="--",
+            linewidth=1,
+            label="0.3 mm/day",
+        )
+
+        ax.axvline(
+            1.0,
+            linestyle=":",
+            linewidth=1.5,
+            label="1.0 mm/day",
+        )
+
+        ax.set_xlabel(
+            "Matched product precipitation "
+            "[mm day$^{-1}$]"
+        )
+        ax.set_ylabel("Probability density")
+        ax.set_title(
+            f"{hemisphere}: product rainfall on "
+            f"OceanRAIN ≥ {obs_threshold:g} mm/day days"
+        )
+        ax.set_xlim(
+            0,
+            np.nanpercentile(
+                event_df[
+                    ["ERA5", "MERRA-2"]
+                ].to_numpy(),
+                97.5,
+            )
+        )
+        ax.grid(True, alpha=0.3)
+        ax.legend(frameon=False)
+
+        fig.tight_layout()
+        fig.savefig(
+            OUTPUT_DIR
+            / (
+                f"hist_ERA5_MERRA2_{hemisphere}_"
+                f"OceanRAIN_ge_{obs_threshold:g}.png"
+            ),
+            dpi=300,
+            bbox_inches="tight",
+        )
+        plt.show()
+
+
+# --------------------------------------------------------------
+# Diagnostic 5:
+# Explicit count of OceanRAIN events migrating from hits at 0.3
+# to misses at 1.0
+#
+# This directly tests the proposed explanation for ERA5 NH.
+# --------------------------------------------------------------
+
+migration_rows = []
+
+for hemisphere in HEMISPHERES:
+
+    hemi_df = df_or[
+        df_or["hemi"] == hemisphere
+    ].copy()
+
+    for product in ["ERA5", "MERRA-2", "IMERG v07"]:
+
+        pair = hemi_df[
+            [OBS_COL, product]
+        ].dropna()
+
+        # OceanRAIN event under current 1.0 threshold.
+        obs_event_1 = pair[OBS_COL] >= 1.0
+
+        # Among those OceanRAIN events:
+        # product detects at 0.3 but fails at 1.0.
+        product_detects_03 = pair[product] >= 0.3
+        product_detects_10 = pair[product] >= 1.0
+
+        intermediate_detection = (
+            obs_event_1
+            & product_detects_03
+            & ~product_detects_10
+        )
+
+        detected_at_10 = (
+            obs_event_1
+            & product_detects_10
+        )
+
+        missed_even_at_03 = (
+            obs_event_1
+            & ~product_detects_03
+        )
+
+        total_obs_events_1 = int(
+            obs_event_1.sum()
+        )
+
+        migration_rows.append({
+            "Hemisphere": hemisphere,
+            "Product": product,
+            "OceanRAIN_events_ge_1": total_obs_events_1,
+            "Detected_product_ge_1": int(
+                detected_at_10.sum()
+            ),
+            "Detected_at_0.3_but_not_1.0": int(
+                intermediate_detection.sum()
+            ),
+            "Missed_below_0.3": int(
+                missed_even_at_03.sum()
+            ),
+            "Percent_intermediate_0.3_to_1.0": (
+                100
+                * intermediate_detection.sum()
+                / total_obs_events_1
+                if total_obs_events_1 > 0
+                else np.nan
+            ),
+        })
+
+migration_df = pd.DataFrame(migration_rows)
+
+migration_df.to_csv(
+    OUTPUT_DIR
+    / "event_migration_between_0p3_and_1p0.csv",
+    index=False,
+)
+
+print(
+    "OceanRAIN ≥1 mm/day events: detection migration "
+    "between 0.3 and 1.0 thresholds"
+)
+print(migration_df.round(2))
+print()
+
+
+# --------------------------------------------------------------
+# Optional diagnostic 6:
+# Threshold sensitivity by daily OceanRAIN coverage
+#
+# This checks whether the result depends on the current
+# coverage_frac_day criterion.
+# --------------------------------------------------------------
+
+if "coverage_frac_day" in df_or.columns:
+
+    coverage_thresholds = [
+        0.10,
+        0.25,
+        0.50,
+        0.75,
+    ]
+
+    coverage_rows = []
+
+    for minimum_coverage in coverage_thresholds:
+
+        coverage_df = df_or[
+            df_or["coverage_frac_day"]
+            >= minimum_coverage
+        ].copy()
+
+        for hemisphere in HEMISPHERES:
+
+            hemi_df = coverage_df[
+                coverage_df["hemi"] == hemisphere
+            ]
+
+            for product in [
+                "ERA5",
+                "MERRA-2",
+                "IMERG v07",
+            ]:
+
+                pair = hemi_df[
+                    [OBS_COL, product]
+                ].dropna()
+
+                for threshold in [0.3, 1.0]:
+
+                    metrics = (
+                        categorical_metrics_with_counts(
+                            forecast=pair[product],
+                            observation=pair[OBS_COL],
+                            threshold=threshold,
+                        )
+                    )
+
+                    coverage_rows.append({
+                        "Minimum_coverage_fraction":
+                            minimum_coverage,
+                        "Hemisphere": hemisphere,
+                        "Product": product,
+                        "Threshold_mmday": threshold,
+                        **metrics,
+                    })
+
+    coverage_sensitivity_df = pd.DataFrame(
+        coverage_rows
+    )
+
+    coverage_sensitivity_df.to_csv(
+        OUTPUT_DIR
+        / "coverage_threshold_sensitivity.csv",
+        index=False,
+    )
+
+    for hemisphere in HEMISPHERES:
+
+        for event_threshold in [0.3, 1.0]:
+
+            fig, ax = plt.subplots(
+                figsize=(8, 6)
+            )
+
+            plot_df = coverage_sensitivity_df[
+                (
+                    coverage_sensitivity_df[
+                        "Hemisphere"
+                    ] == hemisphere
+                )
+                & (
+                    coverage_sensitivity_df[
+                        "Threshold_mmday"
+                    ] == event_threshold
+                )
+            ]
+
+            for product in [
+                "ERA5",
+                "MERRA-2",
+                "IMERG v07",
+            ]:
+
+                product_df = plot_df[
+                    plot_df["Product"]
+                    == product
+                ]
+
+                ax.plot(
+                    product_df[
+                        "Minimum_coverage_fraction"
+                    ],
+                    product_df["POD"],
+                    marker="o",
+                    linewidth=2,
+                    label=product,
+                )
+
+            ax.set_xlabel(
+                "Minimum retained daily "
+                "OceanRAIN coverage fraction"
+            )
+            ax.set_ylabel(
+                "Probability of detection"
+            )
+            ax.set_ylim(0, 1.02)
+            ax.set_title(
+                f"{hemisphere}: POD sensitivity to "
+                f"coverage at {event_threshold:g} mm/day"
+            )
+            ax.grid(True, alpha=0.3)
+            ax.legend(frameon=False)
+
+            fig.tight_layout()
+            fig.savefig(
+                OUTPUT_DIR
+                / (
+                    f"coverage_POD_{hemisphere}_"
+                    f"thr_{event_threshold:g}.png"
+                ),
+                dpi=300,
+                bbox_inches="tight",
+            )
+            plt.show()
+
+else:
+    print(
+        "coverage_frac_day is not present; "
+        "coverage sensitivity was skipped."
+    )
+
+
+# --------------------------------------------------------------
+# Optional diagnostic 7:
+# Annual POD at 0.3 and 1.0 mm/day
+#
+# This checks whether a small number of years or cruises drives
+# the apparent ERA5 NH reduction.
+# --------------------------------------------------------------
+
+if "year" in df_or.columns:
+
+    annual_rows = []
+
+    for hemisphere in HEMISPHERES:
+
+        hemi_df = df_or[
+            df_or["hemi"] == hemisphere
+        ]
+
+        valid_years = sorted(
+            hemi_df["year"].dropna().unique()
+        )
+
+        for year in valid_years:
+
+            year_df = hemi_df[
+                hemi_df["year"] == year
+            ]
+
+            for product in [
+                "ERA5",
+                "MERRA-2",
+                "IMERG v07",
+            ]:
+
+                pair = year_df[
+                    [OBS_COL, product]
+                ].dropna()
+
+                for threshold in [0.3, 1.0]:
+
+                    metrics = (
+                        categorical_metrics_with_counts(
+                            forecast=pair[product],
+                            observation=pair[OBS_COL],
+                            threshold=threshold,
+                        )
+                    )
+
+                    annual_rows.append({
+                        "Hemisphere": hemisphere,
+                        "Year": int(year),
+                        "Product": product,
+                        "Threshold_mmday": threshold,
+                        **metrics,
+                    })
+
+    annual_sensitivity_df = pd.DataFrame(
+        annual_rows
+    )
+
+    # Avoid interpreting annual estimates with very few observed
+    # events.
+    annual_sensitivity_df[
+        "Adequate_event_count"
+    ] = (
+        annual_sensitivity_df[
+            "Observed_events"
+        ] >= 20
+    )
+
+    annual_sensitivity_df.to_csv(
+        OUTPUT_DIR
+        / "annual_threshold_sensitivity.csv",
+        index=False,
+    )
+
+    for hemisphere in HEMISPHERES:
+
+        for event_threshold in [0.3, 1.0]:
+
+            fig, ax = plt.subplots(
+                figsize=(10, 6)
+            )
+
+            plot_df = annual_sensitivity_df[
+                (
+                    annual_sensitivity_df[
+                        "Hemisphere"
+                    ] == hemisphere
+                )
+                & (
+                    annual_sensitivity_df[
+                        "Threshold_mmday"
+                    ] == event_threshold
+                )
+                & (
+                    annual_sensitivity_df[
+                        "Adequate_event_count"
+                    ]
+                )
+            ]
+
+            for product in [
+                "ERA5",
+                "MERRA-2",
+                "IMERG v07",
+            ]:
+
+                product_df = plot_df[
+                    plot_df["Product"]
+                    == product
+                ]
+
+                ax.plot(
+                    product_df["Year"],
+                    product_df["POD"],
+                    marker="o",
+                    linewidth=1.8,
+                    label=product,
+                )
+
+            ax.set_xlabel("Year")
+            ax.set_ylabel(
+                "Probability of detection"
+            )
+            ax.set_ylim(0, 1.02)
+            ax.set_title(
+                f"{hemisphere}: annual POD at "
+                f"{event_threshold:g} mm/day"
+            )
+            ax.grid(True, alpha=0.3)
+            ax.legend(frameon=False)
+
+            fig.tight_layout()
+            fig.savefig(
+                OUTPUT_DIR
+                / (
+                    f"annual_POD_{hemisphere}_"
+                    f"thr_{event_threshold:g}.png"
+                ),
+                dpi=300,
+                bbox_inches="tight",
+            )
+            plt.show()
+
+else:
+    print(
+        "A usable date/year column is not present; "
+        "annual sensitivity was skipped."
+    )
+
+
+print(
+    "\nSensitivity audit complete. Outputs saved to:"
+)
+print(OUTPUT_DIR.resolve())
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+OBS = "main_mmday"
+PRODUCTS = ["ERA5", "MERRA-2", "IMERG v07", "GPCP v1.3", "GPCP v3.2", "GPCP v3.3"]
+THRESHOLD = 1.0
+
+# Log-spaced rainfall bins, similar to your PAL/Buoy intensity plot
+bins = np.array([0.1, 0.3, 0.5, 1, 2, 4, 8, 16, 32, 64])
+
+
+# ============================================================
+# 1. Rainfall-volume distribution by intensity class
+# ============================================================
+
+fig, axes = plt.subplots(
+    1, 2,
+    figsize=(14, 5),
+    sharey=True
+)
+
+for ax, hemi in zip(axes, ["NH", "SH"]):
+
+    df = daily_or_attached[
+        daily_or_attached["hemi"] == hemi
+    ].copy()
+
+    columns = [OBS] + PRODUCTS
+    df = df[columns].replace(
+        [np.inf, -np.inf],
+        np.nan
+    ).dropna()
+
+    for col in columns:
+
+        values = df[col].to_numpy()
+
+        # Rainfall volume contributed by each intensity bin
+        rainfall_volume, _ = np.histogram(
+            values,
+            bins=bins,
+            weights=values
+        )
+
+        total_volume = np.sum(values)
+
+        if total_volume > 0:
+            rainfall_fraction = (
+                100 * rainfall_volume / total_volume
+            )
+        else:
+            rainfall_fraction = np.full(
+                len(bins) - 1,
+                np.nan
+            )
+
+        # Geometric centers are best for log-scaled bins
+        bin_centers = np.sqrt(
+            bins[:-1] * bins[1:]
+        )
+
+        ax.plot(
+            bin_centers,
+            rainfall_fraction,
+            marker="o",
+            linewidth=2.5,
+            label=col
+        )
+
+    ax.axvline(
+        0.3,
+        linestyle="--",
+        linewidth=1.2,
+        label="0.3 mm/day"
+    )
+
+    ax.axvline(
+        1.0,
+        linestyle=":",
+        linewidth=1.5,
+        label="1.0 mm/day"
+    )
+
+    ax.set_xscale("log", base=2)
+    ax.set_xticks(bins)
+    ax.set_xticklabels(
+        [str(x) for x in bins]
+    )
+
+    ax.set_xlabel(
+        "Daily precipitation [mm day$^{-1}$]"
+    )
+    ax.set_title(hemi)
+    ax.grid(True, alpha=0.3)
+
+axes[0].set_ylabel(
+    "Contribution to total rainfall volume [%]"
+)
+
+handles, labels = axes[1].get_legend_handles_labels()
+
+# Remove repeated threshold labels
+unique = dict(zip(labels, handles))
+
+fig.legend(
+    unique.values(),
+    unique.keys(),
+    loc="lower center",
+    ncol=5,
+    frameon=False,
+    bbox_to_anchor=(0.5, -0.05)
+)
+
+fig.suptitle(
+    "OceanRAIN and reanalysis daily rainfall-volume distributions"
+)
+
+fig.tight_layout(
+    rect=[0, 0.10, 1, 0.95]
+)
+
+plt.show()
+
+
+# ============================================================
+# 2. OceanRAIN versus ERA5 scatter plot
+# ============================================================
+
+fig, axes = plt.subplots(
+    1, 2,
+    figsize=(13, 5.5),
+    sharex=True,
+    sharey=True
+)
+
+for ax, hemi in zip(axes, ["NH", "SH"]):
+
+    df = daily_or_attached[
+        daily_or_attached["hemi"] == hemi
+    ][[OBS, "ERA5"]].replace(
+        [np.inf, -np.inf],
+        np.nan
+    ).dropna()
+
+    ax.scatter(
+        df[OBS],
+        df["ERA5"],
+        alpha=0.55,
+        s=28
+    )
+
+    max_value = np.nanpercentile(
+        df[[OBS, "ERA5"]].to_numpy(),
+        98
+    )
+
+    max_value = max(max_value, 5)
+
+    ax.plot(
+        [0, max_value],
+        [0, max_value],
+        linestyle="--",
+        linewidth=1.2,
+        label="1:1 line"
+    )
+
+    ax.axvline(
+        THRESHOLD,
+        linestyle=":",
+        linewidth=1.5
+    )
+
+    ax.axhline(
+        THRESHOLD,
+        linestyle=":",
+        linewidth=1.5
+    )
+
+    ax.set_xlim(0, max_value)
+    ax.set_ylim(0, max_value)
+
+    ax.set_xlabel(
+        "OceanRAIN [mm day$^{-1}$]"
+    )
+    ax.set_title(hemi)
+    ax.grid(True, alpha=0.3)
+
+axes[0].set_ylabel(
+    "ERA5 [mm day$^{-1}$]"
+)
+
+fig.suptitle(
+    "OceanRAIN versus ERA5 daily precipitation"
+)
+
+fig.tight_layout()
+plt.show()
+
+
+# ============================================================
+# 3. Simple threshold-quadrant counts
+# ============================================================
+
+for hemi in ["NH", "SH"]:
+
+    df = daily_or_attached[
+        daily_or_attached["hemi"] == hemi
+    ][[OBS, "ERA5"]].replace(
+        [np.inf, -np.inf],
+        np.nan
+    ).dropna()
+
+    hits = (
+        (df[OBS] >= THRESHOLD)
+        & (df["ERA5"] >= THRESHOLD)
+    ).sum()
+
+    misses = (
+        (df[OBS] >= THRESHOLD)
+        & (df["ERA5"] < THRESHOLD)
+    ).sum()
+
+    false_alarms = (
+        (df[OBS] < THRESHOLD)
+        & (df["ERA5"] >= THRESHOLD)
+    ).sum()
+
+    correct_negatives = (
+        (df[OBS] < THRESHOLD)
+        & (df["ERA5"] < THRESHOLD)
+    ).sum()
+
+    print(f"\n{hemi} at {THRESHOLD} mm/day")
+    print(f"Hits:              {hits}")
+    print(f"Misses:            {misses}")
+    print(f"False alarms:      {false_alarms}")
+    print(f"Correct negatives: {correct_negatives}")
+
+    observed_events = hits + misses
+
+    if observed_events > 0:
+        print(
+            "Observed events represented below "
+            f"{THRESHOLD} mm/day by ERA5: "
+            f"{100 * misses / observed_events:.1f}%"
+        )
 
 #%%
 # -------------------------------------------------------------
