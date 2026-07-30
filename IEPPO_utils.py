@@ -13277,3 +13277,122 @@ def mask_common05deg_product_map(product_map, spatial_mask):
         )
 
     return masked_map
+
+
+# --------------------------------------------------------------
+# Core contingency-table function
+# --------------------------------------------------------------
+
+def categorical_metrics_with_counts(
+    forecast,
+    observation,
+    threshold,
+):
+    """
+    Calculate categorical metrics and raw contingency counts.
+
+    Events are defined using >= threshold for both forecast and
+    observation, consistent with categorical_stats in IEPPO_utils.py.
+    """
+
+    forecast = np.asarray(forecast, dtype=float)
+    observation = np.asarray(observation, dtype=float)
+
+    valid = np.isfinite(forecast) & np.isfinite(observation)
+
+    forecast = forecast[valid]
+    observation = observation[valid]
+
+    forecast_event = forecast >= threshold
+    observed_event = observation >= threshold
+
+    hits = np.sum(forecast_event & observed_event)
+    misses = np.sum(~forecast_event & observed_event)
+    false_alarms = np.sum(forecast_event & ~observed_event)
+    correct_negatives = np.sum(
+        ~forecast_event & ~observed_event
+    )
+
+    n_valid = (
+        hits
+        + misses
+        + false_alarms
+        + correct_negatives
+    )
+
+    n_observed_events = hits + misses
+    n_forecast_events = hits + false_alarms
+
+    pod = (
+        hits / n_observed_events
+        if n_observed_events > 0
+        else np.nan
+    )
+
+    far = (
+        false_alarms / n_forecast_events
+        if n_forecast_events > 0
+        else np.nan
+    )
+
+    csi = (
+        hits / (hits + misses + false_alarms)
+        if (hits + misses + false_alarms) > 0
+        else np.nan
+    )
+
+    frequency_bias = (
+        n_forecast_events / n_observed_events
+        if n_observed_events > 0
+        else np.nan
+    )
+
+    pofd = (
+        false_alarms / (
+            false_alarms + correct_negatives
+        )
+        if (false_alarms + correct_negatives) > 0
+        else np.nan
+    )
+
+    accuracy = (
+        (hits + correct_negatives) / n_valid
+        if n_valid > 0
+        else np.nan
+    )
+
+    hss_denominator = (
+        (hits + misses)
+        * (misses + correct_negatives)
+        + (hits + false_alarms)
+        * (false_alarms + correct_negatives)
+    )
+
+    hss = (
+        2
+        * (
+            hits * correct_negatives
+            - misses * false_alarms
+        )
+        / hss_denominator
+        if hss_denominator > 0
+        else np.nan
+    )
+
+    return {
+        "N_valid": int(n_valid),
+        "Observed_events": int(n_observed_events),
+        "Forecast_events": int(n_forecast_events),
+        "Hits": int(hits),
+        "Misses": int(misses),
+        "False_alarms": int(false_alarms),
+        "Correct_negatives": int(correct_negatives),
+        "POD": pod,
+        "FAR": far,
+        "CSI": csi,
+        "Frequency_bias": frequency_bias,
+        "POFD": pofd,
+        "Accuracy": accuracy,
+        "HSS": hss,
+    }
+
