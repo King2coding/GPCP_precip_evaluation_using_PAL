@@ -7,6 +7,8 @@ warnings.filterwarnings("ignore")
 
 import gc
 import os
+from pathlib import Path
+import re
 from typing import Optional, Tuple, Sequence
 from collections import defaultdict
 from datetime import date
@@ -16,8 +18,14 @@ import math
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.colors as mcolors
-from matplotlib.ticker import MaxNLocator, AutoMinorLocator
-from matplotlib.ticker import FixedLocator, FuncFormatter, FormatStrFormatter
+from matplotlib.ticker import (
+    MaxNLocator,
+    AutoMinorLocator,
+    FixedLocator,
+    FuncFormatter,
+    FormatStrFormatter,
+    MultipleLocator,
+)
 from matplotlib.colors import BoundaryNorm
 import matplotlib.dates as mdates
 import matplotlib.lines as mlines
@@ -214,6 +222,16 @@ product_colors = {
     "MERRA-2": "#ff7f0e",     # orange
     'PAL': "#0820d4",         # deep blue
     'Buoy': "#0820d4",       # deep blue
+}
+
+product_linestyles = {
+    "GPCP v1.3": ":",
+    "GPCP v2.3": (0, (4, 2)),
+    "GPCP v3.2": "-.",
+    "GPCP v3.3": (0, (9, 2)),
+    "IMERG v07": "--",
+    "ERA5": (0, (5, 1, 1, 1, 1, 1)),
+    "MERRA-2": (0, (9, 2, 2, 2)),
 }
 
 PAL_region_markers = {
@@ -5963,6 +5981,7 @@ def plot_combined_daily_mean_pal_buoy_scatter_black(
         ax.set_ylim(0, max_val)
         ax.set_xticks(ticks)
         ax.set_yticks(ticks)
+        ax.set_aspect("equal", adjustable="box")
 
         ax.grid(True, which="major", linestyle="--", linewidth=0.7, alpha=0.6)
         ax.minorticks_on()
@@ -6160,10 +6179,12 @@ def plot_monthly_climatology_2x2(
     region_labels,
     products,
     product_colors,
+    product_linestyles,
     ref_col="Buoy",
     ref_label="Buoy",
     figsize=(12, 9),
     lw=3.5,
+    
     ncol_legend=7
 ):
     """
@@ -6188,7 +6209,8 @@ def plot_monthly_climatology_2x2(
         # ---- reference ----
         ax.plot(
             clim["month"], clim[ref_col],
-            lw=lw, color="b", label=ref_label
+            lw=lw, color="b", label=ref_label,
+            ls = '-'
         )
 
         # ---- products ----
@@ -6196,8 +6218,12 @@ def plot_monthly_climatology_2x2(
             if prod == ref_col:
                 continue
             ax.plot(
-                clim["month"], clim[prod],
-                lw=lw, color=product_colors[prod], label=prod
+                clim["month"],
+                clim[prod],
+                lw=lw,
+                color=product_colors[prod],
+                linestyle=product_linestyles.get(prod, "-"),
+                label=prod
             )
 
         ax.set_title(region_labels[region], fontsize=14, fontweight="bold")
@@ -6205,12 +6231,19 @@ def plot_monthly_climatology_2x2(
         ax.set_ylabel("[mm day$^{-1}$]", fontsize=16, fontweight="bold")
 
         ax.set_xticks(months)
-        ax.set_xlim(1, 12)
+        ax.set_xlim(1, 12)        
+        ax.yaxis.set_major_locator(MultipleLocator(1.0))
+        if region in ("ENP", "ATL"):
+            ax.set_yticks([2, 3, 4])
 
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.tick_params(axis="both", labelsize=16)
 
     handles, labels = axes[0].get_legend_handles_labels()
+
+    order = [0, 4, 1, 5, 2, 6, 3]
+    handles = [handles[i] for i in order]
+    labels = [labels[i] for i in order]
     fig.legend(
     handles, labels,
     loc="lower center",
@@ -10763,8 +10796,9 @@ def plot_intensity_metrics_selected_pal_buoy_4x2(
     rainfall_bins,
     products,
     product_colors,
+    product_linestyles,
     figsize=(17, 16),
-    linewidth=3.2,
+    linewidth=4.5,
     markersize=7.5,
     tick_fontsize=22,
     label_fontsize=25,
@@ -10878,7 +10912,8 @@ def plot_intensity_metrics_selected_pal_buoy_4x2(
                 ax.plot(
                     rainfall_bins,
                     dmet.loc[rainfall_bins, metric].astype(float),
-                    marker="o",
+                    # marker="o",
+                    linestyle=product_linestyles.get(product, "-"),
                     linewidth=linewidth,
                     markersize=markersize,
                     color=product_colors[product],
@@ -10946,15 +10981,21 @@ def plot_intensity_metrics_selected_pal_buoy_4x2(
 
     handles, labels = axes[0, 0].get_legend_handles_labels()
 
+    # Arrange the two-row legend in the intended visible reading order.
+    # order = [0, 3, 1, 4, 2, 5]
+
+    # handles = [handles[i] for i in order]
+    # labels = [labels[i] for i in order]
+
     fig.legend(
         handles,
         labels,
         loc="lower center",
         bbox_to_anchor=(0.5, 0.018),
-        ncol=6,
+        ncol=6, # 4
         fontsize=legend_fontsize,
         frameon=False,
-        handlelength=2.4,
+        handlelength=2.8,
         columnspacing=1.3,
         handletextpad=0.5,
     )
@@ -10974,10 +11015,11 @@ def plot_pdf_bundle_on_axis(
     insitu_label="PAL",
     products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"),
     product_colors=None,
+    product_linestyles=None,
     pdf_kind="pdfv",   # "pdfv" or "pdfc"
     lw=4,
     insitu_color="b",
-    insitu_ls=":",
+    insitu_ls="-",
 ):
     """
     Plot one PDF bundle on one axis.
@@ -11001,6 +11043,7 @@ def plot_pdf_bundle_on_axis(
             pdf_dict[product][pdf_kind],
             lw=lw,
             color=product_colors[product],
+            ls=product_linestyles.get(product, "-"),
             label=product
         )
 
@@ -11012,13 +11055,14 @@ def plot_pdf_comparison_pal_buoy(
     obs_col="rain_rate",
     products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA2"),
     product_colors=None,
+    product_linestyles=None,
     bin_values=(0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256),
     pdf_kind="pdfv",          # "pdfv" or "pdfc"
     pal_year_range=None,
     buoy_year_range=(2000, 2020),
     figsize=(16, 6),
     dpi=300,
-    lw=5,                    # slightly thicker default
+    lw=4.5,                   # slightly thicker default    
     savepath=None,
 ):
     """
@@ -11052,7 +11096,7 @@ def plot_pdf_comparison_pal_buoy(
     # plot
     # -----------------------------
     # Do not share y-axis, so PAL and buoy panels can scale independently.
-    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharey=False)
+    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharey=True)
 
     # left: PAL
     plot_pdf_bundle_on_axis(
@@ -11061,10 +11105,11 @@ def plot_pdf_comparison_pal_buoy(
         insitu_label="PAL",
         products=products,
         product_colors=product_colors,
+        product_linestyles=product_linestyles,
         pdf_kind=pdf_kind,
         lw=lw,
         insitu_color="b",
-        insitu_ls=":"
+        insitu_ls="-"
     )
 
     # right: Buoy
@@ -11074,6 +11119,7 @@ def plot_pdf_comparison_pal_buoy(
         insitu_label="Buoy",
         products=products,
         product_colors=product_colors,
+        product_linestyles=product_linestyles,
         pdf_kind=pdf_kind,
         lw=lw,
         insitu_color="b",
@@ -11119,21 +11165,49 @@ def plot_pdf_comparison_pal_buoy(
             tick.set_fontweight("bold")
 
     # Since y-axis is not shared, give both panels y-axis labels.
-    axes[0].set_ylabel("PDF (%)", fontsize=20, fontweight="bold")
-    axes[1].set_ylabel("PDF (%)", fontsize=20, fontweight="bold")
+    ylabel = (
+        "PDF by Volume\n(PDFv) [%]"
+        if pdf_kind == "pdfv"
+        else "PDF by Occurrence (PDFc) [%]"
+    )
+
+    axes[0].set_ylabel(ylabel, fontsize=20, fontweight="bold")
+    axes[1].set_ylabel(ylabel, fontsize=20, fontweight="bold")
 
     # -----------------------------
     # common legend
     # -----------------------------
+    # legend_handles = [
+    #     Line2D([0], [0], color="b", lw=lw, ls=":", label="PAL"),
+    #     Line2D([0], [0], color="b", lw=lw, ls="-", label="Buoy"),
+    # ]
+
     legend_handles = [
-        Line2D([0], [0], color="b", lw=lw, ls=":", label="PAL"),
-        Line2D([0], [0], color="b", lw=lw, ls="-", label="Buoy"),
+        Line2D(
+            [0], [0],
+            color="b",
+            lw=lw,
+            ls="-",
+            label="In situ reference"
+        )
     ]
 
     legend_handles.extend([
-        Line2D([0], [0], color=product_colors[p], lw=lw, ls="-", label=p)
+        Line2D(
+            [0], [0],
+            color=product_colors[p],
+            lw=lw,
+            ls=product_linestyles.get(p, "-"),
+            label=p
+        )
         for p in products
     ])
+
+    # Arrange the two-row legend in the intended visible reading order.
+    legend_handles = [
+        legend_handles[i]
+        for i in [0, 4, 1, 5, 2, 6, 3]
+    ]
 
     # More bottom space is needed because the legend has two rows.
     fig.legend(
@@ -11260,12 +11334,13 @@ def plot_interannual_variability_with_sample_counts_2x2(
     regions,
     products,
     product_colors,
+    product_linestyles=product_linestyles,
     *,
     ref=None,
     region_labels=None,
-    figsize=(16.5, 9.5),
-    lw_ref=3.5,
-    lw_prod=3.5,
+    figsize=(20, 9.5),
+    lw_ref=4.5,
+    lw_prod=4.5,
     lw_count=2.5,
     count_col="n_valid_months",
     count_color="0.35",
@@ -11274,9 +11349,11 @@ def plot_interannual_variability_with_sample_counts_2x2(
     count_label="Valid months",
     show_count_on_all_panels=True,
     right_ylabel="Valid months",
-    ncol_legend=3,
+    ncol_legend=4,
     year_min=None,
     year_max=None,
+    year_padding=0.4,
+    rainfall_yticks=None,
     region_year_limits=None,
     count_ylim=None,   # <-- changed default
 
@@ -11289,7 +11366,7 @@ def plot_interannual_variability_with_sample_counts_2x2(
     """
 
     if region_labels is None:
-        region_labels = Buoy_REGION_NAMES
+        region_labels = Buoy_REGION_NAMES   
 
     fig, axes = plt.subplots(2, 2, figsize=figsize, sharex=False, sharey=False)
 
@@ -11334,20 +11411,31 @@ def plot_interannual_variability_with_sample_counts_2x2(
 
         # --- left axis: rainfall series ---
 
+        # Identify years retained for the annual rainfall composite.
         if ref is not None and ref in dfr.columns:
+            valid_annual = dfr[ref].notna()
+        else:
+            available_products = [
+                p for p in products
+                if p in dfr.columns
+            ]
+            valid_annual = dfr[available_products].notna().any(axis=1)
 
-            h = ax.plot(
-                dfr["year"],
-                dfr[ref],
-                lw=lw_ref,
-                color=product_colors.get(ref, "k"),
-                label=ref,
-                zorder=3,
+        valid_years = dfr.loc[valid_annual, "year"]
 
-            )[0]
+        h = ax.plot(
+            dfr["year"],
+            dfr[ref],
+            lw=lw_ref,
+            color=product_colors.get(ref, "k"),
+            label=ref,
+            zorder=3,
+            linestyle= "-",
 
-            all_handles.append(h)
-            all_labels.append(ref)
+        )[0]
+
+        all_handles.append(h)
+        all_labels.append(ref)
 
         for prod in products:
 
@@ -11364,6 +11452,7 @@ def plot_interannual_variability_with_sample_counts_2x2(
                 color=product_colors[prod],
                 label=prod,
                 zorder=2,
+                linestyle=product_linestyles.get(prod, "-"),
 
             )[0]
 
@@ -11372,10 +11461,18 @@ def plot_interannual_variability_with_sample_counts_2x2(
 
         ax.set_title(region_labels.get(region, region), fontsize=16, fontweight="bold")
 
-        ax.set_ylabel(rainfall_ylabel, fontsize=16, fontweight="bold")
+        ax.set_ylabel(rainfall_ylabel, fontsize=18, fontweight="bold")
         ax.grid(True, linestyle="--", alpha=0.5)
-        ax.tick_params(axis="both", labelsize=16)
+        ax.tick_params(axis="both", labelsize=20)
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        if rainfall_yticks is not None and region in rainfall_yticks:
+            ax.set_yticks(rainfall_yticks[region])
+
+        if not valid_years.empty:
+            ax.set_xlim(
+                valid_years.min() - year_padding,
+                valid_years.max() + year_padding
+            )
 
         # --- right axis: count line ---
         axr = ax.twinx()
@@ -11383,7 +11480,7 @@ def plot_interannual_variability_with_sample_counts_2x2(
 
             hc = axr.plot(
                 dfr["year"],
-                dfr[count_col],
+                dfr[count_col].where(valid_annual),
                 color=count_color,
                 lw=lw_count,
                 ls=count_ls,
@@ -11398,40 +11495,93 @@ def plot_interannual_variability_with_sample_counts_2x2(
                 all_handles.append(hc)
                 all_labels.append(count_label)
 
-        if count_ylim is not None:
-            axr.set_ylim(*count_ylim)
+        if count_ylim is None and count_col in annual_df.columns:
+            valid_counts = annual_df[count_col]
+
+            if ref is not None and ref in annual_df.columns:
+                valid_counts = valid_counts.where(
+                    annual_df[ref].notna()
+                )
+
+            cmax = valid_counts.max()
+
+            if np.isfinite(cmax):
+                count_ylim = (0, cmax * 1.10)
 
         # sensible automatic ticks for right axis
 
         axr.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
-        axr.tick_params(axis="y", labelsize=16, colors=count_color)
+        axr.tick_params(axis="y", labelsize=18, colors=count_color)
         if show_count_on_all_panels:
-            axr.set_ylabel(right_ylabel, fontsize=16, fontweight="bold", color=count_color)
+            axr.set_ylabel(right_ylabel, fontsize=18, fontweight="bold", color=count_color)
 
         else:
             if i % 2 == 1:
-                axr.set_ylabel(right_ylabel, fontsize=16, fontweight="bold", color=count_color)
+                axr.set_ylabel(right_ylabel, fontsize=18, fontweight="bold", color=count_color)
 
             else:
                 axr.set_ylabel("")
 
-    # deduplicate legend
-
+    # Deduplicate handles by label.
     uniq = {}
 
-    for lab, h in zip(all_labels, all_handles):
-
+    for lab, handle in zip(all_labels, all_handles):
         if lab not in uniq:
-            uniq[lab] = h
+            uniq[lab] = handle
+
+    # Desired scientific reading order.
+    preferred_labels = [
+        "Buoy",
+        "GPCP v2.3",
+        "GPCP v3.2",
+        "GPCP v3.3",
+        "IMERG v07",
+        "ERA5",
+        "MERRA-2",
+        count_label,
+    ]
+
+    # Retain only entries present in the current figure.
+    rowwise_labels = [
+        lab for lab in preferred_labels
+        if lab in uniq
+    ]
+
+    # Preserve any unexpected entries rather than dropping them.
+    rowwise_labels.extend(
+        lab for lab in uniq
+        if lab not in rowwise_labels
+    )
+
+    ncols = min(ncol_legend, len(rowwise_labels))
+    nrows = (len(rowwise_labels) + ncols - 1) // ncols
+
+    rows = [
+        rowwise_labels[row * ncols:(row + 1) * ncols]
+        for row in range(nrows)
+    ]
+
+    # Convert the desired row-wise order to Matplotlib's column-wise input.
+    legend_labels = [
+        rows[row][col]
+        for col in range(ncols)
+        for row in range(nrows)
+        if col < len(rows[row])
+    ]
+
+    legend_handles = [
+        uniq[lab] for lab in legend_labels
+    ]
 
     fig.legend(
-        uniq.values(),
-        uniq.keys(),
+        legend_handles,
+        legend_labels,
         loc="lower center",
-        ncol=ncol_legend,
+        ncol=ncols,
         frameon=False,
         fontsize=18,
         bbox_to_anchor=(0.5, 0.02),
+        handlelength=3.2,
     )
 
     fig.tight_layout(rect=[0, 0.13, 1, 1])

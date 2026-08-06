@@ -1158,6 +1158,12 @@ if buoy_sate_daily_rainfall_colasped_df is None:
 pal_sate_daily_rainfall_colasped_df = pal_sate_daily_rainfall_colasped_df.rename(
     columns={'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
 
+pal_sate_daily_mean_df = pal_sate_daily_mean_df.rename(
+    columns={'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
+
+buoy_sate_daily_mean_df = buoy_sate_daily_mean_df.rename(
+    columns={'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
+
 buoy_sate_daily_rainfall_colasped_df = buoy_sate_daily_rainfall_colasped_df.rename(
     columns={'MERRA2':'MERRA-2'})  # Rename MERRA2 to MERRA-2 for consistency
 #%% Daily-Scale Assessment: SCATTER PLOT of Multi-Year Means
@@ -1222,10 +1228,10 @@ fig3 = plot_combined_daily_mean_pal_buoy_scatter_black(
     pal_truth_label="PAL Observations",
     buoy_truth_label="Buoy Observations",
     pal_max_val=18,
-    buoy_max_val=15,
+    buoy_max_val=18,
     pal_ticks=(0, 6, 12, 18),
-    buoy_ticks=(0, 5, 10, 15),
-    figsize=(18, 20),
+    buoy_ticks=(0, 6, 12, 18),
+    figsize=(18, 24),
     point_size=70,
     point_alpha=0.85,
     savepath=os.path.join(
@@ -1547,9 +1553,10 @@ fig6, axes6 = plot_intensity_metrics_selected_pal_buoy_4x2(
     rainfall_bins=[0.5, 1, 2, 4, 8, 16, 32],
     products=["GPCP v1.3", "GPCP v3.2", "GPCP v3.3", 
               "IMERG v07", "ERA5", "MERRA-2"],
+    product_linestyles=product_linestyles,
     product_colors=product_colors,
     figsize=(17, 16),
-    linewidth=3.2,
+    linewidth=4.5,
     markersize=7.5,
     savepath=savepath,
 )
@@ -1562,15 +1569,17 @@ fig, axes, pal_pdf_dict, buoy_pdf_dict = plot_pdf_comparison_pal_buoy(
     pal_df=pal_sate_daily_rainfall_colasped_df,
     buoy_df=buoy_sate_daily_rainfall_colasped_df,
     obs_col="rain_rate",
-    products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", "IMERG v07", "ERA5", "MERRA-2"),
+    products=("GPCP v1.3", "GPCP v3.2", "GPCP v3.3", 
+              "IMERG v07", "ERA5", "MERRA-2"),
     product_colors=product_colors,
+    product_linestyles=product_linestyles,
     bin_values=bin_values,
     pdf_kind="pdfv",                 # use "pdfc" if needed
     pal_year_range=None,
     buoy_year_range=(2000, 2020),
     figsize=(16, 6),
     dpi=150,
-    lw=4,
+    lw=4.5,
     savepath=savepath
     
 )
@@ -1869,10 +1878,39 @@ all_buoy_product_monthly_df.to_pickle(os.path.join(path_to_put_dfs, f'buoy_month
 gc.collect() 
 
 #%% Monthly to Interannual Variability: Monthly Clim Cycles
-all_buoy_product_monthly_df = pd.read_pickle(os.path.join(path_to_put_dfs, 'buoy_monthly_df_20260407.pkl'))
-all_buoy_product_monthly_df = all_buoy_product_monthly_df.rename(columns={
-    "MERRA2": "MERRA-2"
-})
+# Read file if it doesnt exist already
+
+if globals().get("all_buoy_product_monthly_df") is None:
+    dated_files = []
+
+    for file_path in Path(path_to_put_dfs).glob("buoy_monthly_df_*.pkl"):
+        match = re.fullmatch(
+            r"buoy_monthly_df_(\d{8})\.pkl",
+            file_path.name
+        )
+
+        if match:
+            dated_files.append((match.group(1), file_path))
+
+    if not dated_files:
+        raise FileNotFoundError(
+            f"No dated buoy-monthly pickle files found in {path_to_put_dfs}"
+        )
+
+    latest_date, latest_file = max(
+        dated_files,
+        key=lambda item: item[0]
+    )
+
+    all_buoy_product_monthly_df = pd.read_pickle(latest_file)
+    print(f"Loaded latest buoy-monthly dataset: {latest_file.name}")
+
+all_buoy_product_monthly_df = (
+    all_buoy_product_monthly_df.rename(
+        columns={"MERRA2": "MERRA-2"}
+    )
+)
+
 products = [
     "Buoy",
     "GPCP v2.3",
@@ -1915,14 +1953,15 @@ fig = plot_monthly_climatology_2x2(
     region_labels=Buoy_REGION_NAMES,
     products=buoy_monthly_products,
     product_colors=product_colors,
+    product_linestyles=product_linestyles,
     figsize=(12, 9),
-    lw=3.5,
+    lw=4.5,
     ncol_legend=4
 )
 
 svnme = os.path.join(
     path_to_plots,
-    f'Figure07_BuoyMonthly_SeasonalCycle_ProductComparison_{cde_run_dte}.png'
+    f'Figure09_BuoyMonthly_SeasonalCycle_ProductComparison_{cde_run_dte}.png'
 )
 fig.savefig(svnme, dpi=150, bbox_inches='tight')
 gc.collect()
@@ -1958,11 +1997,12 @@ annual_by_region, annual_buoy_product_df = build_annual_from_monthly_buoy_df(
 # PLOT INTERANNUAL VARIABILITY
 # ============================================================
 regions = list(Buoy_region_markers.keys())
+
 region_year_limits = {
     "ENP": (1998, 2013),
     "WNP": (1998, 2020),
-    "IND": (2008, 2025),
-    "ATL": (2003, 2025),   # or (2001, 2025) if you want to remove the early spike more aggressively
+    "IND": (2008, 2022),
+    "ATL": (2006, 2023),   # or 2003 (2001, 2025) if you want to remove the early spike more aggressively
 }
 
 fig = plot_interannual_variability_2x2_from_monthly_df(
@@ -1998,7 +2038,7 @@ annual_by_region_buoy_sm, annual_df_buoy_sm = build_annual_from_monthly_buoy_df_
     buoy_col="Buoy",
     min_days_per_month=20,
     min_buoys_per_month=2,
-    min_months_per_year=4,
+    min_months_per_year=10,
     year_min=min_date.year,
     year_max=max_date.year,
     region_year_limits=region_year_limits,
@@ -2011,19 +2051,42 @@ fig = plot_interannual_variability_with_sample_counts_2x2(
     product_colors=product_colors,
     ref="Buoy",
     count_col="n_valid_buoy_months",
-    count_label="Sample Count",
-    right_ylabel="Sample Count (Months)",
+    count_label="Buoy-month count",
+    right_ylabel="Contributing buoy-months",
+    rainfall_yticks = {
+        "ENP": [2, 4, 6, 8],
+        "WNP": [6, 8, 10, 12],
+        "IND": [4, 6, 8, 10],
+        "ATL": [2, 4, 6, 8],
+    },
     count_ylim=None,   # auto-scale
     ncol_legend=5,
 )
 
 svnme = os.path.join(
     path_to_plots,
-    f"Figure08_Buoy_AnnualRegionalPrecip_ProductComparison_{cde_run_dte}.png"
+    f"Figure10_Buoy_AnnualRegionalPrecip_ProductComparison_{cde_run_dte}.png"
 )
 fig.savefig(svnme, dpi=150, bbox_inches='tight')
 
 gc.collect()
+
+buoy_supported_year_limits = {}
+
+for region in regions:
+    sub = annual_df_buoy_sm[
+        annual_df_buoy_sm["region"] == region
+    ]
+
+    valid = sub["Buoy"].notna()
+
+    if valid.any():
+        buoy_supported_year_limits[region] = (
+            int(sub.loc[valid, "year"].min()),
+            int(sub.loc[valid, "year"].max()),
+        )
+
+print(buoy_supported_year_limits)
 
 #%% INTERANNUAL VARIABILITY: PRODUCT BASED COMPARISON
 print('Starting Product-based matching...')
@@ -2151,7 +2214,7 @@ monthly_products = [
     "GPCP v3.3",
     "IMERG v07",
     "ERA5",
-    "MERRA2",
+    "MERRA-2",
 ]
 # prudtc_dfs = all_buoy_product_monthly_df.copy()
 # prudtc_dfs.drop(columns = ['Buoy', 'n_days','ID',], inplace=True)
@@ -2182,8 +2245,8 @@ annual_by_region, annual_product_df = build_annual_from_monthly_buoy_df(
 region_year_limits = {
     "ENP": (1998, 2013),
     "WNP": (1998, 2020),
-    "IND": (2008, 2025),
-    "ATL": (2003, 2025),   # or (2001, 2025) if you want to remove the early spike more aggressively
+    "IND": (2008, 2022),
+    "ATL": (2006, 2023),   # or 2003 (2001, 2025) if you want to remove the early spike more aggressively
 }
 fig = plot_interannual_variability_2x2_from_monthly_df(
     annual_df=annual_product_df,
@@ -2213,8 +2276,8 @@ annual_by_region_prdt_sm, annual_df_prdt_sm = build_annual_from_monthly_buoy_df_
     min_days_per_month=None,
     min_buoys_per_month=None,
     min_months_per_year=12,
-    year_min=min_date.year,
-    year_max=max_date.year,
+    year_min=1998, #min_date.year,
+    year_max=2024, #max_date.year,
     region_year_limits=region_year_limits,
 )
 
@@ -2227,10 +2290,17 @@ fig = plot_interannual_variability_with_sample_counts_2x2(
     count_col="n_valid_buoy_months",
     count_label="Sample Count",
     right_ylabel="Sample Count (Months)",
+    rainfall_yticks={
+    "ENP": [2, 3, 4, 5],
+    "WNP": [5, 6, 7, 8, 9, 10, 11],
+    "IND": [4, 5, 6, 7, 8],
+    "ATL": [1.5, 2.5, 3.5],
+    },
+    region_year_limits=buoy_supported_year_limits,
     count_ylim=None,   # auto-scale
     ncol_legend=5,
 )
-svnme = os.path.join(path_to_plots, f"FigureS5_Buoy_AnnualRegionalPrecip_ProductOnlyAnalog_{cde_run_dte}.png")
+svnme = os.path.join(path_to_plots, f"FigureB1_Buoy_AnnualRegionalPrecip_ProductOnlyAnalog_{cde_run_dte}.png")
 fig.savefig(svnme, dpi=150, bbox_inches='tight')
 gc.collect()
 
