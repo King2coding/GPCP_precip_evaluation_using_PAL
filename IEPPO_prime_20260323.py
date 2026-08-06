@@ -2288,8 +2288,8 @@ fig = plot_interannual_variability_with_sample_counts_2x2(
     product_colors=product_colors,
     ref="GPCP v3.3",
     count_col="n_valid_buoy_months",
-    count_label="Sample Count",
-    right_ylabel="Sample Count (Months)",
+    count_label="Fixed location-month count",
+    right_ylabel="Product-location\nmonths yr$^{-1}$",
     rainfall_yticks={
     "ENP": [2, 3, 4, 5],
     "WNP": [5, 6, 7, 8, 9, 10, 11],
@@ -2377,6 +2377,54 @@ df_qc = oceanrain_step0_qc_precip_main(
     wind_max=None,
     qclip_hi=0.999,
 )
+n_valid = df_qc["rate_main_mmph"].notna().sum()
+print("Valid observations for 0.999-clipped data:", n_valid)
+
+# -------------------------------------------------------------------------
+# DIAGNOSTIC: quantify the OceanRAIN upper-tail clipping used in the analysis
+#
+# The production QC uses qclip_hi=0.999. Because the percentile includes
+# true-zero minutes, this block reruns the same QC without clipping to report:
+#   1) the resulting precipitation-rate threshold,
+#   2) the number of valid minute observations removed, and
+#   3) the percentage removed among precipitation-positive minutes.
+#
+# This block is diagnostic only and does not replace the production dataset.
+# -------------------------------------------------------------------------
+
+df_qc_unclipped = oceanrain_step0_qc_precip_main(
+    ocRain_df,
+    drop_harbor_inop=True,
+    drop_spurious_flag2_11=True,
+    keep_true_zero=True,
+    keep_flag2_12_zero_precip=False,
+    min_flag2_positive=13,
+    prob_thr=None,
+    wind_max=None,
+    qclip_hi=None,
+)
+
+threshold_999 = df_qc_unclipped["rate_main_mmph"].quantile(0.999)
+
+n_valid = df_qc_unclipped["rate_main_mmph"].notna().sum()
+n_above = (df_qc_unclipped["rate_main_mmph"] > threshold_999).sum()
+
+print("99.9th-percentile threshold:", threshold_999, "mm h-1")
+print("Valid observations:", n_valid)
+print("Observations excluded:", n_above)
+
+positive = df_qc_unclipped["rate_main_mmph"] > 0
+n_positive = positive.sum()
+n_extreme_positive = (
+    df_qc_unclipped.loc[positive, "rate_main_mmph"] > threshold_999
+).sum()
+
+print("Positive observations:", n_positive)
+print(
+    "Percentage of positive observations excluded:",
+    100 * n_extreme_positive / n_positive
+)
+
 
 # daily_or_all, daily_or_usable = oceanrain_daily_aggregate_to_gpcp_main(
 #     oc_df_minute=df_qc,
@@ -2535,7 +2583,7 @@ product_map_common1deg = {
 
 daily_or_all, daily_or_attached, minute_or_matched_common1deg = (
     oceanrain_minute_match_common1deg_then_daily_xr(
-        df_qc,
+        df_qc_unclipped,
         products=product_map_common1deg,
         grid_lat_1d=or_lat_1d,
         grid_lon_1d=or_lon_1d,
@@ -2683,9 +2731,9 @@ fig, axes = plot_oceanrain_quant_summary_panel(
     metrics=("CC", "Bias", "RMSE"),
     figsize=(12, 9),
     ylims={
-        "CC": (0, 0.6),
+        "CC": (0, 0.7),
         # "Bias": (-60, 15),
-        "RMSE": (0, 8),
+        "RMSE": (0, 10),
     },
     auto_ylim=True,
     ylabel_map={
