@@ -17,6 +17,8 @@ from IEPPO_utils import *
 #%% DEFINE PATHS AND DIRECTORIES
 path_to_pal_data = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/PAL/data_unzipped/PAL_SPURS1_SPURS2_TPOS_Others_202210'
 
+path_to_atoll_locs = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Atoll'
+
 moored_bouys_paf = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/Moored_Buoys'
 
 path_to_ocRain = r'/ra1/pubdat/Satellite_eval_over_Oceans/data/OceanRain'
@@ -312,7 +314,7 @@ print("\nGenerating spatial distribution plot of in-situ observations...")
 # figure/axes
 # ------------------------------------------------------------
 
-fig = plt.figure(figsize=(18, 10))
+fig = plt.figure(figsize=(18, 10)) # 
 ax = plt.axes(projection=ccrs.PlateCarree())
 ax.set_extent([-180, 180, -90, 90], crs=ccrs.PlateCarree())
 
@@ -432,6 +434,34 @@ for buoy_reg, buoy_files, marker in buoy_specs:
         )
 
 # ------------------------------------------------------------
+# Tropical Pacific atolls
+# ------------------------------------------------------------
+atoll_file = os.path.join(path_to_atoll_locs,
+    "atoll_lat_lon.txt"
+)
+
+atoll_df = pd.read_csv(
+    atoll_file,
+    sep=r"\s+",
+    header=None,
+    names=["station", "lon", "lat"]
+)
+
+atoll_df["lon"] = wrap_lon(atoll_df["lon"].to_numpy())
+
+ax.scatter(
+    atoll_df["lon"],
+    atoll_df["lat"],
+    marker="v",
+    s=28,
+    facecolor="white",
+    edgecolor="black",
+    linewidth=0.8,
+    transform=ccrs.PlateCarree(),
+    zorder=6
+)
+
+# ------------------------------------------------------------
 # Grid / ticks
 # ------------------------------------------------------------
 ax.grid(True, which='major', linewidth=0.55, color='grey', alpha=0.5, linestyle='--')
@@ -444,7 +474,7 @@ ax.set_yticks(yticks, crs=ccrs.PlateCarree())
 ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
 ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
 
-ax.tick_params(labelsize=18)
+ax.tick_params(labelsize=11) # 18
 for label in ax.get_xticklabels() + ax.get_yticklabels():
     label.set_fontweight('bold')
 
@@ -497,31 +527,44 @@ ocr_handles = [
 ]
 ocr_labels = [f"OceanRain {yr}" for yr in sorted(year_colors.keys())]
 
-handles = pal_handles + buoy_handles + ocr_handles
-labels = pal_labels + buoy_labels + ocr_labels
+atoll_handles = [
+    mlines.Line2D(
+        [], [],
+        marker="v",
+        linestyle="None",
+        markersize=7,
+        markerfacecolor="white",
+        markeredgecolor="black"
+    )
+]
+
+atoll_labels = [f"Tropical Pacific atolls ({len(atoll_df)})"]
+
+handles = pal_handles + buoy_handles + atoll_handles + ocr_handles
+labels = pal_labels + buoy_labels + atoll_labels + ocr_labels
 
 leg = ax.legend(
     handles, labels,
     loc='lower center',
-    bbox_to_anchor=(0.5, -0.3),
+    bbox_to_anchor=(0.5, -0.30),
     fontsize=12,
     ncol=4,
     frameon=False,
-    handlelength=1.8,
-    columnspacing=1.6
+    handlelength=1.6, # 1.8
+    columnspacing=1.2#1.6
 )
 
 for text in leg.get_texts():
     text.set_fontweight('bold')
 
 plt.tight_layout()
-plt.subplots_adjust(bottom=0.30)
+plt.subplots_adjust(bottom=0.30) # 0.30
 
 svname = os.path.join(
     path_to_plots,
     f'Fig02_Spatial_distribution_of_the_in_situ_ocean_precipitation_references_{cde_run_dte}.png'
 )
-plt.savefig(svname, bbox_inches='tight', dpi=250)
+plt.savefig(svname, bbox_inches='tight', dpi=150)
 # plt.show()
 gc.collect()
 
@@ -2300,7 +2343,7 @@ fig = plot_interannual_variability_with_sample_counts_2x2(
     count_ylim=None,   # auto-scale
     ncol_legend=5,
 )
-svnme = os.path.join(path_to_plots, f"FigureB1_Buoy_AnnualRegionalPrecip_ProductOnlyAnalog_{cde_run_dte}.png")
+svnme = os.path.join(path_to_plots, f"FigureC1_Buoy_AnnualRegionalPrecip_ProductOnlyAnalog_{cde_run_dte}.png")
 fig.savefig(svnme, dpi=150, bbox_inches='tight')
 gc.collect()
 
@@ -2401,6 +2444,7 @@ df_qc_unclipped = oceanrain_step0_qc_precip_main(
     min_flag2_positive=13,
     prob_thr=None,
     wind_max=None,
+    odm_cap_mmph=np.inf,  # retain all QC-passed ODM470 intensities
     qclip_hi=None,
 )
 
@@ -2532,6 +2576,8 @@ merra_ds_res = merra_ds_res.where(merra_ds_res >= 0)
 # Official manuscript OceanRAIN product map:
 # products harmonized to common 1° support
 # -------------------------------------------------------------
+products_eval = ["GPCP v1.3", 'GPCP v3.2', 'GPCP v3.3',  'IMERG v07', 
+                 'ERA5','MERRA-2']
 
 product_map_common1deg = {
     "GPCP v1.3": (
@@ -2606,6 +2652,21 @@ daily_or_attached = daily_or_attached[
     daily_or_attached["main_mmday"] != -99999.0
 ].copy()
 
+required_cols = ["main_mmday"] + products_eval
+
+daily_or_attached[required_cols] = (
+    daily_or_attached[required_cols]
+    .apply(pd.to_numeric, errors="coerce")
+    .replace([np.inf, -np.inf], np.nan)
+)
+
+# Common complete-case sample: every retained day has OceanRAIN
+# and all six products available.
+daily_or_attached = daily_or_attached.dropna(
+    subset=required_cols,
+    how="any",
+).copy()
+
 daily_or_attached.to_csv(
     os.path.join(
         path_to_put_dfs,
@@ -2615,8 +2676,7 @@ daily_or_attached.to_csv(
 )
 
 #--------------------------------------------------------------
-products_eval = ["GPCP v1.3", 'GPCP v3.2', 'GPCP v3.3',  'IMERG v07', 
-                 'ERA5','MERRA-2']
+
 
 cat_metrics_hemi, qt_metrics_hemi = compute_hemi_metrics_oceanrain(
     daily_or_attached,
@@ -2687,7 +2747,7 @@ fig, axes = plot_oceanrain_roebber_diagram(
 fig.savefig(
     os.path.join(
         path_to_plots,
-        f"Fig10_OceanRAIN_occurrence_performance_roebber_{cde_run_dte}.png"
+        f"Fig07_OceanRAIN_occurrence_performance_roebber_{cde_run_dte}.png"
     ),
     dpi=150,
     bbox_inches="tight",
@@ -2747,7 +2807,7 @@ fig, axes = plot_oceanrain_quant_summary_panel(
 fig.savefig(
     os.path.join(
         path_to_plots,
-        f"Fig11_OceanRAIN_quantitative_metrics_{cde_run_dte}.png"
+        f"Fig08_OceanRAIN_quantitative_metrics_{cde_run_dte}.png"
     ),
     dpi=150,
     bbox_inches="tight",
@@ -2857,7 +2917,7 @@ sample_summary_native_minute_rounded[round_cols] = (
 sample_summary_native_minute_rounded.to_csv(
     os.path.join(
         path_to_put_dfs,
-        f"TableC1_oceanrain_sample_summary_common1deg_rounded_{cde_run_dte}.csv"
+        f"TableB1_oceanrain_sample_summary_common1deg_rounded_{cde_run_dte}.csv"
     ),
     index=False,
 )
