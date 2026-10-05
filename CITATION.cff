@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "Please cite the associated submitted manuscript and state its status explicitly."
+title: "Multi-reference evaluation of ocean precipitation products"
+type: software
+authors:
+  - family-names: "Kumah"
+    given-names: "Kwabena Kingsley"
+    orcid: "https://orcid.org/0000-0001-6865-0665"
+repository-code: "https://github.com/King2coding/GPCP_precip_evaluation_using_PAL"
+preferred-citation:
+  type: article
+  title: "A Multi-Reference Assessment of Ocean Precipitation Products by Integrating PAL, Buoys, Atolls, and OceanRAIN"
+  authors:
+    - family-names: "Kumah"
+      given-names: "Kwabena Kingsley"
+    - family-names: "Behrangi"
+      given-names: "A."
+    - family-names: "Huffman"
+      given-names: "G. J."
+    - family-names: "Adler"
+      given-names: "R. F."
+    - family-names: "Gu"
+      given-names: "G."
+    - family-names: "Song"
+      given-names: "Y."
+    - family-names: "Zandi"
+      given-names: "O."
+    - family-names: "Bolvin"
+      given-names: "D. T."
+    - family-names: "Nelkin"
+      given-names: "E. J."
+    - family-names: "Funk"
+      given-names: "C. C."
+    - family-names: "Peterson"
+      given-names: "P."
+  year: 2026
