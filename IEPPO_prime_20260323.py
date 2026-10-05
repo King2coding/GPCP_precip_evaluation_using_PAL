@@ -474,7 +474,7 @@ ax.set_yticks(yticks, crs=ccrs.PlateCarree())
 ax.xaxis.set_major_formatter(plt.FuncFormatter(format_lon))
 ax.yaxis.set_major_formatter(plt.FuncFormatter(format_lat))
 
-ax.tick_params(labelsize=11) # 18
+ax.tick_params(labelsize=20) # 18
 for label in ax.get_xticklabels() + ax.get_yticklabels():
     label.set_fontweight('bold')
 
